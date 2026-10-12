@@ -1,0 +1,43 @@
+# 仓库检查
+
+检查器使用 Python 3.11+ 标准库和 Git，不安装依赖、不访问网络、不修改文件或暂存区。Shell 入口适用于 macOS / Linux；其他环境可以直接运行 Python 入口。
+
+```bash
+./scripts/check-repo.sh
+./scripts/check-docs.sh
+./scripts/check-text-files.sh
+python3 -B scripts/check-repo.py
+
+# PR：工作树为合并候选，提交范围为真实 head 相对 base 的共同祖先。
+./scripts/check-repo.sh --base-ref BASE_SHA --head-ref HEAD_SHA
+```
+
+`--base-ref` 与 `--head-ref` 必须指向本地已有 commit，检查器不会 fetch。未给 head 时使用 `HEAD`；单独给 head 是错误。默认无 ref 模式可检查没有初始提交的工作区，不宣称已检查提交历史。
+
+## 覆盖范围
+
+| 入口 | 实际检查 |
+| --- | --- |
+| `check-text-files` | Git 已跟踪和未忽略的未跟踪文件，UTF-8、无 BOM、LF、末尾换行、尾随空白、JSON / JSON-compatible YAML 解析、重复键 |
+| `check-docs` | 上述文本检查，加 Markdown 本地链接 / 锚点、代码围栏、表格列数、根协作入口一致 |
+| `check-repo` | 上述检查，加必需资产、版本格式、远端目标 / Ruleset / workflow / Issue 配置契约、强制跟踪忽略产物的拒绝、无门禁语言实现阻断、实际 Git diff 空白与可选 PR 提交范围；运行检查器自身的负向回归 |
+
+Markdown 允许非空行末的两个空格作硬换行；其他尾随空格仍报错。文件链接必须位于仓库并指向会进入 Git 的材料，避免链接只在维护者机器上存在。代码围栏里的命令和占位路径不作真实文档链接。外部 URL 不联网检查。
+
+`.github/` 的 `.yml` 文件使用 JSON-compatible YAML（JSON 是 YAML 的子集），使 workflow 和 Issue 表单可由标准库完整解析；它们仍使用 GitHub 要求的 `.yml` 后缀。未来需要普通 YAML 特性时，先选择正式解析依赖、更新检查器与 CI，不能用宽松正则猜配置。其他 YAML 不冒充已通过语法校验。
+
+检查器不作秘密扫描、法律审查、账务核算或业务测试。未跟踪的忽略目录不扫描；已跟踪文件不会因 `.gitignore` 而跳过，强制跟踪的忽略产物会报错。未知二进制文件不按 UTF-8 处理，已知文本扩展名中的 NUL / 非 UTF-8 仍失败。正式材料单文件超过 5 MiB 时失败，较大资产需先说明来源和实际交付用途再调整规则。
+
+## 自动化契约与扩展
+
+`PR Checks` 在合并候选执行 `check-repo`，提交检查不把 GitHub 合成 merge commit 当作用户提交。真实 merge commit 根据父提交数量豁免 Conventional Commits；单父提交即使以 `Merge` 开头也不能绕过检查。PR 范围拒绝已知 AI 的 `Co-authored-by` 署名。
+
+workflow 的聚合必须 `always()` 等待全部真实组件，只接受全体 `success`。检查器验证聚合脚本、依赖、权限、凭据、Action pin 与触发契约；负向回归实际执行聚合脚本，证明失败、取消、跳过或缺失结果会拒绝。
+
+新增 workflow 必须同步审阅清单，避免额外 push / tag 触发或重复 required context 绕开声明的 CI 策略。
+
+Action 使用 [actions/checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) 的[完整 commit](https://github.com/actions/checkout/commit/3d3c42e5aac5ba805825da76410c181273ba90b1)。选择记录用于复核引用，不宣称已在远端运行；升级时审阅来源、权限和实际 PR 行为。
+
+第一次添加 Rust / Go / Dart 源文件或 `Cargo.toml` / `go.mod` / `pubspec.yaml` 时，现有仅治理组件的配置会失败。接入真实语言检查后，同一变更更新 workflow、检查器组件契约、此说明和回归；不能简单删掉阻断或添加返回成功的 job。更复杂的恢复、协议、数据库、平台与安全验证按[开发规范](../docs/development/README.md)执行。
+
+错误逐项报告并返回非零；检查器没有历史预算或默认成功模式。`--only` 用于定向本地检查，PR workflow 必须使用完整入口。

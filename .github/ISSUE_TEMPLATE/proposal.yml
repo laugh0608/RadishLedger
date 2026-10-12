@@ -1,0 +1,31 @@
+{
+  "name": "需求或规则提案",
+  "description": "说明用户问题、范围与边界，不直接扩大既有 MVP。",
+  "title": "[Proposal] ",
+  "body": [
+    {
+      "type": "textarea",
+      "id": "problem",
+      "attributes": {"label": "用户问题", "description": "谁在什么场景遇到问题，现有流程为什么不足？仅使用合成示例。"},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "scope",
+      "attributes": {"label": "建议范围与替代方案", "description": "预期行为、非目标、与既有产品范围的关系。"},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "boundaries",
+      "attributes": {"label": "账务、隐私与兼容影响", "description": "金额、离线、密钥、同步域、冲突、删除、恢复、许可或外部影响；无影响时说明理由。"},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "acceptance",
+      "attributes": {"label": "验收方式", "description": "如何证明解决问题，覆盖哪些失败与恢复情况？"},
+      "validations": {"required": true}
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "name": "缺陷报告",
+  "description": "使用合成数据描述可复现的问题；安全问题走私下渠道。",
+  "title": "[Bug] ",
+  "body": [
+    {
+      "type": "checkboxes",
+      "id": "synthetic",
+      "attributes": {
+        "label": "数据边界",
+        "options": [
+          {"label": "仅使用合成数据，未附真实账单、私人截图、凭据、密钥或恢复秘密。", "required": true}
+        ]
+      }
+    },
+    {
+      "type": "input",
+      "id": "environment",
+      "attributes": {"label": "版本与环境", "description": "产品版本或 commit、平台、官方 / 自部署 / 本地模式；不填写生产地址。"},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "reproduction",
+      "attributes": {"label": "最小复现", "description": "说明初始状态、步骤、合成输入和复现频率。"},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "result",
+      "attributes": {"label": "预期与实际结果", "description": "涉及保存、同步或恢复时，分别说明各自状态。"},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "evidence",
+      "attributes": {"label": "合成证据与影响", "description": "相关检查、脱敏诊断、数据是否可恢复；不要重复执行可能丢失数据的操作。"}
+    }
+  ]
+}

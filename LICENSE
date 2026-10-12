@@ -1,0 +1,85 @@
+RadishLedger Source-Available License
+Version 1.0, October 12, 2026
+
+Copyright (c) 2026 RadishLedger Project Owner. All rights reserved.
+
+1. Scope
+This license applies to original software and documentation in this repository.
+The project is source-available and is not licensed as open-source software.
+Third-party material remains governed by its own license.
+
+2. Personal Use and Self-Hosting Grant
+Subject to this license, the copyright owner grants an individual a worldwide,
+non-exclusive, royalty-free right to:
+- access, download, and privately copy this project for personal use or study;
+- build, install, and run its clients and server for that individual's personal
+  bookkeeping, including a private self-hosted instance;
+- privately modify the project for the individual's own personal use;
+- keep backup copies necessary for those permitted activities.
+
+No separate written application, payment, official account, online activation,
+or license server is required for this grant. There is no device-count or
+book-count restriction imposed by this license. Product functionality may
+have its own documented scope.
+
+Paying a hosting provider for infrastructure for one's own private instance
+does not by itself constitute providing a commercial RadishLedger service.
+Personal bookkeeping is permitted even when the individual uses the software
+in connection with their own paid employment or self-employment.
+
+This grant does not authorize offering the software or a hosted service to
+other people or organizations, or redistributing the software.
+
+3. Restrictions and Separately Authorized Use
+Without a separate written authorization, you must not:
+- sell, rent, sublicense, mirror, or redistribute the project, its modified
+  versions, or its binaries to others;
+- provide it as a commercial hosted service or managed deployment for others;
+- deploy it for an organization's shared bookkeeping;
+- remove copyright, attribution, or license notices;
+- represent an unofficial modification or service as an official product.
+
+Uses outside Section 2 may be authorized separately by the copyright owner.
+No patent or trademark rights are granted by this license.
+
+4. User Data and Interoperability
+This software license does not restrict the ownership, use, backup, export,
+transfer, or independent processing of a user's own bookkeeping data.
+
+You may use the publicly documented protocol and data-format information to
+create an independent interoperable implementation, without copying this
+project's implementation code or using its trademarks. This permission does
+not grant a general right to republish this repository or its documentation.
+
+5. Contributions
+If you submit a contribution, you represent that you have the right to do so.
+Unless otherwise agreed in writing, you grant the copyright owner a perpetual,
+worldwide, non-exclusive, royalty-free, irrevocable right to use, modify,
+relicense, and distribute that contribution.
+Submitting a contribution does not grant you additional redistribution rights.
+
+6. Third-Party and Separately Licensed Components
+Dependencies, fonts, icons, copied material, and other third-party components
+remain subject to their own licenses. A component with an explicit separate
+license is governed by that license to the stated extent.
+This license does not remove rights granted by a third-party license.
+
+7. Disclaimer of Warranty
+THE SOFTWARE AND DOCUMENTATION ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+8. Limitation of Liability
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE COPYRIGHT OWNER AND CONTRIBUTORS
+SHALL NOT BE LIABLE FOR CLAIMS, DAMAGES, OR OTHER LIABILITY ARISING FROM THE
+SOFTWARE, DOCUMENTATION, OR THEIR USE.
+
+9. Licensing Contact
+For commercial use, redistribution, or other separately authorized use:
+luobo@radishx.com
+
+10. Priority
+This LICENSE governs licensing terms over other repository documents, except
+where a valid separate written authorization or explicitly separate component
+license applies. Changes to a future license version do not rewrite rights
+granted for copies obtained under this version.

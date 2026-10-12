@@ -1,0 +1,36 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.7z binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.apk binary
+*.aab binary
+*.ipa binary
+*.dylib binary
+*.so binary
+*.a binary
+*.sqlite binary
+*.db binary
+*.ledger-backup binary
+
+/local-data export-ignore
+/local-data/** export-ignore
+/local-evidence export-ignore
+/local-evidence/** export-ignore
+/private-references export-ignore
+/private-references/** export-ignore
+**/private-references/** export-ignore
+/bookkeeping export-ignore
+/bookkeeping/** export-ignore
+docs/**/bookkeeping/** export-ignore

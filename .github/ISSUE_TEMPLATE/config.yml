@@ -1,0 +1,10 @@
+{
+  "blank_issues_enabled": false,
+  "contact_links": [
+    {
+      "name": "安全、凭据或真实数据问题",
+      "url": "mailto:luobo@radishx.com",
+      "about": "请私下联系，先阅读 SECURITY.md；不要公开账单、密钥或恢复秘密。"
+    }
+  ]
+}
