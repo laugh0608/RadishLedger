@@ -36,11 +36,11 @@ UI 本批仓库检查覆盖 46 个文件和原有 20 条回归，全部通过；
 
 远端分支、默认分支与六项合并设置已由 API 读回；Actions 已开启。[初始化 PR #1](https://github.com/laugh0608/RadishLedger/pull/1) 已用 merge commit `ffeb0e9` 合入并快进回流 `dev`，仅作为保护启用前的首次引导。单一 JSON 来源生成的常规 YAML 通过本地 47 个文件 / 22 条回归检查，纳入默认分支后成功登记 `PR Checks`（workflow ID `383132006`）。[首次手动检查](https://github.com/laugh0608/RadishLedger/actions/runs/38389977556)的两项 job 均成功；来源为 GitHub Actions（App `15368`，owner `github`），模板与远端 required context 均绑定该来源。
 
-Ruleset 详情与有效规则 API 读回为 active，`master` 命中删除、non-fast-forward、PR 和严格必需检查四类规则，`dev` 无有效规则。[治理 PR #2](https://github.com/laugh0608/RadishLedger/pull/2) 的合并候选可生成、提交归属当前用户，但自动 PR 检查尚未产生运行；保护启用后该 PR 为 `blocked`，保持未合并，不使用 bypass。账号 / workflow 权限、额外 Actions policies、reopened / edited 事件和显式 enable 已核对 / 尝试，触发原因尚未查明。规则应用与手动 CI 已验证，自动 PR 触发及受保护正常合并 / 回流尚未验证；direct push / force push / deletion 风险写入未探测。业务、视觉稿、真机、部署与安全评审仍未验证。执行覆盖见[检查说明](../../scripts/README.md)。
+Ruleset 详情与有效规则 API 读回为 active，`master` 命中删除、non-fast-forward、PR 和严格必需检查四类规则，`dev` 无有效规则。项目所有者确认此前仓库实际 Actions 功能未开启，现已在 GitHub 完成开启；先前仅凭 API 标记与手动成功的启用判断不充分。[治理 PR #2](https://github.com/laugh0608/RadishLedger/pull/2) 保持未合并，正在通过开启后的新提交触发真实自动检查，再验证受保护正常合并 / 回流。direct push / force push / deletion 风险写入未探测。业务、视觉稿、真机、部署与安全评审仍未验证。执行覆盖见[检查说明](../../scripts/README.md)。
 
 ## 下一批建议
 
-仓库治理先查明自动 `pull_request` 触发未产生运行的原因，完成 PR #2 的真实检查与受保护合并 / 回流；缺少检查时保持阻断，不以手动成功状态或 bypass 冒充自动触发已验收。
+仓库治理先完成 Actions 实际开启后 PR #2 的自动检查与受保护合并 / 回流；缺少检查时保持阻断，不以手动成功状态或 bypass 冒充自动触发已验收。
 
 产品顺位仍为 M0-A 设计规格复核：
 
