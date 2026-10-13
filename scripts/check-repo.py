@@ -389,6 +389,9 @@ def check_governance(root, files, documents):
         and isinstance(contexts[0], dict) and contexts[0].get("context") == "Candidate Quality",
         "Ruleset: required context must be Candidate Quality only",
     )
+    if isinstance(contexts, list) and len(contexts) == 1 and isinstance(contexts[0], dict):
+        source_id = contexts[0].get("integration_id")
+        require(type(source_id) is int and source_id > 0, "Ruleset: bind required context to the verified Actions App")
 
     workflow = object_at(".github/workflows/pr-check.yml")
     workflow_files = {
