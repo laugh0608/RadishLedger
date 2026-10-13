@@ -9,7 +9,7 @@
 1. 明确目标 `owner/repo`、可见性、GitHub 套餐与创建 / 推送 / 设置的授权。读取已有分支、Rulesets、旧 branch protection、默认分支与合并设置，不覆盖其他有效约束。
 2. 完成精确初始提交与本地检查。没有远端稳定分支时，在本地确认的基线 commit 上首次建立 `master` 与 `dev` 并推送；这是规则启用前的一次引导动作，不能据此保留日后直推例外。
 3. 设置远端默认分支为 `master`。应用 [repository-settings.json](../repository-settings.json) 中的已审阅字段，特别关闭 squash 和自动删 head branch，避免删除长期 `dev`。
-4. 手动运行 `PR Checks`，再以合成治理变更的测试 PR 验证 `pull_request -> master` 实际产生并通过 `Repo Hygiene` 和 `Candidate Quality`。不能仅以 workflow 文件存在推定 context 已注册。
+4. 确认默认分支中已有可登记的 workflow，再手动运行 `PR Checks` 并用治理 PR 验证 `pull_request -> master` 实际产生并通过 `Repo Hygiene` 和 `Candidate Quality`。首次登记受阻时，先通过只包含已检查治理材料的初始化 PR 将可执行 workflow 纳入默认分支；此时保护尚未启用，这次引导合并不作为门禁证据。规则启用后另行验证受保护 PR，不能把初始化路径保留为日后例外，也不能仅以文件存在推定 context 已注册。
 5. 读取规则实际来源和作用范围；无同范围 Ruleset 才创建，有则读取 ID 后精确更新。模板中 Admin 的 RepositoryRole ID `5` 必须按目标 API 支持核对。
 6. 核对有效规则、合并选项、严格检查、会话解决、bypass 与分支匹配。direct push / force push / deletion 的阻断先用规则读回和 GitHub UI 判断；确需探测写入时必须单独授权，不能拿真实稳定历史冒险。
 7. 测试 PR 合并后回流 `dev`，将 PR / workflow / 规则读回证据记入 current 和 devlog。只有真实取得的行为才记录为通过。

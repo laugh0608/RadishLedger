@@ -1,53 +1,52 @@
-{
-  "name": "PR Checks",
-  "on": {
-    "pull_request": {
-      "branches": ["dev", "master"],
-      "types": ["opened", "synchronize", "reopened", "ready_for_review", "edited"]
-    },
-    "workflow_dispatch": {}
-  },
-  "permissions": {"contents": "read"},
-  "concurrency": {
-    "group": "pr-checks-${{ github.workflow }}-${{ github.ref }}",
-    "cancel-in-progress": true
-  },
-  "jobs": {
-    "repo-hygiene": {
-      "name": "Repo Hygiene",
-      "runs-on": "ubuntu-latest",
-      "timeout-minutes": 5,
-      "steps": [
-        {
-          "name": "Checkout merge candidate",
-          "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-          "with": {"fetch-depth": 0, "persist-credentials": false}
-        },
-        {
-          "name": "Check repository and PR range",
-          "shell": "bash",
-          "env": {
-            "PR_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
-            "PR_HEAD_SHA": "${{ github.event.pull_request.head.sha }}"
-          },
-          "run": "if [[ -n \"${PR_BASE_SHA}\" ]]; then\n  ./scripts/check-repo.sh --base-ref \"${PR_BASE_SHA}\" --head-ref \"${PR_HEAD_SHA}\"\nelse\n  ./scripts/check-repo.sh\nfi"
-        }
-      ]
-    },
-    "candidate-quality": {
-      "name": "Candidate Quality",
-      "runs-on": "ubuntu-latest",
-      "timeout-minutes": 2,
-      "if": "always()",
-      "needs": ["repo-hygiene"],
-      "steps": [
-        {
-          "name": "Require every component to succeed",
-          "shell": "bash",
-          "env": {"NEEDS_JSON": "${{ toJSON(needs) }}"},
-          "run": "python3 - <<'PY'\nimport json, os, sys\nresults = json.loads(os.environ['NEEDS_JSON'])\nfor name, result in results.items():\n    print(name + ': ' + result.get('result', 'missing'))\nsys.exit(0 if results and all(item.get('result') == 'success' for item in results.values()) else 1)\nPY"
-        }
-      ]
-    }
-  }
-}
+# Generated from .github/workflow-sources/pr-check.json; do not edit.
+name: "PR Checks"
+on:
+  pull_request:
+    branches:
+      - "dev"
+      - "master"
+    types:
+      - "opened"
+      - "synchronize"
+      - "reopened"
+      - "ready_for_review"
+      - "edited"
+  workflow_dispatch: {}
+permissions:
+  contents: "read"
+concurrency:
+  group: "pr-checks-${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+jobs:
+  repo-hygiene:
+    name: "Repo Hygiene"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        name: "Checkout merge candidate"
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      -
+        name: "Check repository and PR range"
+        shell: "bash"
+        env:
+          PR_BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+        run: "if [[ -n \"${PR_BASE_SHA}\" ]]; then\n  ./scripts/check-repo.sh --base-ref \"${PR_BASE_SHA}\" --head-ref \"${PR_HEAD_SHA}\"\nelse\n  ./scripts/check-repo.sh\nfi"
+  candidate-quality:
+    name: "Candidate Quality"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 2
+    if: "always()"
+    needs:
+      - "repo-hygiene"
+    steps:
+      -
+        name: "Require every component to succeed"
+        shell: "bash"
+        env:
+          NEEDS_JSON: "${{ toJSON(needs) }}"
+        run: "python3 - <<'PY'\nimport json, os, sys\nresults = json.loads(os.environ['NEEDS_JSON'])\nfor name, result in results.items():\n    print(name + ': ' + result.get('result', 'missing'))\nsys.exit(0 if results and all(item.get('result') == 'success' for item in results.values()) else 1)\nPY"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only repository checks, using Python's standard library and Git."""
+"""Repository checks (read-only by default), using Python's standard library and Git."""
 
 import argparse
 import json
@@ -25,6 +25,7 @@ REQUIRED_FILES = (
     ".github/ISSUE_TEMPLATE/proposal.yml", "scripts/README.md",
     "scripts/check-repo.py", "scripts/check-repo.sh", "scripts/check-docs.sh",
     "scripts/check-text-files.sh", "scripts/tests/test_repository_checks.py",
+    ".github/workflow-sources/pr-check.json",
 )
 TEXT_SUFFIXES = {
     ".md", ".txt", ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini",
@@ -38,9 +39,11 @@ BINARY_SUFFIXES = {
     ".ipa", ".dylib", ".so", ".a", ".sqlite", ".db", ".ledger-backup",
 }
 JSON_YAML_FILES = {
-    ".github/workflows/pr-check.yml", ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/bug-report.yml", ".github/ISSUE_TEMPLATE/proposal.yml",
 }
+WORKFLOW_SOURCE = ".github/workflow-sources/pr-check.json"
+WORKFLOW_FILE = ".github/workflows/pr-check.yml"
 MAX_FILE_BYTES = 5 * 1024 * 1024
 AGGREGATE_RUN = """python3 - <<'PY'
 import json, os, sys
@@ -101,6 +104,46 @@ def reject_json_constant(value):
     raise ValueError(f"nonstandard JSON constant: {value}")
 
 
+def workflow_yaml(value):
+    """Emit block YAML from the workflow's JSON data; never parse arbitrary YAML."""
+    lines = ["# Generated from .github/workflow-sources/pr-check.json; do not edit."]
+
+    def scalar(item):
+        if isinstance(item, str) or item is None or type(item) in (bool, int):
+            return json.dumps(item, ensure_ascii=False)
+        if isinstance(item, dict) and not item:
+            return "{}"
+        if isinstance(item, list) and not item:
+            return "[]"
+        raise ValueError("workflow source: unsupported scalar type")
+
+    def append(item, indent):
+        if isinstance(item, dict) and item:
+            for key, child in item.items():
+                if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key):
+                    raise ValueError("workflow source: unsupported mapping key")
+                # `on` is the standard Actions event key; quote other YAML boolean words.
+                label = json.dumps(key) if key.lower() in {"y", "n", "yes", "no", "off", "true", "false", "null"} else key
+                entry(child, indent, label + ":")
+        elif isinstance(item, list) and item:
+            for child in item:
+                entry(child, indent, "-")
+        else:
+            raise ValueError("workflow source: expected a nonempty mapping or sequence")
+
+    def entry(item, indent, prefix):
+        if isinstance(item, (dict, list)) and item:
+            lines.append(" " * indent + prefix)
+            append(item, indent + 2)
+        else:
+            lines.append(" " * indent + prefix + " " + scalar(item))
+
+    if not isinstance(value, dict) or not value:
+        raise ValueError("workflow source: expected a nonempty JSON object")
+    append(value, 0)
+    return "\n".join(lines) + "\n"
+
+
 def ignored_tracked_files(root):
     tracked = git(root, "ls-files", "--cached", "-z")
     if not tracked:
@@ -157,6 +200,15 @@ def check_text(root, files):
                 )
             except (ValueError, json.JSONDecodeError) as error:
                 errors.append(f"{name}: invalid JSON / JSON-compatible YAML: {error}")
+    if WORKFLOW_FILE in files or WORKFLOW_SOURCE in files:
+        try:
+            source = documents.get(WORKFLOW_SOURCE)
+            expected = workflow_yaml(source)
+            if texts.get(WORKFLOW_FILE) != expected:
+                errors.append(f"{WORKFLOW_FILE}: generated YAML drift; run python3 -B scripts/check-repo.py --write-workflow")
+            documents[WORKFLOW_FILE] = source
+        except ValueError as error:
+            errors.append(str(error))
     return errors, texts, documents
 
 
@@ -467,12 +519,27 @@ def main():
     parser.add_argument("--only", choices=("text", "docs", "repo"), default="repo")
     parser.add_argument("--base-ref")
     parser.add_argument("--head-ref")
+    parser.add_argument("--write-workflow", action="store_true", help="explicitly regenerate the workflow YAML from its JSON source")
     args = parser.parse_args()
     if args.head_ref and not args.base_ref:
         parser.error("--head-ref requires --base-ref")
     if args.only != "repo" and args.base_ref:
         parser.error("PR commit range requires the complete repository check")
     root = Path(__file__).resolve().parents[1]
+    if args.write_workflow:
+        if args.base_ref or args.head_ref or args.only != "repo":
+            parser.error("--write-workflow cannot be combined with check selectors or PR refs")
+        try:
+            source = json.loads(
+                (root / WORKFLOW_SOURCE).read_text(encoding="utf-8"),
+                object_pairs_hook=unique_object, parse_constant=reject_json_constant,
+            )
+            (root / WORKFLOW_FILE).write_text(workflow_yaml(source), encoding="utf-8", newline="\n")
+        except (OSError, ValueError) as error:
+            print("ERROR: " + str(error), file=sys.stderr)
+            return 1
+        print("Generated " + WORKFLOW_FILE + "; run the repository checks before committing.")
+        return 0
     errors = []
     try:
         files = repository_files(root)

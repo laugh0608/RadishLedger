@@ -15,7 +15,7 @@
 | `version.json` | 手工产品版本来源；其他版本身份按开发规范独立管理 |
 | `scripts/` | 本地与 CI 共用的仓库检查 |
 | `.github/ISSUE_TEMPLATE/` / PR 模板 | 合成复现、需求影响与验证证据 |
-| `.github/workflows/pr-check.yml` | PR 检查与稳定聚合结果 |
+| `.github/workflow-sources/pr-check.json` / `.github/workflows/pr-check.yml` | 单一手工检查来源与生成的 GitHub workflow |
 | `.github/repository-settings.json` / `rulesets/` | 可审阅的远端目标设置与启用说明 |
 
 忽略规则不是安全扫描，也不能隐藏已跟踪的秘密；发现泄露应按安全报告处理，不以删除工作区文件声称凭据已撤销。`git archive` 排除本地数据 / 证据是额外保护，不替代发行包内容检查。
@@ -109,6 +109,8 @@ PR 内 bypass 仍可绕过检查，所以不是“管理员也绝对不能合并
 `PR Checks` 只由目标为 `dev` / `master` 的 `pull_request` 和 `workflow_dispatch` 触发。普通 push 与 tag 不触发；不使用 `pull_request_target` 执行贡献代码。使用只读 contents 权限、关闭 checkout 凭据持久化、Action 固定完整 commit SHA，并为任务设置超时。
 
 `Repo Hygiene` 执行仓库检查与检查器自身的负向回归；`Candidate Quality` 用 `always()` 汇总全部组件，仅当所有组件都是 `success` 才通过。失败、取消、跳过和缺失不能转成成功。required context 是 job 名 `Candidate Quality`，不包含 workflow 前缀或事件后缀。
+
+workflow 从 `.github/workflow-sources/pr-check.json` 显式生成常规 YAML；检查器同时约束来源语义与生成文件逐字一致，不手改 `.github/workflows/pr-check.yml`。生成命令、实际覆盖与格式限制见[检查说明](../../scripts/README.md)。
 
 PR 文件检查针对合并候选的工作树；提交检查用 `merge-base(base, head)..head` 校验实际 PR 提交，避免 fork 历史或 GitHub 合成 merge commit 干扰。SHA 经环境变量传入，不将 PR 标题、分支名或正文插入 shell。手动检查不假装有 PR commit range。
 

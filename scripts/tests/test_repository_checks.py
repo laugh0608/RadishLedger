@@ -153,6 +153,20 @@ class RepositoryChecksTest(unittest.TestCase):
             mutate(changed[".github/workflows/pr-check.yml"])
             self.assertTrue(CHECKS.check_governance(self.root, files, changed))
 
+    def test_generated_workflow_edits_are_rejected(self):
+        path = self.root / CHECKS.WORKFLOW_FILE
+        self.write(CHECKS.WORKFLOW_FILE, path.read_text(encoding="utf-8") + "on: push\n")
+        self.assertTrue(any("generated YAML drift" in error for error in self.inspect()[1]))
+
+    def test_regenerated_workflow_cannot_bypass_policy(self):
+        source = json.loads((self.root / CHECKS.WORKFLOW_SOURCE).read_text(encoding="utf-8"))
+        source["on"]["push"] = {}
+        self.write(CHECKS.WORKFLOW_SOURCE, json.dumps(source) + "\n")
+        self.write(CHECKS.WORKFLOW_FILE, CHECKS.workflow_yaml(source))
+        files, errors, _, documents = self.inspect()
+        self.assertFalse(errors)
+        self.assertTrue(any("only PR and manual triggers" in error for error in CHECKS.check_governance(self.root, files, documents)))
+
     def test_extra_workflow_requires_explicit_contract_review(self):
         self.write(".github/workflows/unreviewed.yml", '{"on": {"push": {}}}\n')
         files, _, _, documents = self.inspect()
@@ -160,7 +174,7 @@ class RepositoryChecksTest(unittest.TestCase):
         self.assertTrue(any("workflow inventory changed" in error for error in failures))
 
     def test_actual_aggregate_rejects_failure_cancel_skip_missing(self):
-        workflow = json.loads((ROOT / ".github/workflows/pr-check.yml").read_text())
+        workflow = json.loads((ROOT / CHECKS.WORKFLOW_SOURCE).read_text())
         script = workflow["jobs"]["candidate-quality"]["steps"][0]["run"]
         cases = [({"repo-hygiene": {"result": "success"}}, 0), ({}, 1)]
         cases += [({"repo-hygiene": {"result": value}}, 1) for value in ("failure", "cancelled", "skipped")]
@@ -227,7 +241,7 @@ class RepositoryChecksTest(unittest.TestCase):
         self.assertEqual((self.root / "hotfix.txt").read_text(), "hotfix\n")
 
     def test_invalid_json_yaml_cli_exits_nonzero(self):
-        self.write(".github/workflows/pr-check.yml", '{"on": {}\n')
+        self.write(".github/ISSUE_TEMPLATE/config.yml", '{"blank_issues_enabled": false\n')
         result = subprocess.run(
             [sys.executable, "-B", str(self.root / "scripts/check-repo.py")],
             capture_output=True, text=True, timeout=10,
