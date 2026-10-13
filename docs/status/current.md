@@ -33,7 +33,7 @@ UI 本批仓库检查覆盖 46 个文件和原有 20 条回归，全部通过；
 
 `AGENTS.md` / `CLAUDE.md` 逐字一致。UI 规格已更新，其余产品范围、领域、技术、安全、许可和版本来源未改；私人截图未进入仓库或 Git，仅保留不含个人内容的文字规则。首次本地提交前和远端引导前的仓库检查均覆盖 46 个文件与 20 条检查器回归，全部通过；提交使用当前用户身份。
 
-远端分支、默认分支与六项合并设置已由 API 读回；Actions 已开启。[初始化 PR #1](https://github.com/laugh0608/RadishLedger/pull/1) 已用 merge commit 合入并快进回流 `dev`，仅作为保护启用前的首次引导。单一 JSON 来源生成的常规 YAML 通过本地 47 个文件 / 22 条回归检查，纳入默认分支后成功登记 `PR Checks`（workflow ID `383132006`）。[首次手动检查](https://github.com/laugh0608/RadishLedger/actions/runs/38389977556)已触发，正在验证真实结果和后续治理 PR。尚未宣称 Ruleset 生效或远端检查通过。业务、视觉稿、真机、部署与安全评审仍未验证。执行覆盖见[检查说明](../../scripts/README.md)。
+远端分支、默认分支与六项合并设置已由 API 读回；Actions 已开启。[初始化 PR #1](https://github.com/laugh0608/RadishLedger/pull/1) 已用 merge commit 合入并快进回流 `dev`，仅作为保护启用前的首次引导。单一 JSON 来源生成的常规 YAML 通过本地 47 个文件 / 22 条回归检查，纳入默认分支后成功登记 `PR Checks`（workflow ID `383132006`）。[首次手动检查](https://github.com/laugh0608/RadishLedger/actions/runs/38389977556)的两项 job 均成功；来源为 GitHub Actions（App `15368`，owner `github`），模板已补齐来源绑定。[治理 PR #2](https://github.com/laugh0608/RadishLedger/pull/2) 继续验证真实 PR / CI 与保护，Ruleset 尚待应用与读回。业务、视觉稿、真机、部署与安全评审仍未验证。执行覆盖见[检查说明](../../scripts/README.md)。
 
 ## 下一批建议
 

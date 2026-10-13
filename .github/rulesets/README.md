@@ -41,7 +41,7 @@ gh api repos/OWNER/REPO/rules/branches/master
 
 更新前保存原始配置、记录拟改字段；更新后比较有效状态，回滚只恢复已授权字段。仓库合并选项和 Ruleset 两者共同作用，不能只检查其中一个。
 
-required context 默认不硬编码其他项目的 App / installation ID。检查首次产生后核对来源，在远端选择真实 GitHub Actions App；若导出包含 `integration_id`，保留并记录实际 ID，不因模板未写而清掉来源限制。
+required context 不采用其他项目的 App / installation ID。本模板的 `integration_id` 来自本仓库真实检查记录核对的 GitHub Actions App，实际来源证据见 current / devlog；应用时复核来源，精确更新时保留来源限制，不因模板格式变化而清掉绑定。
 
 重命名 `Candidate Quality` 时，先部署新 workflow 并证明新 context，再迁移远端。新增业务检查接入聚合组件；新增多人 approval、CODEOWNERS 或 `dev` 保护需要重新评估实际评审安排。套餐不支持规则时报告限制，不宣称已强制。
 

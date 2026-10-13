@@ -131,6 +131,18 @@ class RepositoryChecksTest(unittest.TestCase):
                 ".github/rulesets/master-protection.json",
                 lambda d: d["rules"][-1]["parameters"]["required_status_checks"][0].update(context="Fake Success"),
             ),
+            (
+                ".github/rulesets/master-protection.json",
+                lambda d: d["rules"][-1]["parameters"]["required_status_checks"][0].pop("integration_id"),
+            ),
+            (
+                ".github/rulesets/master-protection.json",
+                lambda d: d["rules"][-1]["parameters"]["required_status_checks"][0].update(integration_id=0),
+            ),
+            (
+                ".github/rulesets/master-protection.json",
+                lambda d: d["rules"][-1]["parameters"]["required_status_checks"][0].update(integration_id=True),
+            ),
         )
         for name, mutate in mutations:
             with self.subTest(name=name):

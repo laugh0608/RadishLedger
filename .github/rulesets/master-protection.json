@@ -33,7 +33,7 @@
       "type": "required_status_checks",
       "parameters": {
         "do_not_enforce_on_create": false,
-        "required_status_checks": [{"context": "Candidate Quality"}],
+        "required_status_checks": [{"context": "Candidate Quality", "integration_id": 15368}],
         "strict_required_status_checks_policy": true
       }
     }
