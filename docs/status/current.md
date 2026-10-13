@@ -23,6 +23,7 @@
 - 建立 Python 标准库仓库检查、定向入口和合成负向回归；提供 `PR Checks` / `Candidate Quality`、仓库目标设置及 `master` Ruleset 模板。
 - 按明确授权连接公开空仓库，首次从已检查的 `f6f5b2c` 基线建立远端 `master` / `dev`；应用六项仓库设置，开启 merge / rebase，关闭 squash、自动合并和自动删分支。初始化 PR #1 已合入并回流；真实手动 Actions 检查成功。
 - 启用 [master Ruleset 24995092](https://github.com/laugh0608/RadishLedger/rules/24995092)，精确匹配 `master`，要求 PR、会话解决和严格 `Candidate Quality`，绑定实际 GitHub Actions App `15368`，阻止删除与强推；审批基数为 `0`，管理员 bypass 限于 PR。`dev` 有效规则为空。
+- 项目所有者完成仓库实际 Actions 启用后，新的 PR synchronize 事件自动触发 `PR Checks`，`Repo Hygiene` / `Candidate Quality` 均成功；首次引导补齐实际启用与自动事件验证，先前触发阻塞已解除。
 
 文档建立过程与验证记录见[本月 devlog](../devlogs/2026-10.md)，治理规则见[治理导航](../governance/README.md)。
 
@@ -36,11 +37,11 @@ UI 本批仓库检查覆盖 46 个文件和原有 20 条回归，全部通过；
 
 远端分支、默认分支与六项合并设置已由 API 读回；Actions 已开启。[初始化 PR #1](https://github.com/laugh0608/RadishLedger/pull/1) 已用 merge commit `ffeb0e9` 合入并快进回流 `dev`，仅作为保护启用前的首次引导。单一 JSON 来源生成的常规 YAML 通过本地 47 个文件 / 22 条回归检查，纳入默认分支后成功登记 `PR Checks`（workflow ID `383132006`）。[首次手动检查](https://github.com/laugh0608/RadishLedger/actions/runs/38389977556)的两项 job 均成功；来源为 GitHub Actions（App `15368`，owner `github`），模板与远端 required context 均绑定该来源。
 
-Ruleset 详情与有效规则 API 读回为 active，`master` 命中删除、non-fast-forward、PR 和严格必需检查四类规则，`dev` 无有效规则。项目所有者确认此前仓库实际 Actions 功能未开启，现已在 GitHub 完成开启；先前仅凭 API 标记与手动成功的启用判断不充分。[治理 PR #2](https://github.com/laugh0608/RadishLedger/pull/2) 保持未合并，正在通过开启后的新提交触发真实自动检查，再验证受保护正常合并 / 回流。direct push / force push / deletion 风险写入未探测。业务、视觉稿、真机、部署与安全评审仍未验证。执行覆盖见[检查说明](../../scripts/README.md)。
+Ruleset 详情与有效规则 API 读回为 active，`master` 命中删除、non-fast-forward、PR 和严格必需检查四类规则，`dev` 无有效规则。项目所有者确认此前仓库实际 Actions 功能未开启，现已在 GitHub 完成开启；先前仅凭 API 标记与手动成功的启用判断不充分。[自动 PR 运行 38395115506](https://github.com/laugh0608/RadishLedger/actions/runs/38395115506) 对 `d7a86a4` 真实触发并完成，两项 job 及 PR 提交范围检查均成功。[治理 PR #2](https://github.com/laugh0608/RadishLedger/pull/2) 将在最终文档候选检查通过后按 merge commit 晋级并回流，不使用 bypass。direct push / force push / deletion 风险写入未探测。业务、视觉稿、真机、部署与安全评审仍未验证。执行覆盖见[检查说明](../../scripts/README.md)。
 
 ## 下一批建议
 
-仓库治理先完成 Actions 实际开启后 PR #2 的自动检查与受保护合并 / 回流；缺少检查时保持阻断，不以手动成功状态或 bypass 冒充自动触发已验收。
+自动 PR 触发阻塞已解除；PR #2 最终候选检查通过后完成受保护合并和回流，缺少检查时继续保持阻断。
 
 产品顺位仍为 M0-A 设计规格复核：
 
