@@ -170,6 +170,33 @@ class RepositoryChecksTest(unittest.TestCase):
         self.write(CHECKS.WORKFLOW_FILE, path.read_text(encoding="utf-8") + "on: push\n")
         self.assertTrue(any("generated YAML drift" in error for error in self.inspect()[1]))
 
+    def test_core_component_cannot_be_skipped_or_replaced_by_success(self):
+        files, _, _, documents = self.inspect()
+        mutations = (
+            lambda w: w["jobs"]["core-quality"].update(**{"if": "false"}),
+            lambda w: w["jobs"]["core-quality"]["steps"][2].update(run="exit 0"),
+            lambda w: w["jobs"]["core-quality"]["steps"][3].update(run="exit 0"),
+            lambda w: w["jobs"]["candidate-quality"].update(needs=["repo-hygiene"]),
+        )
+        for mutate in mutations:
+            changed = copy.deepcopy(documents)
+            mutate(changed[".github/workflows/pr-check.yml"])
+            self.assertTrue(CHECKS.check_governance(self.root, files, changed))
+
+    def test_version_mirrors_must_follow_the_root_source(self):
+        path = self.root / "Cargo.toml"
+        original = path.read_text()
+        version = json.loads((self.root / "version.json").read_text())["productVersion"]
+        changed = original.replace(f'version = "{version}"', 'version = "0.0.0"')
+        self.assertNotEqual(original, changed)
+        self.write("Cargo.toml", changed)
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("Cargo mirror drift" in error for error in CHECKS.check_governance(self.root, files, documents)))
+        self.write("Cargo.toml", original)
+        files, _, _, documents = self.inspect()
+        documents["apps/m0_probe/pubspec.yaml"]["version"] = "0.0.0+1"
+        self.assertTrue(any("Flutter mirror drift" in error for error in CHECKS.check_governance(self.root, files, documents)))
+
     def test_regenerated_workflow_cannot_bypass_policy(self):
         source = json.loads((self.root / CHECKS.WORKFLOW_SOURCE).read_text(encoding="utf-8"))
         source["on"]["push"] = {}
@@ -188,9 +215,10 @@ class RepositoryChecksTest(unittest.TestCase):
     def test_actual_aggregate_rejects_failure_cancel_skip_missing(self):
         workflow = json.loads((ROOT / CHECKS.WORKFLOW_SOURCE).read_text())
         script = workflow["jobs"]["candidate-quality"]["steps"][0]["run"]
-        cases = [({"repo-hygiene": {"result": "success"}}, 0), ({}, 1)]
+        cases = [({"repo-hygiene": {"result": "success"}, "core-quality": {"result": "success"}}, 0), ({}, 1)]
         cases += [({"repo-hygiene": {"result": value}}, 1) for value in ("failure", "cancelled", "skipped")]
         cases += [({"repo-hygiene": {}}, 1), ({"repo-hygiene": {"result": "success"}, "extra": {"result": "failure"}}, 1)]
+        cases += [({"repo-hygiene": {"result": "success"}, "core-quality": {"result": value}}, 1) for value in ("failure", "cancelled", "skipped")]
         for results, expected in cases:
             with self.subTest(results=results):
                 env = dict(os.environ, NEEDS_JSON=json.dumps(results))

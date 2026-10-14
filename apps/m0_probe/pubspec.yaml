@@ -1,0 +1,31 @@
+{
+  "name": "radishledger_probe",
+  "description": "RadishLedger 合成数据移动核心接入验证应用",
+  "publish_to": "none",
+  "version": "26.10.1+1",
+  "environment": {
+    "sdk": ">=3.12.0 <3.13.0"
+  },
+  "dependencies": {
+    "flutter": {
+      "sdk": "flutter"
+    },
+    "ffi": "2.2.0",
+    "hooks": "1.0.2",
+    "code_assets": "1.0.0",
+    "flutter_rust_bridge": "2.13.0"
+  },
+  "dev_dependencies": {
+    "flutter_test": {
+      "sdk": "flutter"
+    },
+    "integration_test": {
+      "sdk": "flutter"
+    },
+    "flutter_lints": "6.0.0"
+  },
+  "flutter": {
+    "uses-material-design": true,
+    "assets": ["assets/native-notices.txt", "assets/rust-library-notices.html"]
+  }
+}

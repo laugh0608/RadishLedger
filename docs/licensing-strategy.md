@@ -24,7 +24,7 @@ RadishLedger 延续 Radish 应用中的源码可见策略，同时把个人免�
 
 ## 4. 第三方与贡献
 
-第三方原有许可证和 notices 保留，不能用本项目许可证重新限制它们。具体 RustCrypto、SQLCipher、Flutter 组件和打包资产在引入依赖时核对。
+第三方原有许可证和 notices 保留，不能用本项目许可证重新限制它们。具体依赖、SQLCipher、Flutter 模板与打包资产按[第三方来源](../THIRD_PARTY_NOTICES.md)登记，native 许可全文进入实验 App asset；新增 RustCrypto 或平台资产时继续核对，不推定沿用已有许可。
 
 贡献许可沿用根许可证，提交者须有权提供内容；外部贡献与再分发权限分别处理。安全反馈不提交真实账单或秘密。
 

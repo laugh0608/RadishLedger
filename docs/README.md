@@ -12,6 +12,7 @@
 | 各端使用哪些合成输入和数值预期 | [共同账务样例](validation/accounting-cases.md)、[单一 JSON 材料](validation/accounting-cases.json) |
 | Flutter、Rust、Go 如何分工 | [技术架构](architecture.md) |
 | 两端最小接入、加密与系统密钥如何验证 | [移动端核心验证矩阵](development/mobile-core-validation.md) |
+| 合成移动核心实验如何调用、构建和复现 | [移动核心实验](development/mobile-core-prototype.md)、[第三方来源](../THIRD_PARTY_NOTICES.md) |
 | 多端如何连接、提交、解决冲突 | [同步协议与连接边界](sync-protocol.md) |
 | 保护什么、谁持有密钥、如何恢复 | [威胁模型与加密](privacy-threat-model.md) |
 | 如何交付自部署和官方服务 | [自部署与托管](self-hosting.md) |

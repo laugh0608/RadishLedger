@@ -1,0 +1,22 @@
+[package]
+name = "radishledger-mobile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[lib]
+name = "radishledger_mobile"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[features]
+default = []
+frb = ["dep:flutter_rust_bridge"]
+
+[dependencies]
+radishledger-core = { path = "../ledger-core" }
+serde_json.workspace = true
+# backtrace 0.3.76 经 FRB 引入，依赖 Apple 共用的 dyld 声明；libc 0.2.190
+# 将这些声明限于 macOS，导致 iOS 编译失败。候选锁定最后兼容版本。
+libc = "=0.2.189"
+flutter_rust_bridge = { version = "=2.13.0", optional = true }

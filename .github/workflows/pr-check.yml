@@ -36,6 +36,29 @@ jobs:
           PR_BASE_SHA: "${{ github.event.pull_request.base.sha }}"
           PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
         run: "if [[ -n \"${PR_BASE_SHA}\" ]]; then\n  ./scripts/check-repo.sh --base-ref \"${PR_BASE_SHA}\" --head-ref \"${PR_HEAD_SHA}\"\nelse\n  ./scripts/check-repo.sh\nfi"
+  core-quality:
+    name: "Core Quality"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 20
+    steps:
+      -
+        name: "Checkout merge candidate"
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      -
+        name: "Prepare pinned Rust and Flutter"
+        shell: "bash"
+        run: "rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy\npython3 -B scripts/setup-flutter-ci.py"
+      -
+        name: "Check actual Rust core and ABI"
+        shell: "bash"
+        run: "./scripts/check-core.sh"
+      -
+        name: "Check actual Flutter and native calls"
+        shell: "bash"
+        run: "./scripts/check-mobile.sh"
   candidate-quality:
     name: "Candidate Quality"
     runs-on: "ubuntu-latest"
@@ -43,6 +66,7 @@ jobs:
     if: "always()"
     needs:
       - "repo-hygiene"
+      - "core-quality"
     steps:
       -
         name: "Require every component to succeed"

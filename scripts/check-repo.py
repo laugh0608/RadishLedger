@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 from urllib.parse import unquote, urlsplit
 
 
@@ -32,6 +33,7 @@ TEXT_SUFFIXES = {
     ".cfg", ".sh", ".py", ".rs", ".go", ".dart", ".sql", ".csv", ".tsv",
     ".xml", ".svg", ".html", ".css", ".js", ".ts", ".lock", ".mod",
     ".sum", ".gradle", ".properties", ".kt", ".swift", ".h", ".c", ".cpp",
+    ".kts", ".plist", ".pbxproj", ".xcconfig", ".storyboard", ".xcscheme", ".xcsettings", ".xcworkspacedata",
 }
 BINARY_SUFFIXES = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip",
@@ -41,6 +43,7 @@ BINARY_SUFFIXES = {
 JSON_YAML_FILES = {
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/bug-report.yml", ".github/ISSUE_TEMPLATE/proposal.yml",
+    "apps/m0_probe/pubspec.yaml", "apps/m0_probe/analysis_options.yaml",
 }
 WORKFLOW_SOURCE = ".github/workflow-sources/pr-check.json"
 WORKFLOW_FILE = ".github/workflows/pr-check.yml"
@@ -418,7 +421,7 @@ def check_governance(root, files, documents):
     if not isinstance(jobs, dict) or not all(isinstance(job, dict) for job in jobs.values()):
         errors.append("workflow: invalid jobs object")
         jobs = {}
-    require(set(jobs) == {"repo-hygiene", "candidate-quality"}, "workflow: update the reviewed component contract when adding jobs")
+    require(set(jobs) == {"repo-hygiene", "core-quality", "candidate-quality"}, "workflow: update the reviewed component contract when adding jobs")
     for job_id, job in jobs.items():
         timeout = job.get("timeout-minutes")
         require(type(timeout) is int and 0 < timeout <= 20, f"workflow {job_id}: finite timeout required")
@@ -456,7 +459,7 @@ def check_governance(root, files, documents):
     candidate = jobs.get("candidate-quality", {})
     require(
         candidate.get("name") == "Candidate Quality" and candidate.get("if") == "always()"
-        and candidate.get("needs") == ["repo-hygiene"],
+        and candidate.get("needs") == ["repo-hygiene", "core-quality"],
         "workflow: aggregate name / always / dependencies drift",
     )
     summary = candidate.get("steps", [])
@@ -466,6 +469,15 @@ def check_governance(root, files, documents):
         and summary[0].get("run") == AGGREGATE_RUN,
         "workflow: aggregate must reject every non-success component",
     )
+    core = jobs.get("core-quality", {})
+    core_steps = core.get("steps", [])
+    require(core.get("name") == "Core Quality" and "if" not in core, "workflow: Core Quality cannot be skipped")
+    if isinstance(core_steps, list) and len(core_steps) == 4 and all(isinstance(step, dict) for step in core_steps):
+        require(core_steps[0].get("uses") == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" and core_steps[0].get("with") == {"fetch-depth": 0, "persist-credentials": False}, "workflow: core candidate checkout drift")
+        require(core_steps[1].get("run") == "rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy\npython3 -B scripts/setup-flutter-ci.py", "workflow: pinned core toolchain drift")
+        require([step.get("run") for step in core_steps[2:]] == ["./scripts/check-core.sh", "./scripts/check-mobile.sh"], "workflow: real core and mobile checks required")
+    else:
+        errors.append("workflow: Core Quality must execute real core and mobile checks")
 
     issue_config = object_at(".github/ISSUE_TEMPLATE/config.yml")
     contacts = issue_config.get("contact_links")
@@ -490,11 +502,27 @@ def check_governance(root, files, documents):
         name for name in files if Path(name).suffix in {".rs", ".go", ".dart"}
         or Path(name).name in {"Cargo.toml", "go.mod", "pubspec.yaml"}
     ]
+    covered = lambda name: (
+        name == "Cargo.toml" or name.startswith("crates/ledger-core/")
+        or name.startswith("crates/ledger-mobile/") or name.startswith("apps/m0_probe/")
+    ) and Path(name).suffix != ".go"
+    uncovered = [name for name in sources if not covered(name)]
     require(
-        not sources,
+        not uncovered,
         "language implementation has no quality component; add real checks before introducing: "
-        + ", ".join(sources[:5]),
+        + ", ".join(uncovered[:5]),
     )
+    for name in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "crates/ledger-core/Cargo.toml", "crates/ledger-mobile/Cargo.toml", "scripts/check-core.sh", "scripts/check-mobile.sh", "scripts/setup-flutter-ci.py", "apps/m0_probe/pubspec.yaml", "apps/m0_probe/pubspec.lock"):
+        require(name in files, f"core quality source missing: {name}")
+    if "Cargo.toml" in files:
+        try:
+            cargo = tomllib.loads((root / "Cargo.toml").read_text())
+            require(cargo.get("workspace", {}).get("package", {}).get("version") == version.get("productVersion"), "version: Cargo mirror drift")
+            require(cargo.get("workspace", {}).get("members") == ["crates/ledger-core", "crates/ledger-mobile"], "core: workspace inventory drift")
+            pub = object_at("apps/m0_probe/pubspec.yaml")
+            require(pub.get("version") == f"{version.get('productVersion')}+{version.get('flutterBuildNumber')}", "version: Flutter mirror drift")
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            errors.append(f"Cargo.toml: invalid manifest: {error}")
     return errors
 
 

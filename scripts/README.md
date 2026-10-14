@@ -1,6 +1,6 @@
 # 仓库检查
 
-检查入口使用 Python 3.11+ 标准库和 Git，不安装依赖、不访问网络、不修改文件或暂存区。Shell 入口适用于 macOS / Linux；其他环境可以直接运行 Python 入口。显式生成命令 `--write-workflow` 单独用于更新下述生成文件，不属于只读检查。
+仓库治理入口使用 Python 3.11+ 标准库和 Git，不安装依赖、不访问网络、不修改文件或暂存区。Shell 入口适用于 macOS / Linux；其他环境可以直接运行 Python 入口。显式生成命令 `--write-workflow` 单独用于更新下述生成文件，不属于只读检查。Rust / Flutter 入口会使用构建缓存并在缓存缺失时下载锁定依赖，不能套用治理入口的无网络说明。
 
 ```bash
 ./scripts/check-repo.sh
@@ -21,6 +21,8 @@ python3 -B scripts/check-repo.py
 | `check-text-files` | Git 已跟踪和未忽略的未跟踪文件，UTF-8、无 BOM、LF、末尾换行、尾随空白、JSON / Issue JSON-compatible YAML 解析、重复键、生成 workflow 与来源逐字一致 |
 | `check-docs` | 上述文本检查，加 Markdown 本地链接 / 锚点、代码围栏、表格列数、根协作入口一致 |
 | `check-repo` | 上述检查，加必需资产、版本格式、远端目标 / Ruleset / workflow / Issue 配置契约、强制跟踪忽略产物的拒绝、无门禁语言实现阻断、实际 Git diff 空白与可选 PR 提交范围；运行检查器自身的负向回归 |
+| `check-core` | Rust fmt、锁定 workspace all-features test、all-targets clippy、C header 的 clang 语法检查；不执行移动设备构建 |
+| `check-mobile` | 锁定 pub、Dart format、fatal-infos analyze、Flutter test；实际加载宿主 Rust / SQLCipher，另验证 UI 错误与停止等待 |
 
 Markdown 允许非空行末的两个空格作硬换行；其他尾随空格仍报错。文件链接必须位于仓库并指向会进入 Git 的材料，避免链接只在维护者机器上存在。代码围栏里的命令和占位路径不作真实文档链接。外部 URL 不联网检查。
 
@@ -35,18 +37,28 @@ python3 -B scripts/check-repo.py --write-workflow
 
 Issue 表单继续使用 JSON-compatible YAML，按 JSON 完整解析。其他任意 YAML 不宣称通过语法校验；新增自由编辑的 YAML 配置时，先选择正式解析依赖并更新检查器、CI 与回归。
 
-检查器不作秘密扫描、法律审查、账务核算或业务测试。未跟踪的忽略目录不扫描；已跟踪文件不会因 `.gitignore` 而跳过，强制跟踪的忽略产物会报错。未知二进制文件不按 UTF-8 处理，已知文本扩展名中的 NUL / 非 UTF-8 仍失败。正式材料单文件超过 5 MiB 时失败，较大资产需先说明来源和实际交付用途再调整规则。
+仓库治理检查器不作秘密扫描、法律审查、账务核算或业务测试。业务结果由上面的实际语言入口验证。未跟踪的忽略目录不扫描；已跟踪文件不会因 `.gitignore` 而跳过，强制跟踪的忽略产物会报错。未知二进制文件不按 UTF-8 处理，已知文本扩展名中的 NUL / 非 UTF-8 仍失败。正式材料单文件超过 5 MiB 时失败，较大资产需先说明来源和实际交付用途再调整规则。
 
 ## 自动化契约与扩展
 
 `PR Checks` 在合并候选执行 `check-repo`，提交检查不把 GitHub 合成 merge commit 当作用户提交。真实 merge commit 根据父提交数量豁免 Conventional Commits；单父提交即使以 `Merge` 开头也不能绕过检查。PR 范围拒绝已知 AI 的 `Co-authored-by` 署名。
 
-workflow 的聚合必须 `always()` 等待全部真实组件，只接受全体 `success`。检查器验证聚合脚本、依赖、权限、凭据、Action pin 与触发契约；负向回归实际执行聚合脚本，证明失败、取消、跳过或缺失结果会拒绝。
+workflow 的聚合必须 `always()` 等待 `Repo Hygiene` 与 `Core Quality`，只接受全体 `success`。后者使用 `rust-toolchain.toml` 的 Rust 和 [setup-flutter-ci.py](setup-flutter-ci.py) 的固定 Flutter revision，复用两个真实语言入口。设置脚本只接受 GitHub Actions 环境，在 RUNNER_TEMP 准备 SDK，不用于修改开发机工具链。检查器验证聚合脚本、依赖、权限、凭据、Action pin 与触发契约；负向回归实际执行聚合脚本，证明任一组件失败、取消、跳过或缺失都会拒绝。
 
 新增 workflow 必须同步审阅清单，避免额外 push / tag 触发或重复 required context 绕开声明的 CI 策略。
 
 Action 使用 [actions/checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) 的[完整 commit](https://github.com/actions/checkout/commit/3d3c42e5aac5ba805825da76410c181273ba90b1)。选择记录用于复核引用，不宣称已在远端运行；升级时审阅来源、权限和实际 PR 行为。
 
-第一次添加 Rust / Go / Dart 源文件或 `Cargo.toml` / `go.mod` / `pubspec.yaml` 时，现有仅治理组件的配置会失败。接入真实语言检查后，同一变更更新 workflow、检查器组件契约、此说明和回归；不能简单删掉阻断或添加返回成功的 job。更复杂的恢复、协议、数据库、平台与安全验证按[开发规范](../docs/development/README.md)执行。
+Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/ledger-mobile` 和 `apps/m0_probe`；未知语言工程或 Go 实现仍会阻断。检查器同时核对必需 manifests / lockfile / 工具链和根版本镜像，语言组件不能增加跳过条件或改成返回成功的脚本。新增实际模块或语言时同步更新 workflow、检查器契约、说明和回归；更复杂的恢复、协议、数据库、平台与安全验证按[开发规范](../docs/development/README.md)执行。
+
+## 移动构建、生成与证据
+
+[build-mobile-core.py](build-mobile-core.py) 由 Dart build hook 调用，以真实目标编译同一个 Rust release code asset；不会安装工具、制造空库或回退宿主。Android clang / ar / ranlib 与 Apple SDK 显式传递。移动构建与实际 `flutter drive` 验证命令见[实验说明](../docs/development/mobile-core-prototype.md)，模拟器和真机证据分别记录。
+
+[generate-mobile-bridge.py](generate-mobile-bridge.py) 使用项目内固定 FRB / cargo-expand，从 `crate::api` 生成 Rust / Dart binding，检查工具版本并关闭自动依赖升级。它会写生成代码，只在 API 改动后显式执行。
+
+[collect-native-notices.py](collect-native-notices.py) 从本机锁定缓存收集两端 arm64 与验证宿主的 native 许可，并保留固定 Rust 标准库的官方许可集；`--check` 只读比较。它不联网，缓存缺失明确失败；重新生成需复核 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)。普通 CI 没有宣称完整供应链扫描。
+
+运行报告和合成截图由 integration driver 写入 `local-evidence/m0-b/`；构建产物和缓存保持忽略。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
 
 错误逐项报告并返回非零；检查器没有历史预算或默认成功模式。`--only` 用于定向本地检查，PR workflow 必须使用完整入口。

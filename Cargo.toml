@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/ledger-core", "crates/ledger-mobile"]
+resolver = "2"
+
+[workspace.package]
+version = "26.10.1"
+edition = "2024"
+rust-version = "1.96"
+license-file = "LICENSE"
+
+[workspace.dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+getrandom = "=0.3.4"
+zeroize = "=1.8.2"
+tempfile = "=3.27.0"
+
+[profile.release]
+panic = "unwind"
+# Rust/LLVM strip 在 Apple 27 SDK 下可破坏 LINKEDIT 对齐；保持链接器原始布局。
+strip = "none"

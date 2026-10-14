@@ -49,7 +49,7 @@ Rust 的价值来自单一账务和安全实现、跨端复用及可测试性。
 
 最低 Android / iOS 版本、ABI、Flutter / Rust / Go 版本、系统密钥保护等级通过工具链与依赖矩阵冻结；框架支持不等于产品可用。优先覆盖 Android arm64、iOS 真机 arm64，开发模拟器作为额外验证面。
 
-两端最小接入、桥接比较、加密和系统密钥的执行条件及证据要求见[移动端核心验证矩阵](development/mobile-core-validation.md)。该矩阵定义待验证动作，不表示工具链或依赖已安装，也不提前选定具体版本和最低系统。
+两端最小接入、桥接比较、加密和系统密钥的执行条件及证据要求见[移动端核心验证矩阵](development/mobile-core-validation.md)。合成接入实验的调用、存储边界、构建候选及复现入口见[移动核心实验](development/mobile-core-prototype.md)，实际证据统一进入 current；实验锁定值不代表生产选型或最低系统已冻结。
 
 ## 3. 本地事务与生命周期
 
@@ -83,7 +83,7 @@ M2 冻结身份与会话的具体格式、轮换、设备标识、邀请和恢�
 
 ## 6. 未来目录方向
 
-后续实际引入实现时按职责创建，不提前创建空 crate、module 或应用脚手架：
+实现按真实职责创建，不提前创建空 crate 或 module。合成接入实验使用 `apps/m0_probe` 调用 `crates/ledger-mobile` 的两个 bridge，由 `crates/ledger-core` 共用领域、SQLCipher 存储和固定 probe；没有由 Flutter 维护另一份账务算法，也没有生产密钥、同步或 Go 服务。后续产品方向为：
 
 ```text
 apps/          Flutter 客户端
