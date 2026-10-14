@@ -41,7 +41,7 @@ fn insert(bytes: Vec<u8>) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn radishledger_probe_abi() -> u32 {
-    1
+    radishledger_core::validation::ABI
 }
 
 /// 当前已加载代码资产的实际路径，供 FRB 使用同一库，不猜测打包目录。
@@ -86,6 +86,30 @@ pub unsafe extern "C" fn radishledger_probe_run(input: *const u8, length: usize)
         radishledger_core::probe::run_json(directory).into_bytes()
     }));
     insert(result.unwrap_or_else(|_| error("internal_error", "核心调用异常")))
+}
+
+/// # Safety
+/// input 必须在整个调用期间指向 length 字节的可读内存；只借用，不保留。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn radishledger_probe_validate(input: *const u8, length: usize) -> u64 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if input.is_null() || length == 0 || length > MAX_INPUT {
+            return error("invalid_argument", "输入长度或指针无效");
+        }
+        // SAFETY: 调用者按 C 契约提供存活的 length 字节。
+        let bytes = unsafe { std::slice::from_raw_parts(input, length) };
+        let Ok(request) = std::str::from_utf8(bytes) else {
+            return error("invalid_utf8", "输入不是有效 UTF-8");
+        };
+        crate::api::run_validation(request.to_owned()).into_bytes()
+    }));
+    insert(result.unwrap_or_else(|_| error("internal_error", "核心调用异常")))
+}
+
+/// 当前结果句柄数，仅供实验观测；毒化明确返回 -1。
+#[unsafe(no_mangle)]
+pub extern "C" fn radishledger_probe_buffer_count() -> i32 {
+    BUFFERS.lock().map(|b| b.values.len() as i32).unwrap_or(-1)
 }
 
 #[unsafe(no_mangle)]

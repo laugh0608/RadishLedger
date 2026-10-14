@@ -2,6 +2,7 @@
 pub mod domain;
 pub mod probe;
 pub mod store;
+pub mod validation;
 
 use serde::Serialize;
 

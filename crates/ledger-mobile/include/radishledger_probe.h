@@ -11,6 +11,9 @@ extern "C" {
 uint32_t radishledger_probe_abi(void);
 uint64_t radishledger_probe_run(const uint8_t *input, size_t length);
 uint64_t radishledger_probe_library_path(void);
+/* M0 故障实验 JSON；与 run 相同的 UTF-8 长度 / 结果所有权约束。 */
+uint64_t radishledger_probe_validate(const uint8_t *input, size_t length);
+int32_t radishledger_probe_buffer_count(void);
 size_t radishledger_probe_buffer_len(uint64_t handle);
 /* 容量不足不写入，返回 0；成功返回完整长度。 */
 size_t radishledger_probe_buffer_copy(uint64_t handle, uint8_t *output, size_t capacity);

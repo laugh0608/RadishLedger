@@ -62,3 +62,8 @@ Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/led
 运行报告和合成截图由 integration driver 写入 `local-evidence/m0-b/`；构建产物和缓存保持忽略。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
 
 错误逐项报告并返回非零；检查器没有历史预算或默认成功模式。`--only` 用于定向本地检查，PR workflow 必须使用完整入口。
+
+
+### M0-B 故障与跨进程恢复
+
+`check-core.sh` 包含共享 SQLCipher 并发和独立子进程 SIGKILL 恢复检查；`check-mobile.sh` 包含实际两种 bridge 的有界压力、panic / ABI 错误及句柄归还检查。模拟器还需分别运行 `resilience_test.dart` 与 `check-mobile-recovery.py`，步骤、固定合成材料和清理边界见[移动核心实验](../docs/development/mobile-core-prototype.md#6-压力故障并发与强杀恢复实验)。该 Python 入口只控制明确指定的现有模拟器内本项目 App，不启动 / 新建设备；它需要可用 adb / simctl 权限，真实结果保存于忽略目录。普通宿主检查不能替代移动端证据。

@@ -18,7 +18,7 @@ Flutter 验证界面 → Dart 工作 isolate → 薄 C ABI 或 flutter_rust_brid
 
 probe 使用真实 SQLCipher 事务：每次保存前在 outbox 插入点以测试触发器拒绝，核对事实、修订、序号和队列均回滚，再执行正常保存及重复提交。每个案例关闭后使用同一内存密钥重新打开并核对，另用随机错钥尝试打开。金额预期来自手写 JSON，集合输出在替换合成别名后排序以保持跨调用可比较。
 
-这是固定合成材料的接入实验。账户 / 分类由实验准备动作建立；没有生产账户创建原子流程、用户开库、进程重启后的解锁、系统密钥 adapter、备份或迁移。schema `1`、C ABI `1` 和 JSON 返回结构都是实验契约，不能解释为生产格式冻结。数据库密钥始终只在本次 Rust 进程内存；它不是完整 bootstrap 或独立恢复方案。
+这是固定合成材料的接入实验。账户 / 分类由实验准备动作建立；没有生产账户创建原子流程、用户开库、进程重启后的解锁、系统密钥 adapter、备份或迁移。schema `1`、C ABI `1` 和 JSON 返回结构都是实验契约，不能解释为生产格式冻结。上述共同案例的数据库密钥始终只在本次 Rust 进程内存；它不是完整 bootstrap 或独立恢复方案。跨进程故障 runner 使用另行限定的公开合成测试材料，见下文。
 
 ## 2. 薄 C ABI 契约
 
@@ -107,3 +107,45 @@ iOS 未签名 App 是真机目标构建产物，不能直接安装或当作真�
 后续直接复用现有 Android / iOS 模拟器，不默认创建项目专用设备或下载额外系统镜像。实验数据限定在本项目 App 沙盒；如验证确需新系统版本、干净设备或破坏性操作，先说明具体原因与影响再确认范围。
 
 Android / iOS 模拟器、adb、Gradle 或 Dart 调试进程逐项记录创建归属与端口及启动前状态；只关闭本批启动且确认没有其他任务使用的实例，不关闭原已运行的共享设备。关闭 / 删除专用模拟器可以清除实验 App 容器，不能对用户设备或共享模拟器执行全局清理。下载包、构建工具和缓存可以保留在忽略目录供复现；结束必须停止本批进程并记录结果，不能遗留未知后台服务。
+
+
+## 6. 压力、故障、并发与强杀恢复实验
+
+`validation::Request` 是新增实验 JSON 的单一契约：显式 ABI、绝对临时目录与有类型的 action；未知字段 / action、超长请求与 ABI 不符均拒绝。薄 C ABI 的 `radishledger_probe_validate` 与 FRB 的 `run_validation` 共用同一个 Rust dispatcher，输入上限 4096 bytes、结果句柄所有权沿用第 2 节。合成 panic 在 Rust 边界捕获为 `internal_error`，随后必须仍能调用真实加密核心；不更换全局 panic hook，不把 OOM abort / 非法指针归为可恢复异常。
+
+压力 runner 先核对薄 C ABI 的 16 句柄容量、短缓冲区不写、重复释放拒绝、无效 UTF-8 / 空指针 / 过长长度拒绝，再对每个 bridge 执行 200 次预热与 3 × 2000 次真实 native 错误返回。每批要求活跃句柄归零，记录进程 RSS；预热后到末批增长超过 64 MiB 则失败。这是短时异常增长检查，不是泄漏检测器、allocator 峰值、长期稳定性或真机内存结论。FRB 在一个工作 isolate 中初始化后执行各批，最后 dispose；并不宣称覆盖数千次 FRB runtime 初始化。
+
+并发实验对同一随机密钥的 SQLCipher 库打开 4 个写连接和 1 个读连接。四个 writer 竞争同一笔 7 分转账，各自提交 16 笔 1 分转账，并重复回调每笔意图；最终只有 65 笔新转账，71 次重放。两笔期初为现金 10000 分、银行 20000 分，最终必须为 9929 / 20071 分，事实 / outbox / 序号均为 67。读连接在同一读事务内核对余额守恒与各表计数，不通过分离查询拼接伪快照。常规 `Store::commit` 和故障观测点共用唯一写入路径。
+
+UI 集成测试在实际核心工作期间连点并停止等待，确认只调用一次、主 isolate 定时心跳继续、核心真实完成后晚结果不覆盖取消状态。它不声称底层事务被取消；更精细的帧延迟、KDF profile 与长时间压力仍需后续证据。
+
+### 独立进程恢复
+
+宿主检查通过 `m0-recovery-worker` 子进程执行；移动端由 `lib/recovery_main.dart` 与 `scripts/check-mobile-recovery.py` 配合，必须先安装该 runner 到指定的现有模拟器。控制文件只包含 bridge、随机 run 身份和中断点，放在本项目 App 的临时目录（当前 Flutter Android 为 code_cache，iOS 为 tmp；runner 输出实际路径元数据供核对），不读取其他 App 数据。脚本只接受 Android emulator 或明确的已启动 iOS Simulator；已有控制文件会阻断，不默认覆盖未知实验。
+
+恢复 fixture 使用公开固定字节 `[0xA7; 32]` 作为非秘密测试材料，只能处理随机命名且带归属标记的合成库。它刻意让独立进程重开同一实验数据库，不能作为用户 key、生产 bootstrap、解锁或备份方案；不写入秘密文件，不操作 Keystore / Keychain，也不用于证明密钥保密性。正式密钥恢复仍由 M0-C 设计与验收。
+
+外部 harness 等待 Rust 写入的 run / PID / 观测点标记，核对目标进程属于本项目 App 后发送 SIGKILL：
+
+| 中断点 | 新进程读取时的独立预期 |
+| --- | --- |
+| 事实与 selected 已写、outbox 尚未写 | 两笔期初完整保留；转账不存在；序号 / 修订 / outbox 均为 2 |
+| outbox 与序号已写、事务尚未 commit | 同上；未提交事务整体回滚 |
+| commit 已完成、结果尚未返回 | 1700 分转账完整保留；余额为 8300 / 21700；序号 / 修订 / outbox 均为 3 |
+
+新进程必须具有不同 PID，核对具体 operation identity 与两侧余额后重放同一意图，再重放一次；始终只有一笔转账，并拒绝复用同一操作身份提交 1701 分。没有到达标记或超过 45 秒未被外部强杀均失败，不以主动返回错误代替进程中断。成功后清理本次带归属标记的 fixture 和控制文件；失败保留合成材料供核对。该实验覆盖进程强杀，不代表断电 / 文件系统丢写、真实设备重启或秘密恢复。
+
+```bash
+# 保留第 4 节工具链环境；先启动选定的现有模拟器。
+cd apps/m0_probe
+flutter drive --driver=test_driver/resilience_test.dart \
+  --target=integration_test/resilience_test.dart --device-id=DEVICE_ID
+# 安装实验专用 runner；--no-resident 退出调试会话，App 等待合成命令。
+flutter run --debug --no-resident --target=lib/recovery_main.dart --device-id=DEVICE_ID
+cd ../..
+python3 -B scripts/check-mobile-recovery.py android emulator-5568
+# iOS 使用精确 Simulator UDID，不能传 booted 或真机标识。
+python3 -B scripts/check-mobile-recovery.py ios IOS_SIMULATOR_UDID
+```
+
+两套集成入口分别保留 `*-resilience-report.json` 与 `*-recovery-report.json`，记录每个 bridge、RSS、读样本和三处强杀前后的事实。恢复 runner 会替换本项目实验 App 的入口；后续普通调试应重新运行 `lib/main.dart`，不据此更改正式产品入口。测试结束按进程归属关闭本次启动的模拟器 / adb，保留设备和其他 App。

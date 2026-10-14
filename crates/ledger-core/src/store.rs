@@ -9,6 +9,11 @@ use zeroize::Zeroizing;
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {
+    // 公开合成材料，仅供 M0 跨进程故障实验；不是用户密钥或恢复方案。
+    pub(crate) fn public_recovery_fixture() -> Self {
+        Self(Zeroizing::new([0xA7; 32]))
+    }
+
     pub fn random() -> Result<Self> {
         let mut bytes = Zeroizing::new([0_u8; 32]);
         getrandom::fill(bytes.as_mut())
@@ -237,6 +242,15 @@ impl Store {
     }
 
     pub fn commit(&mut self, write: &Write) -> Result<WriteEffect> {
+        self.commit_observed(write, |_| Ok(()))
+    }
+
+    // 实验观测点与正常提交共用唯一事务路径；不提供第二套保存实现。
+    pub(crate) fn commit_observed(
+        &mut self,
+        write: &Write,
+        mut observe: impl FnMut(crate::validation::CommitPoint) -> Result<()>,
+    ) -> Result<WriteEffect> {
         for id in [&write.operation_id, &write.event_id, &write.revision_id] {
             valid_id(id)?;
         }
@@ -346,6 +360,7 @@ impl Store {
         )
         .map_err(db_error)?;
         tx.execute("INSERT INTO selected(event_id,revision_id) VALUES (?1,?2) ON CONFLICT(event_id) DO UPDATE SET revision_id=excluded.revision_id", params![write.event_id,write.revision_id]).map_err(db_error)?;
+        observe(crate::validation::CommitPoint::BeforeOutbox)?;
         tx.execute(
             "INSERT INTO outbox(operation_id,intent,revision_id) VALUES (?1,?2,?3)",
             params![write.operation_id, intent, write.revision_id],
@@ -358,7 +373,9 @@ impl Store {
         .map_err(db_error)?;
         tx.execute("UPDATE metadata SET sequence=sequence+1 WHERE id=1", [])
             .map_err(db_error)?;
+        observe(crate::validation::CommitPoint::BeforeCommit)?;
         tx.commit().map_err(db_error)?;
+        observe(crate::validation::CommitPoint::AfterCommit)?;
         Ok(WriteEffect::Committed)
     }
 
@@ -497,6 +514,33 @@ impl Store {
         tx.execute("UPDATE metadata SET sequence=sequence+1 WHERE id=1", [])
             .map_err(db_error)?;
         tx.commit().map_err(db_error)
+    }
+
+    pub(crate) fn validation_audit(&self) -> Result<crate::validation::Audit> {
+        let tx = self.connection.unchecked_transaction().map_err(db_error)?;
+        let snapshot = read_snapshot(&tx, &[])?;
+        let sequence = tx
+            .query_row("SELECT sequence FROM metadata WHERE id=1", [], |r| r.get(0))
+            .map_err(db_error)?;
+        let revisions = tx
+            .query_row("SELECT count(*) FROM revisions", [], |r| r.get(0))
+            .map_err(db_error)?;
+        let operations = {
+            let mut stmt = tx
+                .prepare("SELECT operation_id FROM outbox ORDER BY operation_id")
+                .map_err(db_error)?;
+            stmt.query_map([], |r| r.get(0))
+                .map_err(db_error)?
+                .collect::<std::result::Result<Vec<String>, _>>()
+                .map_err(db_error)?
+        };
+        tx.commit().map_err(db_error)?;
+        Ok(crate::validation::Audit {
+            snapshot,
+            sequence,
+            revisions,
+            operations,
+        })
     }
 
     pub fn snapshot(&self, months: &[String]) -> Result<Snapshot> {

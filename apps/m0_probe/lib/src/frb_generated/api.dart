@@ -9,3 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// 两个 bridge 候选调用同一 Rust 合成实验，结果是版本化 UTF-8 JSON。
 Future<String> runProbe({required String directory}) =>
     RustLib.instance.api.crateApiRunProbe(directory: directory);
+
+/// M0 故障实验专用，不接受生产账库或生产解锁材料。
+Future<String> runValidation({required String requestJson}) =>
+    RustLib.instance.api.crateApiRunValidation(requestJson: requestJson);
