@@ -67,3 +67,8 @@ Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/led
 ### M0-B 故障与跨进程恢复
 
 `check-core.sh` 包含共享 SQLCipher 并发和独立子进程 SIGKILL 恢复检查；`check-mobile.sh` 包含实际两种 bridge 的有界压力、panic / ABI 错误及句柄归还检查。模拟器还需分别运行 `resilience_test.dart` 与 `check-mobile-recovery.py`，步骤、固定合成材料和清理边界见[移动核心实验](../docs/development/mobile-core-prototype.md#6-压力故障并发与强杀恢复实验)。该 Python 入口只控制明确指定的现有模拟器内本项目 App，不启动 / 新建设备；它需要可用 adb / simctl 权限，真实结果保存于忽略目录。普通宿主检查不能替代移动端证据。
+
+
+### M0-C bootstrap 与独立解锁
+
+[check-mobile-bootstrap.py](check-mobile-bootstrap.py) 经 App 私有 FIFO 传递有界秘密字节，复用 [mobile_probe_device.py](mobile_probe_device.py) 的现有模拟器控制；该共享模块同时供 M0-B 恢复入口使用。两种 bridge 验证创建确认、独立材料跨 PID 解锁、错误输入保全、六处中断和精确清理。系统认证能力不足会单独记录未执行，不降低保护。入口、安装模式、UI 验证与失败残留处理见[移动核心实验第 7 节](../docs/development/mobile-core-prototype.md#77-已接入的复现入口与证据边界)。本入口只操作合成数据，不接受真实账库。

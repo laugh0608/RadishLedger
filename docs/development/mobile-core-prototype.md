@@ -149,3 +149,109 @@ python3 -B scripts/check-mobile-recovery.py ios IOS_SIMULATOR_UDID
 ```
 
 两套集成入口分别保留 `*-resilience-report.json` 与 `*-recovery-report.json`，记录每个 bridge、RSS、读样本和三处强杀前后的事实。恢复 runner 会替换本项目实验 App 的入口；后续普通调试应重新运行 `lib/main.dart`，不据此更改正式产品入口。测试结束按进程归属关闭本次启动的模拟器 / adb，保留设备和其他 App。
+
+## 7. M0-C bootstrap、解锁与独立恢复方案
+
+本节保留实施方案与复现契约；实际实现范围和取得的证据统一看 current / devlog。沿用[威胁模型](../privacy-threat-model.md)的候选算法和密钥层次，不冻结生产格式、最低系统、bridge 或 KDF profile。实验仍只接受合成账务，但密钥在运行时随机生成，不能沿用 M0-B 的公开固定 DB Key。
+
+### 7.1 最小闭环与依赖范围
+
+闭环为：创建独立恢复材料 → 持久化 bootstrap → 创建加密库 → 确认恢复材料并核对 → 发布可用状态 → 保存共同账务 → 结束进程 → 解锁原库 → 使本次系统保护项不可用 → 独立恢复原库 → 核对未同步事实 → 重建日常保护 → 再次重启解锁。系统日常保护未就绪与账库独立解锁可用分别报告。
+
+Rust 继续承担随机数、派生、认证封装、bootstrap 状态、SQLCipher 和账务核对；Swift / Kotlin 只适配系统秘密存取及认证错误，Flutter 只呈现流程和调用。两个 bridge 共用 Rust 契约，不把秘密放入现有普通 JSON 结果注册表或报告。跨语言秘密使用有界字节缓冲区、最短借用和显式清理，平台 / Dart 不可保证清零的副本需记录，不承诺绝对内存擦除。
+
+本批经项目所有者确认引入以下固定直接依赖；仅启用派生、封装、分配及必要清理 features，不引入随机源替代现有 `getrandom`，不启用不需要的并行 KDF。实际 Cargo 解析后复核传递包、MSRV、features、许可、已知安全公告及移动目标，更新 lockfile、第三方清单与包内 notices；解析失败不自动换版本。
+
+| 候选 | 用途与来源 | 许可 |
+| --- | --- | --- |
+| chacha20poly1305 `0.11.0` | [RustCrypto AEAD](https://docs.rs/crate/chacha20poly1305/0.11.0)，只使用 XChaCha20-Poly1305 | MIT OR Apache-2.0 |
+| argon2 `0.6.0` | [RustCrypto Argon2](https://docs.rs/crate/argon2/0.6.0)，只使用 Argon2id v19 | MIT OR Apache-2.0 |
+| hkdf `0.13.0` | [RustCrypto HKDF](https://docs.rs/crate/hkdf/0.13.0)，用途隔离派生 | MIT OR Apache-2.0 |
+| sha2 `0.11.1` | [RustCrypto SHA-2](https://docs.rs/sha2/0.11.1/sha2/)，HKDF-SHA256 与非秘密文件核对 | MIT OR Apache-2.0 |
+
+候选采用 RustCrypto 的共同实现，避免两端各选一套密码库；不增加 Flutter 安全存储插件或全局工具。四个直接依赖及其必要传递依赖需要下载缓存并改变 Cargo 声明 / lockfile，是本方案新增的实施影响；不顺带升级已有组件。依赖缓存和多目标编译产物可保留在既有忽略目录，实际声明与传递版本以 Cargo.toml / Cargo.lock 为准，许可已由固定缓存重新收集。
+
+### 7.2 封装与资源边界
+
+- 每次创建独立生成 32-byte Root Key、Device DB Key、Recovery Secret，以及随机 vault / device 身份；该切片不预建 Book / Object / Archive 功能。
+- 口令经 Argon2id v19 派生，再以固定用途标签派生封装钥；Recovery Secret 经独立 HKDF 标签派生另一封装钥。两条路径分别认证解封同一 Root Key，再由 Root Key 派生本机 DB 封装钥、解封原 Device DB Key。系统路径只保护独立随机的本机解锁钥，用它封装 Root Key，系统删除不改变独立恢复关系。
+- XChaCha20-Poly1305 每次封装使用新 24-byte 随机 nonce，认证成功后才交付明文。AAD 使用明确的定长字段和长度前缀编码，绑定实验格式、算法、用途、vault / device 身份、封装代次；口令封装还绑定 profile、salt 与完整参数。JSON 如用于磁盘外壳，不能直接充当 AAD 编码规范。
+- 初始运行 profile 只接受 64 MiB、3 次迭代、1 路、32-byte 输出及 16-byte 随机 salt；未知、减弱、超大、溢出参数在分配前拒绝。独立算法向量用专用测试入口，不使较弱向量参数成为运行时可接受 profile。
+- bootstrap 读取上限 16 KiB，固定封装数量与字段长度；口令按原始 UTF-8 字节处理，不 trim 或隐式 Unicode 归一化，实验输入上限 1024 bytes。资源上限不是对任意弱口令安全性的承诺。
+- 恢复文本包含实验版本、完整随机秘密和输入校验；校验仅发现录入错误，最终身份和正确性仍靠 AEAD。恢复资料包含 vault 身份及必要封装信息，秘密不默认复制、落盘或备份。它只能解锁已有数据，不冒充完整账务归档。
+- 同时只执行一个 KDF；后台 / 取消使会话代次失效，晚完成结果不得打开会话或更新 UI。底层不支持中途停止时明确显示仍在结束工作，完成后清理并丢弃结果，不把“停止等待”说成已停止计算。
+
+### 7.3 bootstrap 的持久化与中断
+
+bootstrap 位于 App 私有、排除自动备份的独立目录，与 DB 分开；目录 `0700`、普通文件 `0600`。不写明文根钥、DB Key、口令或恢复秘密。系统保护引用可缺失，但独立封装不得只存入尚不能解锁的 DB。平台备份排除同时覆盖 DB、WAL、临时封装和状态文件，不能只排除主 DB。
+
+创建使用独占随机暂存目录，文件写入、同步和同一文件系统的发布有明确顺序。活动账库存在时拒绝重新创建；并发创建只能发布一个活动身份，不能依赖进程内锁证明跨进程排他。发布失败保留可诊断暂存，不替换旧活动账库。
+
+| 中断边界 | 重启后的行为 |
+| --- | --- |
+| 独立封装完整落盘之前 | 标记创建未完成；没有可用账库，不宣布成功；保留现场，不自动覆盖重建 |
+| 封装完成、DB 尚未建立 | 用原独立材料认证后继续原创建身份；只有确认 DB 从未建立时才能创建，不产生第二套钥 |
+| DB 创建开始但未完成 | 先尝试打开并核对身份 / schema；损坏或部分 schema 明确失败，保留文件，不自动删库 |
+| DB 已核对、恢复材料未确认 | 保留待确认状态，不允许新增账务；重新认证恢复材料后继续 |
+| 系统项已创建、活动状态未发布 | 通过本次精确引用核对孤立项；系统操作幂等且不得覆盖同名旧项；独立恢复路径仍完整 |
+| 发布之前 / 之后 | 重启只有未发布暂存或同一完整活动身份；发布完成后强杀应读到同一 DB 与封装 |
+
+活动标记不是单独的可信依据：解锁后核对封装认证身份、DB 内受加密保护的身份和 schema。失败不得新建空库。错误材料和损坏的 bootstrap 在碰 DB 前拒绝；需要检查 DB 的失败场景使用只读核对或保全副本，不能让失败验证修改旧文件。文件同步失败是未定 / 失败状态，不宣称掉电持久化成功；SIGKILL 不替代断电实验。
+
+### 7.4 系统保护、失效与重建
+
+| 平台 | 拟验证的日常保护 | 能力与停止线 |
+| --- | --- | --- |
+| iOS | Keychain 项采用 `WhenPasscodeSetThisDeviceOnly` 与 `userPresence`，不启用同步；仅保存本机解锁钥 | 无设备密码或访问控制能力时报告不支持；不改为无认证项。Simulator 成功不证明 Secure Enclave 或真机保护 |
+| Android | Android Keystore 不可导出 AES-256-GCM 钥封装本机解锁钥；系统生成 IV，认证绑定用途 / 身份；要求系统用户认证 | 首个具体实验路径针对已有 API 35，采用 API 30+ 认证参数；旧 API 明确未支持，不提高正式最低系统。记录实际 KeyInfo 等级，不预设 StrongBox / TEE |
+
+平台策略依据 [Apple Keychain 认证示例](https://developer.apple.com/documentation/localauthentication/accessing-keychain-items-with-face-id-or-touch-id)与 [Android KeyGenParameterSpec](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder)。系统认证必须实际限制钥的取用，不能用一个与密钥操作无关的成功弹窗代替。缺锁屏 / 生物识别条件时可验证明确拒绝及独立口令恢复；该结果不能记成日常系统解锁通过，也不自动修改共享模拟器的安全设置。
+
+返回状态至少区分用户取消、认证拒绝、暂不可取、项缺失、已失效、不支持、认证密文损坏和平台错误；保留非秘密平台错误码。平台无法区分某些原因时如实返回已知类别，不凭空推断。取消不删除钥、不切换账库、不自动触发恢复。
+
+失效实验只删除本次创建的精确 alias / Keychain 项，验证“保护项缺失后的恢复”；它不等于已经验证移除锁屏密码、重新录入生物识别造成的真实失效。恢复成功后先核对原库事实、序号、outbox、候选和删除状态，再创建新代次日常保护并实测读取。原独立封装始终保留；新项及新封装均持久化并核对后才切换引用，最后按精确旧引用清理。任一步失败仍能通过原独立材料重试，不轮换 DB Key 或重新建库冒充恢复。
+
+### 7.5 验证层次与完成判据
+
+| 层次 | 必须取得的证据 | 不外推的结论 |
+| --- | --- | --- |
+| Rust 算法 | [RFC 5869](https://www.rfc-editor.org/rfc/rfc5869) HKDF、[RFC 9106](https://www.rfc-editor.org/rfc/rfc9106) Argon2id、[XChaCha 草案](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-xchacha-03)公开向量；逐字段篡改、截断、错误材料、极端参数拒绝 | XChaCha 草案不是正式 RFC；同实现 round-trip 不能替代向量；向量不证明整体安全 |
+| Rust 持久化 | 每个 bootstrap / 保护重建中断点、并发创建、短写 / IO 拒绝、文件与原身份保留；新进程独立材料开库 | 宿主文件系统不替代移动系统；强杀不替代断电 |
+| 两端模拟器 | 两种 bridge 共用流程；创建、真实新 PID 解锁、错误输入拒绝、系统项缺失后恢复、重建后再次重启；实际 UI 取消 / 后台及晚结果抑制 | 系统路径不支持时逐项记阻塞，不能用 mock、低保护项或跳过断言获得整批通过 |
+| 账务保真 | 使用共同样例的独立预期，比较事实 / 修订 / 删除 / 候选 / outbox / 序号与余额；验证未同步事实未丢失、重放不重复 | 同一次内存会话重开不能代替跨进程；余额相等不能证明事实完整 |
+| 文件与运行资源 | 检查 bootstrap、DB、实际生成的 WAL / journal / 临时文件；记录 KDF 耗时与进程峰值、串行限制及取消 UI 响应 | 字符串未检出不是全部密码证据；模拟器时间 / RSS 不冻结真机 profile |
+| 后续真机门槛 | release 正常 / 取消 / 拒绝 / 实际失效 / 设备重启 / 后台、硬件等级、KDF 时间和峰值内存 | 本次继续复用模拟器，未签名 iOS 或 Android APK 构建不算真机验收 |
+
+测试口令和恢复秘密运行时生成，仅由测试控制器内存持有并经不记录载荷的受限通道输入；不得通过命令参数、环境变量、日志、截图、报告或提交传递。测试控制器退出后不保证重新取得测试秘密，因此先完成全部恢复核对再清理。本批报告只留状态、非秘密身份与文件核对值；公开算法向量与合成金额可以进入测试材料，运行时秘密不能留作“复现证据”。
+
+### 7.6 执行对象与收尾
+
+复用现有 Pixel_9_Pro 和 iPhone 17 Pro（前次 iOS UDID `CB767BAB-1B1B-4AF8-A3FB-0C2B793A0756`），执行前重新核对版本、ID、进程归属与能力。Android 预计沿用空闲的 console port `5568`；端口被占用则先识别，不终止他人进程。无需服务端或额外网络服务。
+
+系统项限定在本项目 App 沙盒 / entitlement 内：Android alias 前缀 `radishledger.m0c.`；iOS service `com.radishledger.m0c`、account 为本次随机运行身份及代次。创建前核对不存在，清理使用完整身份，禁止按前缀批量删除、访问宿主登录钥匙串、清空模拟器或操作其他 App。删除测试保护项是故障实验的一部分，只适用于本次新建项。
+
+依赖解析 / 下载使用 Cargo 固定版本和既有缓存；按原入口生成 bridge、收集 notices、执行 `check-core` / `check-mobile` / `check-repo`、两端目标构建与集成实验。预计下载和首次多目标编译需要数十分钟，模拟器实验另需数十分钟，以实际耗时为准；单次 KDF 工作内存候选为 64 MiB，整进程峰值另测。证据保存在忽略的 `local-evidence/m0-c/`，构建缓存沿用既有目录。
+
+结束时先保存不含秘密的验证摘要，再精确清理本次合成账库、暂存及系统项，确认不存在本批孤立项；恢复 App 普通入口。只关闭本次启动的模拟器 / adb / 构建进程，保留设备定义、其他 App 和已有证据。检查后本地提交，不 push、发布或部署。新增依赖和本项目隔离系统项已获授权；共享设备锁屏设置保持不变。实际通过与未验证项记录在 current / devlog，不把实施方案当作整项验收。
+
+
+### 7.7 已接入的复现入口与证据边界
+
+`crates/ledger-core/src/bootstrap.rs` 是实验状态机，`crypto.rs` 执行固定算法与独立向量，`bootstrap_files.rs` 负责精确目录归属、发布和锁。Rust 1.96 的标准文件锁没有 Android 实现，因此 Android 显式调用现有固定 libc 的 NDK `flock`；其他目标使用标准库，锁占用与 IO 错误分别返回。没有在 Android 跳过排他。
+
+独立恢复材料为 `RLM0C1-` + 64 个十六进制字符 + `-` + 8 字符校验。UI 生成后显示一次，要求重新输入确认；未确认且没有账务的账库可用正确口令重新生成恢复材料，替换旧的未确认封装。已确认账库拒绝该入口。创建中途失败保留现场；DB 已开始但不存在时返回 `missing_database`，不自动新建。当前保真 fixture 使用 A01，恢复前后比较身份、完整业务表摘要及审计 / outbox，不宣称这一切片已覆盖非空候选和 tombstone 的跨重启恢复。
+
+两条 bridge 的秘密走独立有界字节输入 / 输出，不放入普通 JSON 结果句柄。平台 codec 可返回只读缓冲区，Dart 复制到本方可清理的字节数组；Swift Data / CFData、Dart 字符串和 codec 内部副本不承诺全部擦除。UI 锁定 / 取消使晚完成结果失效，核心工作结束前禁止重入；不宣称 Argon2 已被中途停止。
+
+在已授权、已启动的现有模拟器中安装控制入口。Android 构建须显式限定 arm64；iOS 使用指定 arm64 Simulator 的 `flutter run --debug --no-resident -d <UDID>`，本机通用 simulator 构建的 Flutter 双架构检查失败不能作为业务失败。两者目标均为 `lib/bootstrap_main.dart --dart-define=M0C_DRIVER=true`。随后从仓库根运行：
+
+```sh
+python3 -B scripts/check-mobile-bootstrap.py android emulator-5568
+python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793A0756
+```
+
+控制器不启动设备，要求准确设备和本项目包。秘密只在内存和 `0600` 私有 FIFO 中传递；Android 写入用 `adb shell -T` 的定长 `dd`，读取用 `exec-out`，避免 raw exec 的输入方向 / 完成语义造成短帧。帧短读、长度错误和超时立即失败，不输出载荷。脚本结束逐个清理登记的随机账库及系统引用；失败时保留非秘密 ownedRuns 报告，后续仅按这些身份处理。不能覆盖失败报告后忘记残留对象。
+
+实际 UI 验证入口为 `integration_test/bootstrap_test.dart`，驱动为 `test_driver/bootstrap_test.dart`，复用常规 `flutter drive --driver=... --target=... -d <device>`。它调用真实核心检查错误口令、锁定取消、晚结果抑制、重试及原库摘要，截图只在输入已清空的合成结果页生成。宿主 widget / platform 测试另验后台状态和只读 codec；模拟生命周期不代替系统任务预览或真机后台证据。
+
+报告与截图写入忽略目录 `local-evidence/m0-c/`。每端核心报告包含两条 bridge ×（正常重启 + 六个故障点）；`protectionPrepared` / `protectionPublished` 的核心 local-wrap 恢复单列，不冒充系统认证。实际平台测试根据现有能力执行：iOS Simulator 可核对精确 Keychain 项删除与重建；Android 无认证条件时明确记录 unsupported，日常保护与实际失效仍未验收。SIGKILL 不证明断电、磁盘短写或 fsync 失败恢复。

@@ -10,6 +10,33 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 Future<String> runProbe({required String directory}) =>
     RustLib.instance.api.crateApiRunProbe(directory: directory);
 
+Future<BootstrapReply> runBootstrap({
+  required String requestJson,
+  required List<int> secret,
+}) => RustLib.instance.api.crateApiRunBootstrap(
+  requestJson: requestJson,
+  secret: secret,
+);
+
 /// M0 故障实验专用，不接受生产账库或生产解锁材料。
 Future<String> runValidation({required String requestJson}) =>
     RustLib.instance.api.crateApiRunValidation(requestJson: requestJson);
+
+/// 普通 JSON 只含非秘密结果；秘密字节走独立有界字段，不可输出调试日志。
+class BootstrapReply {
+  final String statusJson;
+  final Uint8List secret;
+
+  const BootstrapReply({required this.statusJson, required this.secret});
+
+  @override
+  int get hashCode => statusJson.hashCode ^ secret.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BootstrapReply &&
+          runtimeType == other.runtimeType &&
+          statusJson == other.statusJson &&
+          secret == other.secret;
+}

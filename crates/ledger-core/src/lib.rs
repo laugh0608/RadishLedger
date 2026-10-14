@@ -1,4 +1,9 @@
 //! M0 移动接入所需的有界账务与加密事务核心；尚非可交付的用户账库。
+pub mod bootstrap;
+mod bootstrap_files;
+#[cfg(test)]
+mod bootstrap_tests;
+pub mod crypto;
 pub mod domain;
 pub mod probe;
 pub mod store;
@@ -13,6 +18,8 @@ pub struct CoreError {
     pub message: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sqlite_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_code: Option<i32>,
 }
 
 impl CoreError {
@@ -21,6 +28,7 @@ impl CoreError {
             code,
             message,
             sqlite_code: None,
+            os_code: None,
         }
     }
 }

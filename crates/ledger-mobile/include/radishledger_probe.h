@@ -20,6 +20,14 @@ size_t radishledger_probe_buffer_copy(uint64_t handle, uint8_t *output, size_t c
 /* 成功释放返回 1；未知 / 已释放 handle 返回 0。 */
 int32_t radishledger_probe_buffer_free(uint64_t handle);
 
+/* M0-C 独立秘密通道：metadata <= 4096 bytes，secret <= 1104 bytes。
+ * output 必须至少 128 bytes，written 为实际秘密长度；全部内存独立且调用期间有效。
+ * 返回的普通 handle 只含非秘密 JSON。调用方清理输入 / 输出秘密缓冲区。
+ */
+uint64_t radishledger_bootstrap_execute(const uint8_t *metadata, size_t metadata_length,
+    const uint8_t *secret, size_t secret_length, uint8_t *output, size_t capacity,
+    size_t *written);
+
 #ifdef __cplusplus
 }
 #endif

@@ -27,6 +27,8 @@ def main():
         "--no-web", "--no-deps-check", "--no-auto-upgrade-dependency",
         "--no-add-mod-to-lib", "--stop-on-error",
     ], cwd=ROOT, env=environment, check=True)
+    # 生成器的默认 rustfmt edition 与 workspace 2024 不同，统一到正式格式入口。
+    subprocess.run(["cargo", "fmt", "--all"], cwd=ROOT, env=environment, check=True)
 
 
 if __name__ == "__main__":

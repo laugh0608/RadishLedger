@@ -9,6 +9,9 @@ use zeroize::Zeroizing;
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {
+    pub(crate) fn from_secret(bytes: &[u8]) -> Result<Self> {
+        Ok(Self(crate::crypto::secret(bytes)?))
+    }
     // 公开合成材料，仅供 M0 跨进程故障实验；不是用户密钥或恢复方案。
     pub(crate) fn public_recovery_fixture() -> Self {
         Self(Zeroizing::new([0xA7; 32]))
@@ -94,7 +97,7 @@ impl Store {
                 .map_err(|_| CoreError::new("permissions_failed", "账库文件权限设置失败"))?;
         }
         drop(file);
-        let store = Self::connect(path, key)?;
+        let store = Self::connect(path, key, false)?;
         store.connection.execute_batch(
             "BEGIN IMMEDIATE;
             CREATE TABLE accounts (id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
@@ -112,10 +115,18 @@ impl Store {
     }
 
     pub fn open(path: &Path, key: &DbKey) -> Result<Self> {
+        Self::open_mode(path, key, false)
+    }
+
+    pub(crate) fn open_readonly(path: &Path, key: &DbKey) -> Result<Self> {
+        Self::open_mode(path, key, true)
+    }
+
+    fn open_mode(path: &Path, key: &DbKey, readonly: bool) -> Result<Self> {
         if !path.is_file() {
             return Err(CoreError::new("missing_database", "原账库文件不存在"));
         }
-        let store = Self::connect(path, key)?;
+        let store = Self::connect(path, key, readonly)?;
         let version: i64 = store
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -126,10 +137,13 @@ impl Store {
         Ok(store)
     }
 
-    fn connect(path: &Path, key: &DbKey) -> Result<Self> {
-        let connection =
-            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
-                .map_err(db_error)?;
+    fn connect(path: &Path, key: &DbKey, readonly: bool) -> Result<Self> {
+        let flags = if readonly {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+        } else {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+        };
+        let connection = Connection::open_with_flags(path, flags).map_err(db_error)?;
         // SAFETY: 连接归本函数所有；32 字节密钥仅在调用期间借用，不通过 SQL / 日志传递。
         let status =
             unsafe { rusqlite::ffi::sqlite3_key(connection.handle(), key.0.as_ptr().cast(), 32) };
@@ -142,11 +156,116 @@ impl Store {
         if cipher.is_empty() {
             return Err(CoreError::new("cipher_unavailable", "实际构建未启用加密库"));
         }
-        connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;").map_err(db_error)?;
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY;",
+            )
+            .map_err(db_error)?;
+        if !readonly {
+            connection
+                .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
+                .map_err(db_error)?;
+        }
         connection
             .busy_timeout(std::time::Duration::from_secs(2))
             .map_err(db_error)?;
         Ok(Self { connection })
+    }
+
+    pub(crate) fn bind_bootstrap(&self, vault: &str, device: &str) -> Result<()> {
+        let tx = self.connection.unchecked_transaction().map_err(db_error)?;
+        tx.execute_batch("CREATE TABLE bootstrap_identity (id INTEGER PRIMARY KEY CHECK(id=1), vault TEXT NOT NULL, device TEXT NOT NULL); CREATE TABLE bootstrap_fixture (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL);").map_err(db_error)?;
+        tx.execute(
+            "INSERT INTO bootstrap_identity VALUES (1, ?1, ?2)",
+            params![vault, device],
+        )
+        .map_err(db_error)?;
+        tx.commit().map_err(db_error)
+    }
+
+    pub(crate) fn verify_bootstrap(&self, vault: &str, device: &str) -> Result<()> {
+        let identity: (String, String) = self
+            .connection
+            .query_row(
+                "SELECT vault, device FROM bootstrap_identity WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(db_error)?;
+        if identity != (vault.into(), device.into()) {
+            return Err(CoreError::new(
+                "identity_mismatch",
+                "封装与原账库身份不一致",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn content_digest(&self) -> Result<String> {
+        use rusqlite::types::ValueRef;
+        use sha2::{Digest, Sha256};
+        let tx = self.connection.unchecked_transaction().map_err(db_error)?;
+        let mut digest = Sha256::new();
+        // 固定内部表名；完整业务内容，而非只比较余额或行数。
+        for (table, key) in [
+            ("accounts", "id"),
+            ("categories", "id"),
+            ("revisions", "id"),
+            ("selected", "event_id"),
+            ("outbox", "operation_id"),
+            ("candidates", "revision_id"),
+            ("metadata", "id"),
+        ] {
+            digest.update((table.len() as u64).to_be_bytes());
+            digest.update(table.as_bytes());
+            let mut statement = tx
+                .prepare(&format!("SELECT * FROM {table} ORDER BY {key}"))
+                .map_err(db_error)?;
+            let count = statement.column_count();
+            let mut rows = statement.query([]).map_err(db_error)?;
+            while let Some(row) = rows.next().map_err(db_error)? {
+                digest.update([0xff]);
+                for column in 0..count {
+                    match row.get_ref(column).map_err(db_error)? {
+                        ValueRef::Null => digest.update([0]),
+                        ValueRef::Integer(n) => {
+                            digest.update([1]);
+                            digest.update(n.to_be_bytes());
+                        }
+                        ValueRef::Text(bytes) => {
+                            digest.update([2]);
+                            digest.update((bytes.len() as u64).to_be_bytes());
+                            digest.update(bytes);
+                        }
+                        _ => {
+                            return Err(CoreError::new(
+                                "invalid_storage_type",
+                                "账务内容存在非预期存储类型",
+                            ));
+                        }
+                    }
+                }
+            }
+            digest.update([0xfe]);
+        }
+        tx.commit().map_err(db_error)?;
+        Ok(crate::crypto::hex(&digest.finalize()))
+    }
+
+    pub(crate) fn fixture_digest(&self) -> Result<Option<String>> {
+        self.connection
+            .query_row("SELECT digest FROM bootstrap_fixture WHERE id=1", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(db_error)
+    }
+
+    pub(crate) fn save_fixture_digest(&self, digest: &str) -> Result<()> {
+        self.connection
+            .execute("INSERT INTO bootstrap_fixture VALUES (1, ?1)", [digest])
+            .map_err(db_error)?;
+        Ok(())
     }
 
     pub fn cipher_version(&self) -> Result<String> {

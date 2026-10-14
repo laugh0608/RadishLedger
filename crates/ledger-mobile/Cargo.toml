@@ -16,6 +16,7 @@ frb = ["dep:flutter_rust_bridge"]
 [dependencies]
 radishledger-core = { path = "../ledger-core" }
 serde_json.workspace = true
+zeroize.workspace = true
 # backtrace 0.3.76 经 FRB 引入，依赖 Apple 共用的 dyld 声明；libc 0.2.190
 # 将这些声明限于 macOS，导致 iOS 编译失败。候选锁定最后兼容版本。
 libc = "=0.2.189"

@@ -13,6 +13,9 @@
 | flutter_rust_bridge / generator | `2.13.0`；[FRB](https://github.com/fzyzcjy/flutter_rust_bridge) | MIT，Copyright 2021 fzyzcjy；Rust 与 Dart runtime 共用上游同版许可，生成代码保留标记 |
 | serde / serde_json | `1.0.228` / `1.0.150`；[serde](https://github.com/serde-rs/serde)、[serde_json](https://github.com/serde-rs/json) | MIT OR Apache-2.0；结构化输入 / 输出，不形成第二份金额真相 |
 | getrandom / zeroize / tempfile | `0.3.4` / `1.8.2` / `3.27.0`；[getrandom](https://github.com/rust-random/getrandom)、[zeroize](https://github.com/RustCrypto/utils)、[tempfile](https://github.com/Stebalien/tempfile) | MIT OR Apache-2.0；合成身份、内存钥和隔离临时目录 |
+| chacha20poly1305 | `0.11.0`；[RustCrypto AEAD](https://github.com/RustCrypto/AEADs) | MIT OR Apache-2.0；XChaCha20-Poly1305 认证封装，仅实验格式 |
+| argon2 | `0.6.0`；[RustCrypto password-hashes](https://github.com/RustCrypto/password-hashes) | MIT OR Apache-2.0；Argon2id v19，固定有界 profile |
+| hkdf / sha2 | `0.13.0` / `0.11.1`；[RustCrypto KDFs](https://github.com/RustCrypto/KDFs)、[RustCrypto hashes](https://github.com/RustCrypto/hashes) | MIT OR Apache-2.0；用途隔离与非秘密完整性核对 |
 | libc | `0.2.189`；[libc](https://github.com/rust-lang/libc) | MIT OR Apache-2.0；实际 code asset 定位与上游 bridge 兼容 |
 | ffi / hooks / code_assets | `2.2.0` / `1.0.2` / `1.0.0`；[dart-lang/native](https://github.com/dart-lang/native) | BSD-3-Clause；Dart native 调用和构建资产 |
 | Material Icons 与 Flutter / Dart 传递包 | SDK 内含字体与 `pubspec.lock` 固定包；[Material Icons](https://github.com/google/material-design-icons) | 字体 Apache-2.0，各包许可由 SDK / pub 包随附并进入 Flutter LICENSE asset；没有额外引入第三方字体或图标资产 |

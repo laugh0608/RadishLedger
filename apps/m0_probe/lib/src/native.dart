@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 @Native<Uint32 Function()>(symbol: 'radishledger_probe_abi')
@@ -129,4 +130,62 @@ void verifyNativeBufferBounds() {
     calloc.free(input);
   }
   if (nativeBufferCount() != 0) throw StateError('边界检查残留句柄');
+}
+
+@Native<
+  Uint64 Function(
+    Pointer<Uint8>,
+    UintPtr,
+    Pointer<Uint8>,
+    UintPtr,
+    Pointer<Uint8>,
+    UintPtr,
+    Pointer<UintPtr>,
+  )
+>(symbol: 'radishledger_bootstrap_execute')
+external int _bootstrap(
+  Pointer<Uint8> metadata,
+  int metadataLength,
+  Pointer<Uint8> secret,
+  int secretLength,
+  Pointer<Uint8> output,
+  int capacity,
+  Pointer<UintPtr> written,
+);
+
+/// 独立秘密缓冲区不进入普通 JSON / 结果句柄；调用方接管返回字节并清理。
+(String, Uint8List) runThinBootstrap(String request, Uint8List secret) {
+  _checkAbi();
+  final bytes = utf8.encode(request);
+  if (bytes.isEmpty || bytes.length > 4096 || secret.length > 1104) {
+    throw const FormatException('bootstrap 请求长度无效');
+  }
+  final metadata = calloc<Uint8>(bytes.length);
+  final input = calloc<Uint8>(secret.isEmpty ? 1 : secret.length);
+  final output = calloc<Uint8>(128);
+  final written = calloc<UintPtr>();
+  try {
+    metadata.asTypedList(bytes.length).setAll(0, bytes);
+    input.asTypedList(secret.length).setAll(0, secret);
+    final status = _consume(
+      _bootstrap(
+        metadata,
+        bytes.length,
+        input,
+        secret.length,
+        output,
+        128,
+        written,
+      ),
+    );
+    if (written.value > 128) throw StateError('核心秘密输出长度无效');
+    return (status, Uint8List.fromList(output.asTypedList(written.value)));
+  } finally {
+    input.asTypedList(secret.length).fillRange(0, secret.length, 0);
+    output.asTypedList(128).fillRange(0, 128, 0);
+    calloc.free(metadata);
+    calloc.free(input);
+    calloc.free(output);
+    calloc.free(written);
+  }
 }

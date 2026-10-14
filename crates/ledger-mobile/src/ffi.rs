@@ -161,9 +161,139 @@ pub extern "C" fn radishledger_probe_buffer_free(handle: u64) -> i32 {
     .unwrap_or(0)
 }
 
+/// M0-C 单独的秘密通道；普通句柄永远只保存非秘密 JSON。
+/// # Safety
+/// metadata / secret 分别指向声明长度的可读内存；output 指向至少 128 字节的独立
+/// 可写内存，written 指向可写 usize。指针在整个同步调用期间存活且不重叠。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn radishledger_bootstrap_execute(
+    metadata: *const u8,
+    metadata_length: usize,
+    secret: *const u8,
+    secret_length: usize,
+    output: *mut u8,
+    capacity: usize,
+    written: *mut usize,
+) -> u64 {
+    if written.is_null() {
+        return insert(error("invalid_argument", "秘密输出长度指针无效"));
+    }
+    // SAFETY: 调用者保证 written 是独立有效的 usize。
+    unsafe {
+        *written = 0;
+    }
+    if metadata.is_null()
+        || metadata_length == 0
+        || metadata_length > MAX_INPUT
+        || (secret.is_null() && secret_length != 0)
+        || secret_length > 1104
+        || output.is_null()
+        || capacity < 128
+    {
+        return insert(error("invalid_argument", "bootstrap 缓冲区长度或指针无效"));
+    }
+    // 先预留普通结果句柄，容量不足时不执行具有副作用的核心动作。
+    let handle = insert(Vec::new());
+    if handle == 0 {
+        return 0;
+    }
+    let response = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: 调用者保证有效长度和非重叠内存。
+        let bytes = unsafe { std::slice::from_raw_parts(metadata, metadata_length) };
+        let request = match std::str::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_) => {
+                return crate::api::BootstrapReply {
+                    status_json: String::from_utf8(error("invalid_utf8", "请求不是 UTF-8"))
+                        .unwrap(),
+                    secret: Vec::new(),
+                };
+            }
+        };
+        let secret = if secret_length == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(secret, secret_length) }.to_vec()
+        };
+        crate::api::run_bootstrap(request.to_owned(), secret)
+    }))
+    .unwrap_or_else(|_| crate::api::BootstrapReply {
+        status_json: String::from_utf8(error("internal_error", "核心调用异常")).unwrap(),
+        secret: Vec::new(),
+    });
+    let secret = zeroize::Zeroizing::new(response.secret);
+    let Ok(mut buffers) = BUFFERS.lock() else {
+        return 0;
+    };
+    let Some(slot) = buffers.values.get_mut(&handle) else {
+        return 0;
+    };
+    if secret.len() > 128 || response.status_json.len() > MAX_OUTPUT {
+        *slot = error("invalid_output", "核心结果长度不符");
+        return handle;
+    }
+    *slot = response.status_json.into_bytes();
+    // SAFETY: 容量与来源独立已在入口校验，调用方承担有效指针契约。
+    unsafe {
+        std::ptr::write_bytes(output, 0, 128);
+        std::ptr::copy_nonoverlapping(secret.as_ptr(), output, secret.len());
+        *written = secret.len();
+    }
+    handle
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bootstrap_secret_is_separate_and_invalid_capacity_has_no_output() {
+        let metadata = br#"{"abi":1,"directory":"/synthetic","run":"00000000000000000000000000000000","action":{"kind":"newRecovery"}}"#;
+        let mut output = zeroize::Zeroizing::new([0_u8; 128]);
+        let mut written = 99;
+        // SAFETY: all pointers refer to distinct live buffers with the supplied capacities.
+        let invalid = unsafe {
+            radishledger_bootstrap_execute(
+                metadata.as_ptr(),
+                metadata.len(),
+                std::ptr::null(),
+                0,
+                output.as_mut_ptr(),
+                127,
+                &mut written,
+            )
+        };
+        assert_eq!(written, 0);
+        assert_eq!(radishledger_probe_buffer_free(invalid), 1);
+        // SAFETY: same valid allocations; full output capacity is supplied.
+        let handle = unsafe {
+            radishledger_bootstrap_execute(
+                metadata.as_ptr(),
+                metadata.len(),
+                std::ptr::null(),
+                0,
+                output.as_mut_ptr(),
+                128,
+                &mut written,
+            )
+        };
+        assert_eq!(written, 80);
+        let length = radishledger_probe_buffer_len(handle);
+        let mut status = vec![0; length];
+        // SAFETY: status has the queried capacity and lives through the copy.
+        assert_eq!(
+            unsafe { radishledger_probe_buffer_copy(handle, status.as_mut_ptr(), length) },
+            length
+        );
+        let value: serde_json::Value = serde_json::from_slice(&status).unwrap();
+        assert_eq!(value["ok"], true);
+        assert!(
+            !status
+                .windows(written)
+                .any(|part| part == &output[..written])
+        );
+        assert_eq!(radishledger_probe_buffer_free(handle), 1);
+    }
+
     #[test]
     fn invalid_handles_and_double_free_are_bounded() {
         let handle = insert(error("synthetic", "合成错误"));

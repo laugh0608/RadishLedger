@@ -207,6 +207,36 @@ fn run_case(root: &Path, case: &Value, rejected: &[Value]) -> Result<CaseReport>
     let key = DbKey::random()?;
     let database = root.join(format!("{}.db", text(case, "id")?));
     let mut store = Store::create(&database, &key)?;
+    let (report, symbols, months) = populate_case(&mut store, case, rejected)?;
+    let last_snapshot = &report.final_snapshot;
+    let count = store.outbox_count()?;
+    drop(store);
+    let reopened = Store::open(&database, &key)?;
+    if snapshot(&reopened, &symbols, &months)? != *last_snapshot
+        || reopened.outbox_count()? != count
+    {
+        return Err(mismatch());
+    }
+    drop(reopened);
+    if Store::open(&database, &DbKey::random()?).is_ok() {
+        return Err(CoreError::new(
+            "wrong_key_accepted",
+            "错误密钥不应读取原账库",
+        ));
+    }
+    let bytes = std::fs::read(&database)
+        .map_err(|_| CoreError::new("file_check_failed", "无法复核实验账库文件"))?;
+    if bytes.starts_with(b"SQLite format 3") {
+        return Err(CoreError::new("plaintext_database", "实验账库没有实际加密"));
+    }
+    Ok(report)
+}
+
+fn populate_case(
+    store: &mut Store,
+    case: &Value,
+    rejected: &[Value],
+) -> Result<(CaseReport, Symbols, Vec<String>)> {
     let mut symbols = Symbols::default();
     for (label, kind) in case
         .get("accounts")
@@ -232,7 +262,7 @@ fn run_case(root: &Path, case: &Value, rejected: &[Value]) -> Result<CaseReport>
     }
     for opening in array(case, "openingEvents")? {
         let event = symbols.event(opening, true)?;
-        commit_once(&mut store, &new_write(&mut symbols, opening, Some(event))?)?;
+        commit_once(store, &new_write(&mut symbols, opening, Some(event))?)?;
     }
     let steps = array(case, "steps")?;
     let mut months = BTreeSet::new();
@@ -266,13 +296,13 @@ fn run_case(root: &Path, case: &Value, rejected: &[Value]) -> Result<CaseReport>
                         Some(text(step, "observedBalanceMinor")?.to_owned());
                     write.target_balance_minor = Some(text(step, "targetBalanceMinor")?.to_owned());
                 }
-                commit_once(&mut store, &write)?;
+                commit_once(store, &write)?;
             }
-            "delete" => commit_once(&mut store, &new_write(&mut symbols, step, None)?)?,
+            "delete" => commit_once(store, &new_write(&mut symbols, step, None)?)?,
             "restore" => {
                 let source = symbols.id("revision", text(step, "restoreFromRevisionId")?)?;
                 let event = store.revision_event(&source)?.ok_or_else(invalid_fixture)?;
-                commit_once(&mut store, &new_write(&mut symbols, step, Some(event))?)?;
+                commit_once(store, &new_write(&mut symbols, step, Some(event))?)?;
             }
             "receiveCandidate" => {
                 let event = symbols.event(step, false)?;
@@ -303,7 +333,7 @@ fn run_case(root: &Path, case: &Value, rejected: &[Value]) -> Result<CaseReport>
                         symbols.id("revision", candidate.as_str().ok_or_else(invalid_fixture)?)?,
                     );
                 }
-                commit_once(&mut store, &write)?;
+                commit_once(store, &write)?;
             }
             "archiveReferences" => {
                 let accounts = array(step, "accountIds")?
@@ -338,7 +368,7 @@ fn run_case(root: &Path, case: &Value, rejected: &[Value]) -> Result<CaseReport>
             }
             _ => return Err(invalid_fixture()),
         }
-        last_snapshot = snapshot(&store, &symbols, &months)?;
+        last_snapshot = snapshot(store, &symbols, &months)?;
         if !equivalent(
             &last_snapshot,
             step.get("expected").ok_or_else(invalid_fixture)?,
@@ -361,36 +391,31 @@ fn run_case(root: &Path, case: &Value, rejected: &[Value]) -> Result<CaseReport>
             if error.code != text(sample, "failureClass")?
                 || store.outbox_count()? != count
                 || store.sequence()? != sequence
-                || snapshot(&store, &symbols, &months)? != last_snapshot
+                || snapshot(store, &symbols, &months)? != last_snapshot
             {
                 return Err(mismatch());
             }
         }
     }
-    let count = store.outbox_count()?;
-    drop(store);
-    let reopened = Store::open(&database, &key)?;
-    if snapshot(&reopened, &symbols, &months)? != last_snapshot || reopened.outbox_count()? != count
-    {
-        return Err(mismatch());
-    }
-    drop(reopened);
-    if Store::open(&database, &DbKey::random()?).is_ok() {
-        return Err(CoreError::new(
-            "wrong_key_accepted",
-            "错误密钥不应读取原账库",
-        ));
-    }
-    let bytes = std::fs::read(&database)
-        .map_err(|_| CoreError::new("file_check_failed", "无法复核实验账库文件"))?;
-    if bytes.starts_with(b"SQLite format 3") {
-        return Err(CoreError::new("plaintext_database", "实验账库没有实际加密"));
-    }
-    Ok(CaseReport {
-        id: text(case, "id")?.to_owned(),
-        checkpoints: steps.len(),
-        final_snapshot: last_snapshot,
-    })
+    Ok((
+        CaseReport {
+            id: text(case, "id")?.to_owned(),
+            checkpoints: steps.len(),
+            final_snapshot: last_snapshot,
+        },
+        symbols,
+        months,
+    ))
+}
+
+/// 使用既有 A01 共同材料与独立预期，不为 bootstrap 重写账务样例。
+pub(crate) fn populate_bootstrap_fixture(store: &mut Store) -> Result<CaseReport> {
+    let input: Value = serde_json::from_str(CASES).map_err(|_| invalid_fixture())?;
+    let case = array(&input, "cases")?
+        .iter()
+        .find(|c| c["id"] == "A01")
+        .ok_or_else(invalid_fixture)?;
+    Ok(populate_case(store, case, array(&input, "rejectedIntents")?)?.0)
 }
 
 pub fn run(directory: &Path) -> Result<ProbeReport> {
