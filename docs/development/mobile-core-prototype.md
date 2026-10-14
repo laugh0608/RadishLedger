@@ -12,17 +12,17 @@ Flutter 验证界面 → Dart 工作 isolate → 薄 C ABI 或 flutter_rust_brid
                                隔离 SQLCipher 文件与事务 outbox
 ```
 
-两个候选调用同一个 `run_probe(directory)`，输入只允许存在的绝对临时目录。Rust 在其下独占创建随机实验子目录，生成内存中的随机数据库密钥，执行[共同材料](../validation/accounting-cases.md)，核对实际结果后关闭并删除自身实验子目录。Flutter 不计算余额，不生成预期，也不传入数据库密钥。
+基础账务入口中，两个候选调用同一个 `run_probe(directory)`，输入只允许存在的绝对临时目录。Rust 在其下独占创建随机实验子目录，生成内存中的随机数据库密钥，执行[共同材料](../validation/accounting-cases.md)，核对实际结果后关闭并删除自身实验子目录。Flutter 不计算余额，不生成预期，也不传入数据库密钥。
 
 领域层按规范整数分与 Gregorian 日期校验，转账使用一项事实表达两侧变动；余额、正负资产、月报和分类结果由有效修订派生。存储层保留修订、删除标记及冲突候选，在同一 SQLite 事务写入选中事实、outbox 和序号。重复 operation identity 只接受完全相同的意图；对账校验观察序号、观察余额和固定差额。
 
 probe 使用真实 SQLCipher 事务：每次保存前在 outbox 插入点以测试触发器拒绝，核对事实、修订、序号和队列均回滚，再执行正常保存及重复提交。每个案例关闭后使用同一内存密钥重新打开并核对，另用随机错钥尝试打开。金额预期来自手写 JSON，集合输出在替换合成别名后排序以保持跨调用可比较。
 
-这是固定合成材料的接入实验。账户 / 分类由实验准备动作建立；没有生产账户创建原子流程、用户开库、进程重启后的解锁、系统密钥 adapter、备份或迁移。schema `1`、C ABI `1` 和 JSON 返回结构都是实验契约，不能解释为生产格式冻结。上述共同案例的数据库密钥始终只在本次 Rust 进程内存；它不是完整 bootstrap 或独立恢复方案。跨进程故障 runner 使用另行限定的公开合成测试材料，见下文。
+基础入口是固定合成材料的接入实验，账户 / 分类由实验准备动作建立，数据库密钥只在本次 Rust 进程内存。第 6 节的跨进程事务恢复使用公开固定合成 key；第 7 节的 bootstrap 入口使用运行时随机秘密，接入独立材料跨重启解锁与系统保护 adapter。三个入口的材料和证据不能混用。它们均未提供生产账户创建、用户账簿、备份或迁移；schema `1`、C ABI `1` 和 JSON 返回结构都是实验契约，不能解释为生产格式冻结。
 
 ## 2. 薄 C ABI 契约
 
-正式声明见 [radishledger_probe.h](../../crates/ledger-mobile/include/radishledger_probe.h)，Dart 调用见 [native.dart](../../apps/m0_probe/lib/src/native.dart)。
+正式声明见 [radishledger_probe.h](../../crates/ledger-mobile/include/radishledger_probe.h)，Dart 调用见 [native.dart](../../apps/m0_probe/lib/src/native.dart)。下表描述基础 / 故障入口的普通输入与结果句柄；bootstrap 的秘密通道另见第 7.7 节，秘密不进入普通结果注册表。
 
 | 边界 | 约定 |
 | --- | --- |
@@ -94,7 +94,7 @@ flutter drive --driver=test_driver/integration_test.dart \
 
 Android Build-Tools 使用锁定 AGP 9.0.1 的默认 36.0.0，App 不单独覆盖为不同版本；`integration_test` 子模块也会请求默认版本。执行前需具备该 SDK 组件，不能因本机存在 36.1.0 就推定依赖已满足。
 
-在 debug / release 或应用 / 集成测试入口之间切换时，保留 Flutter 默认的 pub 与平台文件生成流程，不加 `--no-pub`：当前 Flutter 在该选项下也跳过插件注册文件重新生成，可能使注册代码与 Gradle 的 dev 插件筛选不一致。生成文件由 Flutter 维护，不手改；构建后复核 lockfile 没有意外变化。
+在 debug / release 或应用 / 集成测试入口之间切换时，保留 Flutter 默认的 pub 与平台文件生成流程，不加 `--no-pub`：当前 Flutter 在该选项下也跳过插件注册文件重新生成，可能使注册代码与 Gradle 的 dev 插件筛选不一致。生成文件由 Flutter 维护，不手改；构建后复核 lockfile 没有意外变化。同一 `apps/m0_probe` 工作目录中的 Android / iOS 构建、测试及 debug / release 模式切换必须串行执行：它们会改写共享的 Flutter 插件注册状态，跨平台并行也可能使集成测试插件缺失。
 
 iOS 未签名 App 是真机目标构建产物，不能直接安装或当作真机运行证据。模拟器集成测试使用 debug Flutter runner 加载同一 Rust release 核心；release 包运行需要另行记录证据，不能把 debug 测试直接外推。`flutter build ios --simulator` 的通用架构构建不替代具体 arm64 目标验证；本实验没有引入 x86_64 iOS Rust target。
 
@@ -152,7 +152,7 @@ python3 -B scripts/check-mobile-recovery.py ios IOS_SIMULATOR_UDID
 
 ## 7. M0-C bootstrap、解锁与独立恢复方案
 
-本节保留实施方案与复现契约；实际实现范围和取得的证据统一看 current / devlog。沿用[威胁模型](../privacy-threat-model.md)的候选算法和密钥层次，不冻结生产格式、最低系统、bridge 或 KDF profile。实验仍只接受合成账务，但密钥在运行时随机生成，不能沿用 M0-B 的公开固定 DB Key。
+本节描述 bootstrap 实验实现、复现契约与验收要求；实际取得的证据和未关闭门槛统一看 current / devlog。沿用[威胁模型](../privacy-threat-model.md)的候选算法和密钥层次，不冻结生产格式、最低系统、bridge 或 KDF profile。实验仍只接受合成账务，但密钥在运行时随机生成，不能沿用 M0-B 的公开固定 DB Key。
 
 ### 7.1 最小闭环与依赖范围
 
@@ -160,7 +160,7 @@ python3 -B scripts/check-mobile-recovery.py ios IOS_SIMULATOR_UDID
 
 Rust 继续承担随机数、派生、认证封装、bootstrap 状态、SQLCipher 和账务核对；Swift / Kotlin 只适配系统秘密存取及认证错误，Flutter 只呈现流程和调用。两个 bridge 共用 Rust 契约，不把秘密放入现有普通 JSON 结果注册表或报告。跨语言秘密使用有界字节缓冲区、最短借用和显式清理，平台 / Dart 不可保证清零的副本需记录，不承诺绝对内存擦除。
 
-本批经项目所有者确认引入以下固定直接依赖；仅启用派生、封装、分配及必要清理 features，不引入随机源替代现有 `getrandom`，不启用不需要的并行 KDF。实际 Cargo 解析后复核传递包、MSRV、features、许可、已知安全公告及移动目标，更新 lockfile、第三方清单与包内 notices；解析失败不自动换版本。
+本批经项目所有者确认引入以下固定直接依赖；仅启用派生、封装、分配及必要清理 features，不引入随机源替代现有 `getrandom`，不启用不需要的并行 KDF。依赖变更须复核传递包、MSRV、features、许可、已知安全公告及移动目标，并同步 lockfile、第三方清单与包内 notices；解析失败不自动换版本。锁定、编译和许可收集分别提供对应证据，不能据此宣称已完成安全公告或完整供应链审查。
 
 | 候选 | 用途与来源 | 许可 |
 | --- | --- | --- |
@@ -200,7 +200,7 @@ bootstrap 位于 App 私有、排除自动备份的独立目录，与 DB 分开�
 
 ### 7.4 系统保护、失效与重建
 
-| 平台 | 拟验证的日常保护 | 能力与停止线 |
+| 平台 | 实验适配策略 | 能力与停止线 |
 | --- | --- | --- |
 | iOS | Keychain 项采用 `WhenPasscodeSetThisDeviceOnly` 与 `userPresence`，不启用同步；仅保存本机解锁钥 | 无设备密码或访问控制能力时报告不支持；不改为无认证项。Simulator 成功不证明 Secure Enclave 或真机保护 |
 | Android | Android Keystore 不可导出 AES-256-GCM 钥封装本机解锁钥；系统生成 IV，认证绑定用途 / 身份；要求系统用户认证 | 首个具体实验路径针对已有 API 35，采用 API 30+ 认证参数；旧 API 明确未支持，不提高正式最低系统。记录实际 KeyInfo 等级，不预设 StrongBox / TEE |
@@ -241,7 +241,7 @@ bootstrap 位于 App 私有、排除自动备份的独立目录，与 DB 分开�
 
 独立恢复材料为 `RLM0C1-` + 64 个十六进制字符 + `-` + 8 字符校验。UI 生成后显示一次，要求重新输入确认；未确认且没有账务的账库可用正确口令重新生成恢复材料，替换旧的未确认封装。已确认账库拒绝该入口。创建中途失败保留现场；DB 已开始但不存在时返回 `missing_database`，不自动新建。当前保真 fixture 使用 A01，恢复前后比较身份、完整业务表摘要及审计 / outbox，不宣称这一切片已覆盖非空候选和 tombstone 的跨重启恢复。
 
-两条 bridge 的秘密走独立有界字节输入 / 输出，不放入普通 JSON 结果句柄。平台 codec 可返回只读缓冲区，Dart 复制到本方可清理的字节数组；Swift Data / CFData、Dart 字符串和 codec 内部副本不承诺全部擦除。UI 锁定 / 取消使晚完成结果失效，核心工作结束前禁止重入；不宣称 Argon2 已被中途停止。
+两条 bridge 的秘密走独立有界字节输入 / 输出，不放入普通 JSON 结果句柄。薄 C ABI `radishledger_bootstrap_execute` 的 metadata 上限为 4096 bytes、秘密输入上限为 1104 bytes，调用方提供至少 128 bytes 的独立秘密输出缓冲区及实际长度指针；普通结果句柄只返回非秘密 JSON。普通句柄容量不足时不执行有副作用的核心动作，调用方负责清理秘密输入 / 输出，不能将第 2 节的 UTF-8 JSON 约束套用到随机秘密字节。平台 codec 可返回只读缓冲区，Dart 复制到本方可清理的字节数组；Swift Data / CFData、Dart 字符串和 codec 内部副本不承诺全部擦除。UI 锁定 / 取消使晚完成结果失效，核心工作结束前禁止重入；不宣称 Argon2 已被中途停止。
 
 在已授权、已启动的现有模拟器中安装控制入口。Android 构建须显式限定 arm64；iOS 使用指定 arm64 Simulator 的 `flutter run --debug --no-resident -d <UDID>`，本机通用 simulator 构建的 Flutter 双架构检查失败不能作为业务失败。两者目标均为 `lib/bootstrap_main.dart --dart-define=M0C_DRIVER=true`。随后从仓库根运行：
 

@@ -1,6 +1,6 @@
 # 移动端核心接入与加密验证矩阵
 
-本篇将[架构](../architecture.md)与[威胁模型](../privacy-threat-model.md)落实为 M0-B / M0-C 的待执行验证。账务共同输入见[合成样例](../validation/accounting-cases.md)，UX 结果见[移动端规格](../design/mobile-experience.md)。这里定义动作和证据，不记录一套独立的当前进度；实际结果与下一步统一进入[当前状态](../status/current.md)和月度 devlog。
+本篇将[架构](../architecture.md)与[威胁模型](../privacy-threat-model.md)落实为 M0-B / M0-C 的验证要求。账务共同输入见[合成样例](../validation/accounting-cases.md)，UX 结果见[移动端规格](../design/mobile-experience.md)。这里定义动作和证据，不记录一套独立的当前进度；实际结果与下一步统一进入[当前状态](../status/current.md)和月度 devlog。
 
 ## 1. 验证目标与执行条件
 
@@ -51,7 +51,7 @@ M0-B 的阶段退出需两端真机 release 核心调用、B 项相关边界与�
 
 每个 C 项都记录 Android / iOS 的实际实现与保护等级；算法向量是核心验证，设备失效和后台行为必须在对应真机验证。所有测试秘密只在隔离实验内生成，日志与交付只记录结果，不记录秘密值。
 
-bootstrap、受保护的跨进程解锁与独立恢复的实施前候选见[实验专题第 7 节](mobile-core-prototype.md#7-m0-c-bootstrap解锁与独立恢复方案)。它将下面的 C 项拆成可执行流程和中断点；不改变本矩阵的正式退出条件。删除隔离测试项只证明“项缺失”的恢复，不能代替真实锁屏 / 生物识别变化；设备不支持日常认证保护时如实记录，不切换到较弱项制造通过。
+bootstrap、受保护的跨进程解锁与独立恢复的实验实现及复现契约见[实验专题第 7 节](mobile-core-prototype.md#7-m0-c-bootstrap解锁与独立恢复方案)。它将下面的 C 项拆成可执行流程和中断点；不改变本矩阵的正式退出条件。删除隔离测试项只证明“项缺失”的恢复，不能代替真实锁屏 / 生物识别变化；设备不支持日常认证保护时如实记录，不切换到较弱项制造通过。
 
 | ID | 动作 / 故障 | 必须看到的结果 | 证据 |
 | --- | --- | --- | --- |

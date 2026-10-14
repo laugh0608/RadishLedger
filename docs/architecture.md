@@ -83,7 +83,7 @@ M2 冻结身份与会话的具体格式、轮换、设备标识、邀请和恢�
 
 ## 6. 未来目录方向
 
-实现按真实职责创建，不提前创建空 crate 或 module。合成接入实验使用 `apps/m0_probe` 调用 `crates/ledger-mobile` 的两个 bridge，由 `crates/ledger-core` 共用领域、SQLCipher 存储和固定 probe；没有由 Flutter 维护另一份账务算法，也没有生产密钥、同步或 Go 服务。后续产品方向为：
+实现按真实职责创建，不提前创建空 crate 或 module。合成接入实验使用 `apps/m0_probe` 调用 `crates/ledger-mobile` 的两个 bridge，由 `crates/ledger-core` 共用领域、SQLCipher 存储、合成 probe 与 bootstrap / 密码实现；Swift / Kotlin 通过平台通道承担系统保护适配，Flutter 负责流程和结果呈现。没有由 Flutter 维护另一份账务算法；实验秘密只服务隔离合成账库，没有生产密钥生命周期、同步或 Go 服务。后续产品方向为：
 
 ```text
 apps/          Flutter 客户端

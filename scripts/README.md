@@ -21,8 +21,8 @@ python3 -B scripts/check-repo.py
 | `check-text-files` | Git 已跟踪和未忽略的未跟踪文件，UTF-8、无 BOM、LF、末尾换行、尾随空白、JSON / Issue JSON-compatible YAML 解析、重复键、生成 workflow 与来源逐字一致 |
 | `check-docs` | 上述文本检查，加 Markdown 本地链接 / 锚点、代码围栏、表格列数、根协作入口一致 |
 | `check-repo` | 上述检查，加必需资产、版本格式、远端目标 / Ruleset / workflow / Issue 配置契约、强制跟踪忽略产物的拒绝、无门禁语言实现阻断、实际 Git diff 空白与可选 PR 提交范围；运行检查器自身的负向回归 |
-| `check-core` | Rust fmt、锁定 workspace all-features test、all-targets clippy、C header 的 clang 语法检查；不执行移动设备构建 |
-| `check-mobile` | 锁定 pub、Dart format、fatal-infos analyze、Flutter test；实际加载宿主 Rust / SQLCipher，另验证 UI 错误与停止等待 |
+| `check-core` | Rust fmt、锁定 workspace all-features test（账务、并发、进程恢复、密码向量与 bootstrap）、all-targets clippy、C header 的 clang 语法检查；不执行移动设备构建 |
+| `check-mobile` | 锁定 pub、Dart format、fatal-infos analyze、Flutter test；实际加载宿主 Rust / SQLCipher，另验证 UI 错误 / 取消 / 晚结果与平台字节缓冲区；不验证真实系统认证 |
 
 Markdown 允许非空行末的两个空格作硬换行；其他尾随空格仍报错。文件链接必须位于仓库并指向会进入 Git 的材料，避免链接只在维护者机器上存在。代码围栏里的命令和占位路径不作真实文档链接。外部 URL 不联网检查。
 
@@ -59,7 +59,7 @@ Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/led
 
 [collect-native-notices.py](collect-native-notices.py) 从本机锁定缓存收集两端 arm64 与验证宿主的 native 许可，并保留固定 Rust 标准库的官方许可集；`--check` 只读比较。它不联网，缓存缺失明确失败；重新生成需复核 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)。普通 CI 没有宣称完整供应链扫描。
 
-运行报告和合成截图由 integration driver 写入 `local-evidence/m0-b/`；构建产物和缓存保持忽略。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
+M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `local-evidence/m0-c/`；由各集成 driver 或设备控制器保存，构建产物和缓存保持忽略。同一 Flutter 工作目录的构建、测试与模式切换按实验说明串行执行。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
 
 错误逐项报告并返回非零；检查器没有历史预算或默认成功模式。`--only` 用于定向本地检查，PR workflow 必须使用完整入口。
 
