@@ -43,13 +43,13 @@ FRB runtime / generator 均为 `2.13.0`，Rust 输入只有 `crate::api`；生�
 
 ## 3. 工具链与构建候选
 
-以下为实验锁定值和前置条件，不是产品支持承诺。已有工具链优先复用，新增构建工具与缓存放入被忽略的 `local-data/`；没有准备入口会自动安装工具或更新系统证书。
+以下为实验锁定值和前置条件，不是产品支持承诺。已有工具链优先复用，新增构建工具与缓存放入被忽略的 `local-data/`；项目脚本不安装全局工具或更新系统证书；Gradle 可在 SDK license 已接受时自动安装缺少的 SDK 组件，执行前须核对该副作用。
 
 | 组件 | 实验值 / 约束 |
 | --- | --- |
 | Flutter / Dart | Flutter `3.44.0`、revision `559ffa3f75e7402d65a8def9c28389a9b2e6fe42`；Dart `3.12.0` |
 | Rust | `1.96.0`；root workspace、`rust-toolchain.toml`、`Cargo.lock`；fmt / clippy 必需 |
-| Android | arm64；API `24` 构建候选、compile SDK `36`、Build-Tools `36.1.0`、NDK `28.2.13676358`；JDK `17` |
+| Android | arm64；API `24` 构建候选、compile SDK `36`、Build-Tools `36.0.0`（AGP 默认）、NDK `28.2.13676358`；JDK `17` |
 | Gradle / AGP | Gradle `9.1.0` bin 发行包及官方 SHA-256；AGP `9.0.1`，沿用 Flutter 模板的兼容开关 |
 | iOS | arm64 真机与 arm64 Simulator；App deployment target `15.0`，符合本批 Xcode `27.0` SDK 的目标范围 |
 | 存储 | rusqlite `0.40.2`、libsqlite3-sys `0.38.2`，内含 SQLCipher `4.14.0 community` / SQLite `3.51.3` |
@@ -84,15 +84,19 @@ export JAVA_HOME="$LEDGER_ROOT/local-data/toolchains/jdk-17.0.20.1+1/Contents/Ho
 export GRADLE_USER_HOME="$LEDGER_ROOT/local-data/gradle"
 cd apps/m0_probe
 
-flutter build apk --release --target-platform android-arm64 --no-pub
-flutter build ios --release --no-codesign --no-pub
+flutter build apk --release --target-platform android-arm64
+flutter build ios --release --no-codesign
 
 # DEVICE_ID 为已核对的现有模拟器标识；记录机型、系统版本和运行状态。
 flutter drive --driver=test_driver/integration_test.dart \
-  --target=integration_test/probe_test.dart --device-id=DEVICE_ID --no-pub
+  --target=integration_test/probe_test.dart --device-id=DEVICE_ID
 ```
 
-iOS 未签名 App 是真机目标构建产物，不能直接安装或当作真机运行证据。模拟器使用 debug Flutter runner 加载同一 Rust release 核心；Android 可额外用 `--release` 运行集成测试。`flutter build ios --simulator` 的通用架构构建不替代具体 arm64 目标验证；本实验没有引入 x86_64 iOS Rust target。
+Android Build-Tools 使用锁定 AGP 9.0.1 的默认 36.0.0，App 不单独覆盖为不同版本；`integration_test` 子模块也会请求默认版本。执行前需具备该 SDK 组件，不能因本机存在 36.1.0 就推定依赖已满足。
+
+在 debug / release 或应用 / 集成测试入口之间切换时，保留 Flutter 默认的 pub 与平台文件生成流程，不加 `--no-pub`：当前 Flutter 在该选项下也跳过插件注册文件重新生成，可能使注册代码与 Gradle 的 dev 插件筛选不一致。生成文件由 Flutter 维护，不手改；构建后复核 lockfile 没有意外变化。
+
+iOS 未签名 App 是真机目标构建产物，不能直接安装或当作真机运行证据。模拟器集成测试使用 debug Flutter runner 加载同一 Rust release 核心；release 包运行需要另行记录证据，不能把 debug 测试直接外推。`flutter build ios --simulator` 的通用架构构建不替代具体 arm64 目标验证；本实验没有引入 x86_64 iOS Rust target。
 
 产物、合成运行报告和诊断放在 `build/`、`target/` 或 `local-evidence/`，不得提交。`integration_test` 的报告含合成别名及金额，没有密钥、真实账单或个人身份；私人参考与衍生材料不参与实验。
 

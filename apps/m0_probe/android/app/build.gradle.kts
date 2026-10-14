@@ -7,7 +7,6 @@ plugins {
 android {
     namespace = "com.radishledger.radishledger_probe"
     compileSdk = flutter.compileSdkVersion
-    buildToolsVersion = "36.1.0"
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
