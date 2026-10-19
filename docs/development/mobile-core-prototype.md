@@ -281,7 +281,7 @@ python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793
 
 ### 7.9 DB pager 故障与临时文件边界
 
-`store_pager_tests.rs` 与 `store_test_vfs.rs` 仅由 `cfg(all(test, unix))` 接入，不进入生产核心、bridge 或移动包。父测试在独占子进程注册观察 VFS，原 VFS 继续执行真实文件 IO、锁、SHM 与 mmap；父进程及其他并行测试不切换默认 VFS。随机合成 DB key 仅通过 stdin 传递，不写参数、环境变量、报告或日志。
+`store_pager_tests.rs` 与 `store_test_vfs.rs` 仅由 `cfg(all(test, unix))` 接入，不进入生产核心、bridge 或移动 App 包；可以单独编译为移动模拟器原生测试可执行文件。父测试在独占子进程注册观察 VFS，原 VFS 继续执行真实文件 IO、锁、SHM 与 mmap；父进程及其他并行测试不切换默认 VFS。随机合成 DB key 仅通过 stdin 传递，不写参数、环境变量、报告或日志。
 
 先取得同一 A11 账库在 WAL 提交、DELETE 日志提交和 checkpoint 中的成功 IO 序列，再逐个写入 / 同步位置注入；每次核对文件类别、调用序号、长度 / flags 和偏移，未命中不能通过。SQLite 的 `xWrite` 返回错误码而非已写字节数，所以短写场景实际调用原 VFS 写入严格少于请求的 2–7 bytes，再返回 `SQLITE_IOERR_WRITE`；不把正数当作 SQLite 的成功返回。`xSync` 分别在调用父同步前拒绝，以及父同步成功后报告 `SQLITE_IOERR_FSYNC`，覆盖可能已经持久化但调用方收到失败的情况。此处验证的是 pager 面对 IO 失败的行为，不证明内核实际发生短写 / fsync 故障或掉电。
 
@@ -292,12 +292,12 @@ python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793
 | 文件 / 操作类别 | 判据与正向对照 |
 | --- | --- |
 | DB、WAL、回滚日志、SHM | 真实文件 / 映射存在；加密构建的合成明文标记不应出现在实际写入与文件扫描中 |
-| TEMP 表、排序、自动索引、物化查询、索引创建 | 原 `temp_store=MEMORY` 不打开磁盘临时文件；相同构建的隔离 FILE 对照必须在每一阶段实际落盘。另核对排序结果、查询计划、排序计数、自动索引行数与物化结果 |
-| 语句回滚 / sub-journal | 大批更新最后触发 UNIQUE / ABORT，先前更新全部撤销；FILE 对照必须观察非空 sub-journal，不能只验证最终表内容 |
-| VACUUM | 验证重建与 A11 保全；FILE 对照观察真实临时 DB，逐个记录是否包含标记，不假设所有临时文件都明文或都加密 |
+| TEMP 表、排序、自动索引、物化查询、索引创建 | 原 `temp_store=MEMORY` 不打开磁盘临时文件；允许磁盘临时存储的构建中，隔离 FILE 对照必须在每一阶段实际落盘；`TEMP_STORE=3` 构建则要求 FILE 请求仍不落盘，并明确记录无磁盘临时文件正向对照。另核对排序结果、查询计划、排序计数、自动索引行数与物化结果 |
+| 语句回滚 / sub-journal | 大批更新最后触发 UNIQUE / ABORT，先前更新全部撤销；允许磁盘临时存储时，FILE 对照必须观察非空 sub-journal，不能只验证最终表内容 |
+| VACUUM | 验证重建与 A11 保全；允许磁盘临时存储时，FILE 对照观察真实临时 DB，逐个记录是否包含标记，不假设所有临时文件都明文或都加密 |
 | 多库提交 / super-journal | 仅在本次合成目录附加独立加密库，DELETE 模式下同时提交两库，观察非空 super-journal 与清理；这不是生产 ATTACH / 多库事务能力声明 |
 
-FILE 对照会在 TEMP 表、排序或索引等临时文件检出合成明文，这是用于验证观测有效性的预期结果；不能据此放宽生产 MEMORY 策略。SQLite 对临时文件类别与生命周期的说明见[临时文件](https://www.sqlite.org/tempfiles.html)、[VFS 契约](https://www.sqlite.org/c3ref/vfs.html)及 [IO 方法](https://www.sqlite.org/c3ref/io_methods.html)；SQLCipher 的临时存储保护边界见[官方设计](https://www.zetetic.net/sqlcipher/design/)。测试实现为本项目编写，仅使用已锁定绑定，不复制第三方 VFS 示例或新增依赖。
+`TEMP_STORE=2` 构建的 FILE 对照会在 TEMP 表、排序或索引等临时文件检出合成明文，这是用于验证观测有效性的预期结果；不能据此放宽生产 MEMORY 策略。SQLite 对临时文件类别与生命周期的说明见[临时文件](https://www.sqlite.org/tempfiles.html)、[VFS 契约](https://www.sqlite.org/c3ref/vfs.html)及 [IO 方法](https://www.sqlite.org/c3ref/io_methods.html)；SQLCipher 的临时存储保护边界见[官方设计](https://www.zetetic.net/sqlcipher/design/)。测试实现为本项目编写，仅使用已锁定绑定，不复制第三方 VFS 示例或新增依赖。
 
 日常入口为 `check-core.sh`。定向运行：
 
@@ -305,6 +305,40 @@ FILE 对照会在 TEMP 表、排序或索引等临时文件检出合成明文，
 CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core --lib store::pager_tests -- --nocapture
 ```
 
-可将 `M0_PAGER_EVIDENCE_DIR` 指向已创建的 `local-evidence/m0-c/<batch>`，保留不含 key / 页面载荷的 JSON；解析后的目录不能越出项目 M0-C 证据范围。两个父测试实际执行全部子进程，标为 ignored 的 `pager_worker` 仅是专用子进程入口，不是跳过故障覆盖。每个子进程最多等待 45 秒；超时 / 失败只终止本次 PID 并等待回收。`TMPDIR` / `SQLITE_TMPDIR` 仅在子进程指向本次独占目录，正常完成先关闭 / 回收进程与文件，再清理目录并保存成功报告。
+所有平台另用独立、未加密的合成数据库验证 `xRead` 扫描能实际检出标记；该对照在加密文件 / 临时文件观测截取之后执行，单独记录，不混入 MEMORY 策略判据。Android 编译时强制内存的结果不能当作匿名磁盘临时文件扫描的正向证据。
 
-该切片覆盖宿主有界工作负载中的 SQLite 临时文件类别，不等于所有查询形态、移动平台、长时缓存、OS swap / crash dump、导出或归档边界已经验证。现有产品未开放任意 SQL、ATTACH 或导出入口；新增路径需补相应文件审计，不能直接沿用本批通过结论。
+可将 `M0_PAGER_EVIDENCE_DIR` 指向已创建的 `local-evidence/m0-c/<batch>`，保留不含 key / 页面载荷的 JSON；解析后的目录不能越出项目 M0-C 证据范围。两个父测试实际执行全部子进程，标为 ignored 的 `pager_worker` 仅是专用子进程入口，不是跳过故障覆盖。每个子进程最多等待 45 秒；超时 / 失败只终止本次 PID 并等待回收。宿主入口的 `TMPDIR` / `SQLITE_TMPDIR` 仅在子进程指向本次独占目录；移动入口还将父测试限制在本轮 App 私有目录，正常完成先关闭 / 回收进程与文件，再清理目录并保存成功报告。
+
+该切片覆盖有界工作负载中的 SQLite 临时文件类别；宿主与下节的移动原生模拟器分别取得证据，不等于所有查询形态、生产 App 安全域、真机、长时缓存、OS swap / crash dump、导出或归档边界已经验证。现有产品未开放任意 SQL、ATTACH 或导出入口；新增路径需补相应文件审计，不能直接沿用本批通过结论。
+
+
+### 7.10 移动模拟器原生 pager 复验
+
+复用上节同一 `cfg(test)` harness 与正式 Store 实现，`build-mobile-core.py --pager-tests` 沿用普通 code asset 的 Rust 版本、NDK / Apple SDK、目标和最低系统参数，生成唯一的 release 原生测试可执行文件；不新增依赖、测试 feature、桥接接口或 App 故障开关。构建输出与 App code asset 分开，`--frb` 与该模式不并用。
+
+先按已有授权启动确切的现有模拟器并安装本项目普通入口 debug App，再执行下列入口。以下路径用于本地复现；工具链和设备必须先核对，不通过命令自动安装或重建模拟器：
+
+```sh
+CARGO_NET_OFFLINE=true python3 scripts/build-mobile-core.py \
+  --os android --arch arm64 --minimum-version 24 \
+  --c-compiler /Users/luobo/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang \
+  --pager-tests --output local-evidence/m0-c/<batch>/android-pager-tests
+CARGO_NET_OFFLINE=true python3 scripts/build-mobile-core.py \
+  --os ios --arch arm64 --ios-sdk iphonesimulator --minimum-version 15.0 \
+  --pager-tests --output local-evidence/m0-c/<batch>/ios-pager-tests
+python3 scripts/check-mobile-pager.py --platform android --device emulator-5568 \
+  --binary local-evidence/m0-c/<batch>/android-pager-tests \
+  --output-dir local-evidence/m0-c/<batch>/verified
+python3 scripts/check-mobile-pager.py --platform ios \
+  --device CB767BAB-1B1B-4AF8-A3FB-0C2B793A0756 \
+  --binary local-evidence/m0-c/<batch>/ios-pager-tests \
+  --output-dir local-evidence/m0-c/<batch>/verified
+```
+
+控制器复用 `mobile_probe_device.py` 定位 App，只接受现有模拟器。Android 通过 `run-as` 在本项目 App UID 下执行，实际安全域为 `runas_app`；iOS 通过 `simctl spawn` 运行目标可执行文件，使用本项目数据容器。它们证明移动目标的原生核心、VFS 和该文件路径上的行为，不证明 Flutter bridge 调用、生产 App sandbox / entitlement、系统认证、真机或实际掉电。App 生产入口不被替换。
+
+每轮先保存实际 `target_os` / ABI、默认 VFS 名与版本、SQLCipher / SQLite 和全部 compile options，拒绝宿主目标或其他 ABI；每个故障与临时文件子进程的配置必须与预检完全一致。可用 `--configuration-only` 单独预检。测试报告中的原 VFS 均在注册观察器前读取。Android 另记录 App UID、SELinux 域、API 与系统页大小；iOS 记录实际 Simulator runtime。
+
+原生测试程序、`TMPDIR` / `SQLITE_TMPDIR`、随机合成库和报告仅位于本项目 `code_cache/m0-pager-<UUID>`（Android）或 `tmp/m0-pager-<UUID>`（iOS）。移动 `M0_PAGER_EVIDENCE_DIR` 只允许该 TMPDIR 下的 `evidence`。随机 key 仍由父子进程 stdin 传递。正常返回先核对所有原始测试目录已清理，再复制非秘密 JSON 到宿主忽略证据目录，最后精确删除本次 UUID 目录；不清理其他缓存或其他 App。每个报告保存测试二进制 SHA-256、目标、实际路径、退出码和清理状态，不覆盖已有批次。
+
+若失败，保留日志和已登记的精确目录，先排查失败阶段及本次进程，不得把 `cleaned=false` 改记通过或按宽泛前缀删除。完成后核对本轮控制器 / 测试进程与目录无残留，停止本轮启动的模拟器；既有 adb 或其他设备进程保留。锁屏、设备定义、快照与系统保护项不由此入口改动。最终结果与残余门槛维护在 current，历史批次记录在 devlog。

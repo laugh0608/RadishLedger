@@ -76,3 +76,6 @@ M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `loc
 `check-core.sh` 同时执行 A11 非空候选 / 删除 / outbox 跨进程恢复、原意图重放、四类封装文件发布故障，以及实际 DB / WAL / 回滚日志检查；`check-mobile.sh` 的 `bootstrap_native_test.dart` 经宿主两种 bridge 验证非空账务和发布错误。故障注入、发布结果未定及宿主 / 设备证据边界见[文件故障专题](../docs/development/mobile-core-prototype.md#78-非空账务与文件发布故障)。这不等于真实磁盘损坏、断电或系统认证已验收。
 
 Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程中的测试 VFS 在实际 WAL 提交、DELETE 提交和 checkpoint 的写入 / 同步位置注入故障，SIGKILL 后由未注入的普通入口恢复并重试；另观察 TEMP 表、排序 / 索引、物化查询、语句回滚、VACUUM、super-journal 和 SHM。MEMORY 策略与 FILE 正向对照分别断言，匿名临时文件在关闭前扫描。可通过 `M0_PAGER_EVIDENCE_DIR` 保存忽略目录内的有界 JSON 证据；子进程入口标记 ignored，由两个父测试实际调度，不能作为未运行或单独通过的业务测试计数。完整判据、清理和适用边界见[DB pager 与临时文件](../docs/development/mobile-core-prototype.md#79-db-pager-故障与临时文件边界)。
+
+
+`build-mobile-core.py --pager-tests` 用既有目标配置生成独立的 `cfg(test)` 原生核心可执行文件，不改变 App code asset。新增 [check-mobile-pager.py](check-mobile-pager.py) 复用已有模拟器 / App 定位能力，先核对实际目标、默认 VFS 与全部编译选项，再运行相同 pager / 临时文件 harness，并要求所有子进程配置一致。Android `TEMP_STORE=3` 强制内存，FILE 请求仍须不落盘；iOS `TEMP_STORE=2` 执行真实 FILE 临时文件对照，两端另有独立明文扫描对照。配置、运行与精确清理见[移动原生复验](../docs/development/mobile-core-prototype.md#710-移动模拟器原生-pager-复验)；不自动启动设备、安装 App、改变锁屏或证明 Flutter / 生产安全域 / 真机行为。

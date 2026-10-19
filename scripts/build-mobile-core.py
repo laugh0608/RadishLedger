@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """为 Dart code asset 构建真实 Rust 目标；不安装工具或下载预编译业务库。"""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -46,10 +47,25 @@ def build(args):
         environment["SDKROOT"] = subprocess.check_output(
             ["xcrun", "--sdk", args.ios_sdk, "--show-sdk-path"], text=True
         ).strip()
-    command = ["cargo", "build", "--locked", "--release", "--target", target,
-               "-p", "radishledger-mobile"]
+    command = ["cargo", "test" if args.pager_tests else "build", "--locked", "--release", "--target", target,
+               "-p", "radishledger-core" if args.pager_tests else "radishledger-mobile"]
+    if args.pager_tests:
+        if args.frb:
+            raise SystemExit("原生 pager 测试不使用 bridge feature")
+        command.extend(["--lib", "--no-run", "--message-format=json"])
     if args.frb:
         command.extend(["--features", "frb"])
+    if args.pager_tests:
+        result = subprocess.run(command, cwd=ROOT, env=environment, check=True,
+                                stdout=subprocess.PIPE, text=True)
+        artifacts = [json.loads(line) for line in result.stdout.splitlines()]
+        executables = [a["executable"] for a in artifacts if a.get("reason") == "compiler-artifact"
+                       and a.get("profile", {}).get("test") and a.get("executable")]
+        if len(executables) != 1:
+            raise SystemExit("必须生成唯一的原生核心测试可执行文件")
+        shutil.copy2(executables[0], output)
+        print(f"Rust pager test: {target}; {output.stat().st_size} bytes")
+        return
     subprocess.run(command, cwd=ROOT, env=environment, check=True)
     extension = "so" if args.os in {"android", "linux"} else "dylib"
     source = ROOT / "target" / target / "release" / f"libradishledger_mobile.{extension}"
@@ -70,6 +86,7 @@ def main():
     parser.add_argument("--c-compiler")
     parser.add_argument("--output", required=True)
     parser.add_argument("--frb", action="store_true")
+    parser.add_argument("--pager-tests", action="store_true", help="只构建 cfg(test) 原生核心测试，不改变 App code asset")
     build(parser.parse_args())
 
 

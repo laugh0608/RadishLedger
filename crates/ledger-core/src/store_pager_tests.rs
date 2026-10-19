@@ -1,4 +1,4 @@
-//! 宿主 pager 故障及临时文件边界。所有 VFS 全局变更只发生在独占子进程。
+//! 原生目标 pager 故障及临时文件边界。所有 VFS 全局变更只发生在独占子进程。
 use super::*;
 use rusqlite::ffi;
 use serde_json::{Value, json};
@@ -101,19 +101,56 @@ fn run_worker(request: &Request, key: &DbKey, kill_after_report: bool) -> Value 
 
 fn save_evidence(name: &str, value: &Value) {
     if let Some(directory) = std::env::var_os("M0_PAGER_EVIDENCE_DIR") {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
             .unwrap();
         let directory = PathBuf::from(directory).canonicalize().unwrap();
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         assert!(directory.starts_with(root.join("local-evidence/m0-c")));
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        assert_eq!(
+            directory,
+            std::env::temp_dir()
+                .canonicalize()
+                .unwrap()
+                .join("evidence")
+        );
         std::fs::write(
             directory.join(name),
             serde_json::to_string_pretty(value).unwrap() + "\n",
         )
         .unwrap();
     }
+}
+
+fn configuration(connection: &Connection) -> Value {
+    let options: Vec<String> = connection
+        .prepare("PRAGMA compile_options")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    let cipher: String = connection
+        .pragma_query_value(None, "cipher_version", |r| r.get(0))
+        .unwrap();
+    let parent = unsafe { ffi::sqlite3_vfs_find(std::ptr::null()) };
+    assert!(!parent.is_null());
+    let name = unsafe { std::ffi::CStr::from_ptr((*parent).zName).to_str().unwrap() };
+    json!({"os": std::env::consts::OS, "arch": std::env::consts::ARCH,
+        "sqlite": vfs::sqlite_version(), "sqlcipher": cipher, "compileOptions": options,
+        "defaultVfs": name, "vfsVersion": unsafe { (*parent).iVersion }})
+}
+
+#[test]
+fn target_configuration() {
+    let connection = Connection::open_in_memory().unwrap();
+    let config = configuration(&connection);
+    println!("{config}");
+    save_evidence("configuration.json", &config);
 }
 
 fn audit(store: &Store) -> Value {
@@ -353,7 +390,7 @@ fn pager_partial_writes_and_sync_errors_recover_atomic_facts() {
     save_evidence(
         "pager-report.json",
         &json!({"cases": reports, "controls": controls, "allPassed": true, "cleaned": true,
-        "scope": "host test VFS partial writes and sync errors; no power-loss claim"}),
+        "scope": "native target test VFS partial writes and sync errors; no power-loss claim"}),
     );
 }
 
@@ -563,7 +600,15 @@ fn temporary_files_observed_before_unlink_and_memory_policy_checked() {
             .iter()
             .filter(|f| f.kind.temporary())
             .collect();
-        if matches!(scenario, Scenario::MemoryTemp) {
+        let forced_memory = result["compileOptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|option| option == "TEMP_STORE=3");
+        assert_eq!(result["scannerControl"]["disk_contains_marker"], true);
+        assert_eq!(result["scannerControl"]["closed"], true);
+        assert_eq!(result["scannerControl"]["scan_code"], ffi::SQLITE_OK);
+        if matches!(scenario, Scenario::MemoryTemp) || forced_memory {
             assert!(
                 temporary.is_empty(),
                 "MEMORY must not open disk temporary files: {temporary:?}"
@@ -626,6 +671,7 @@ fn temporary_files_observed_before_unlink_and_memory_policy_checked() {
                 "auxiliary.db",
                 "ledger.db",
                 "report.json",
+                "scanner-control.db",
                 "worker.stderr",
                 "worker.stdout"
             ]
@@ -636,14 +682,16 @@ fn temporary_files_observed_before_unlink_and_memory_policy_checked() {
             temporary.len()
         );
         reports.push(json!({"worker": result, "a11Digest": before_digest,
-            "a11Audit": before_audit, "fullFactsPreserved": true, "filesAfterClose": files}));
+            "a11Audit": before_audit, "fullFactsPreserved": true, "filesAfterClose": files,
+            "fileTempControl": if forced_memory { "compile-time-memory; no disk temp control" }
+                else { "available" }}));
         directory.close().unwrap();
     }
     root.close().unwrap();
     save_evidence(
         "temporary-files-report.json",
         &json!({"cases": reports, "allPassed": true, "cleaned": true,
-        "scope": "bounded host workload and FILE positive control; no exhaustive memory/cache claim"}),
+        "scope": "bounded native target workload; FILE control depends on TEMP_STORE; no exhaustive memory/cache claim"}),
     );
 }
 
@@ -664,6 +712,7 @@ fn pager_worker() {
     let key = DbKey::from_secret(secret.as_ref()).unwrap();
     drop(secret);
     drop(input);
+    let config = configuration(&Connection::open_in_memory().unwrap());
     let observer = Registration::new();
     let mut store = Store::open(&request.directory.join("ledger.db"), &key).unwrap();
     store
@@ -690,10 +739,7 @@ fn pager_worker() {
         .query_map([], |r| r.get::<_, String>(0))
         .unwrap()
         .collect::<std::result::Result<Vec<_>, _>>()
-        .unwrap()
-        .into_iter()
-        .filter(|s| s.starts_with("TEMP_STORE="))
-        .collect();
+        .unwrap();
     observer.arm(request.fault);
     observer.phase(if matches!(request.scenario, Scenario::Checkpoint) {
         Phase::Checkpoint
@@ -730,9 +776,36 @@ fn pager_worker() {
     } else {
         std::mem::forget(store);
     }
+    let observation = observer.report();
+    // 独立未加密合成文件证明本目标 xRead 扫描可以检出标记。
+    // 与已截取的加密文件 / 临时文件观测分开，不把对照混入 MEMORY 策略判据。
+    let scanner_control = if temporary {
+        let plain = Connection::open(request.directory.join("scanner-control.db")).unwrap();
+        plain
+            .execute_batch("CREATE TABLE scanner(value TEXT NOT NULL);")
+            .unwrap();
+        plain
+            .execute(
+                "INSERT INTO scanner VALUES (?1)",
+                [std::str::from_utf8(vfs::MARKER).unwrap()],
+            )
+            .unwrap();
+        drop(plain);
+        let report = observer.report();
+        let file = report
+            .files
+            .iter()
+            .skip(observation.files.len())
+            .find(|file| file.kind == Kind::Database)
+            .unwrap();
+        assert!(file.closed && file.scanned_bytes > 0 && file.disk_contains_marker);
+        serde_json::to_value(file).unwrap()
+    } else {
+        Value::Null
+    };
     let result = json!({"pid": std::process::id(), "scenario": request.scenario, "error": error,
         "sqlite": vfs::sqlite_version(), "sqlcipher": cipher, "compileOptions": compile_options,
-        "io": observer.report(), "workload": workload});
+        "configuration": config, "io": observation, "workload": workload, "scannerControl": scanner_control});
     let pending = request.directory.join("report.pending");
     std::fs::write(&pending, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
     std::fs::rename(pending, request.directory.join("report.json")).unwrap();
