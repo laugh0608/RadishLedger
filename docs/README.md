@@ -23,7 +23,7 @@
 | 漏洞、凭据或数据安全问题如何报告 | [安全报告](../SECURITY.md) |
 | 源码可见与个人自部署的许可边界 | [许可策略](licensing-strategy.md) |
 | 已接受的决定和后续决策入口 | [ADR 索引](adr/README.md) |
-| 现在到哪一步、下一步做什么 | [当前状态](status/current.md) |
+| 现在到哪一步、下一步做什么 | [当前状态](status/current.md)、[接下来的事项](status/current.md#接下来的事项) |
 | 历史推进与验收记录 | [2026 年 10 月开发记录](devlogs/2026-10.md) |
 
 ## 来源与维护
