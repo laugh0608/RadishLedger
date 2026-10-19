@@ -97,6 +97,16 @@ class M0Protection(private val activity: Activity, private val channel: MethodCh
         return root.path
     }
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "fileEnvironment" || call.method == "fileAttributes") {
+            try {
+                val root = storage("m0-c")
+                result.success(if (call.method == "fileEnvironment") M0FileBoundary.environment(activity, root)
+                    else M0FileBoundary.attributes(root, call.argument<String>("run") ?: ""))
+            } catch (error: Exception) {
+                result.error("file_boundary_unavailable", "合成文件属性读取失败", mapOf("platformCode" to error.javaClass.simpleName))
+            }
+            return
+        }
         if (call.method == "control" || call.method == "removeControl") {
             try { result.success(control(call.method == "removeControl")) }
             catch (error: Exception) { val failure = mapped(error); result.error(failure.code, "实验管道不可用", mapOf("platformCode" to failure.platformCode)) }

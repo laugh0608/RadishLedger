@@ -9,8 +9,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-#[path = "store_test_vfs.rs"]
-mod vfs;
+use super::boundary::{configuration, temp_workload, vfs};
 use vfs::{Failure, Fault, Kind, Observation, Operation, Phase, Registration};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -124,25 +123,6 @@ fn save_evidence(name: &str, value: &Value) {
         )
         .unwrap();
     }
-}
-
-fn configuration(connection: &Connection) -> Value {
-    let options: Vec<String> = connection
-        .prepare("PRAGMA compile_options")
-        .unwrap()
-        .query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<std::result::Result<_, _>>()
-        .unwrap();
-    let cipher: String = connection
-        .pragma_query_value(None, "cipher_version", |r| r.get(0))
-        .unwrap();
-    let parent = unsafe { ffi::sqlite3_vfs_find(std::ptr::null()) };
-    assert!(!parent.is_null());
-    let name = unsafe { std::ffi::CStr::from_ptr((*parent).zName).to_str().unwrap() };
-    json!({"os": std::env::consts::OS, "arch": std::env::consts::ARCH,
-        "sqlite": vfs::sqlite_version(), "sqlcipher": cipher, "compileOptions": options,
-        "defaultVfs": name, "vfsVersion": unsafe { (*parent).iVersion }})
 }
 
 #[test]
@@ -392,159 +372,6 @@ fn pager_partial_writes_and_sync_errors_recover_atomic_facts() {
         &json!({"cases": reports, "controls": controls, "allPassed": true, "cleaned": true,
         "scope": "native target test VFS partial writes and sync errors; no power-loss claim"}),
     );
-}
-
-fn temp_workload(
-    store: &mut Store,
-    file_control: bool,
-    observer: &Registration,
-    directory: &Path,
-    key: &DbKey,
-) -> Value {
-    let connection = &mut store.connection;
-    if file_control {
-        connection.execute_batch("PRAGMA temp_store=FILE;").unwrap();
-    }
-    let temp_store: i64 = connection
-        .pragma_query_value(None, "temp_store", |r| r.get(0))
-        .unwrap();
-    assert_eq!(temp_store, if file_control { 1 } else { 2 });
-    connection
-        .execute_batch(
-            "PRAGMA cache_size=8; PRAGMA temp.cache_size=8;
-        CREATE TABLE boundary_source(i INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);",
-        )
-        .unwrap();
-    let marker = std::str::from_utf8(vfs::MARKER).unwrap();
-    let tx = connection.transaction().unwrap();
-    for i in 1..=8192 {
-        tx.execute(
-            "INSERT INTO boundary_source VALUES (?1, ?2)",
-            params![i, format!("{marker}{:0256}-{i:05}", 0)],
-        )
-        .unwrap();
-    }
-    tx.commit().unwrap();
-    observer.phase(Phase::TempTable);
-    connection
-        .execute_batch("CREATE TEMP TABLE boundary_temp AS SELECT * FROM boundary_source;")
-        .unwrap();
-    let sql = "SELECT value FROM boundary_source ORDER BY substr(value, -5) DESC";
-    let plan: Vec<String> = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-        .unwrap()
-        .query_map([], |r| r.get(3))
-        .unwrap()
-        .collect::<std::result::Result<_, _>>()
-        .unwrap();
-    assert!(plan.iter().any(|s| s.contains("TEMP B-TREE")));
-    observer.phase(Phase::OrderBy);
-    let mut sort = connection.prepare(sql).unwrap();
-    let values: Vec<String> = sort
-        .query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<std::result::Result<_, _>>()
-        .unwrap();
-    assert_eq!(values.len(), 8192);
-    assert!(values[0].ends_with("08192") && values[8191].ends_with("00001"));
-    let sorts = sort.get_status(rusqlite::StatementStatus::Sort);
-    assert!(sorts > 0);
-    drop(sort);
-    observer.phase(Phase::AutoIndex);
-    let mut join = connection
-        .prepare(
-            "SELECT sum(length(b.value)) FROM boundary_temp a JOIN boundary_temp b ON a.i=b.i WHERE a.i<=64",
-        )
-        .unwrap();
-    assert_eq!(
-        join.query_row([], |r| r.get::<_, i64>(0)).unwrap(),
-        64 * values[0].len() as i64
-    );
-    let autoindex = join.get_status(rusqlite::StatementStatus::AutoIndex);
-    assert!(autoindex > 0);
-    drop(join);
-    observer.phase(Phase::Materialization);
-    let materialized: i64 = connection
-        .query_row(
-            "WITH m AS MATERIALIZED (SELECT * FROM boundary_source) SELECT count(*) FROM m",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(materialized, 8192);
-    observer.phase(Phase::StatementRollback);
-    // ABORT 在多行更新最后一行触发，验证 statement journal 的回滚语义。
-    let constraint = connection.execute_batch("BEGIN; UPDATE boundary_source SET value=CASE WHEN i=8192 THEN (SELECT value FROM boundary_source WHERE i=1) ELSE value||'changed' END;").unwrap_err();
-    assert_eq!(
-        constraint.sqlite_error_code(),
-        Some(ffi::ErrorCode::ConstraintViolation)
-    );
-    connection.execute_batch("COMMIT;").unwrap();
-    let changed: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM boundary_source WHERE value LIKE '%changed'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(changed, 0);
-    observer.phase(Phase::TempIndex);
-    connection
-        .execute_batch(
-            "CREATE INDEX temp.boundary_sort ON boundary_temp(value); DROP TABLE boundary_temp;",
-        )
-        .unwrap();
-    observer.phase(Phase::Vacuum);
-    connection.execute_batch("VACUUM;").unwrap();
-    // SHM 不经 xOpen，而由父 VFS 的 xShmMap 管理；在 WAL 尚打开时检查真实文件。
-    let shm = std::fs::read(directory.join("ledger.db-shm")).unwrap();
-    assert!(!shm.is_empty() && !shm.windows(vfs::MARKER.len()).any(|w| w == vfs::MARKER));
-    observer.phase(Phase::MultiDatabaseCommit);
-    connection
-        .execute_batch("PRAGMA journal_mode=DELETE;")
-        .unwrap();
-    // 只为覆盖 super-journal；附加库与 key 均为本次合成材料，参数绑定不写日志。
-    // Store 的既有连接不带 SQLITE_OPEN_CREATE，附加的新文件也必须先排他创建。
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(directory.join("auxiliary.db"))
-        .unwrap();
-    connection
-        .execute(
-            "ATTACH DATABASE ?1 AS auxiliary KEY ?2",
-            params![
-                directory.join("auxiliary.db").to_str().unwrap(),
-                key.0.as_ref()
-            ],
-        )
-        .unwrap();
-    connection
-        .execute_batch(
-            "PRAGMA auxiliary.journal_mode=DELETE; PRAGMA auxiliary.synchronous=FULL;
-        CREATE TABLE auxiliary.sample(value TEXT NOT NULL); BEGIN;
-        UPDATE boundary_source SET value=value||'-multidb' WHERE i=1;",
-        )
-        .unwrap();
-    connection
-        .execute("INSERT INTO auxiliary.sample VALUES (?1)", [marker])
-        .unwrap();
-    connection
-        .execute_batch("COMMIT; DETACH auxiliary; PRAGMA journal_mode=WAL;")
-        .unwrap();
-    let auxiliary = Store::connect(&directory.join("auxiliary.db"), key, true).unwrap();
-    assert_eq!(
-        auxiliary
-            .connection
-            .query_row("SELECT value FROM sample", [], |r| r.get::<_, String>(0))
-            .unwrap(),
-        marker
-    );
-    drop(auxiliary);
-    json!({"tempStore": temp_store, "rows": materialized, "sortOperations": sorts,
-        "automaticIndexRows": autoindex, "statementRollback": true, "vacuum": true,
-        "multiDatabaseCommit": true, "shmBytes": shm.len(), "shmMarkerFound": false,
-        "queryPlan": plan})
 }
 
 #[test]

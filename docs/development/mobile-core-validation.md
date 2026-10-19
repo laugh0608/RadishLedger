@@ -72,6 +72,8 @@ C02 的明文标记搜索只是其中一项证据，未搜到字符串不能独�
 
 B07 / B09 与 C02 的原生补充入口见[DB pager 与临时文件观测](mobile-core-prototype.md#79-db-pager-故障与临时文件边界)：实际 VFS 部分写入 / 同步错误、SIGKILL 后普通入口恢复、MEMORY 策略及编译配置允许的匿名临时文件 FILE 对照分别验证；强制 `TEMP_STORE=3` 时明确记录无磁盘临时文件正向对照，并验证 FILE 请求仍不落盘。同步错误允许恢复到完整旧状态或完整新状态，重试必须复用操作身份；checkpoint 失败不能丢失已提交事实。[移动原生入口](mobile-core-prototype.md#710-移动模拟器原生-pager-复验)在两端现有模拟器的本项目数据目录运行相同 harness，逐子进程核对 VFS / 编译配置；Android `runas_app` 与 iOS `simctl spawn` 证据不替代生产 App 安全域、真机、任意查询 / 导出缓存或掉电，正式退出条件不变。
 
+[App 进程与文件路径入口](mobile-core-prototype.md#711-app-进程安全域与文件路径复验)补充正常 Activity / Simulator App 的双 bridge、命名 VFS、文件属主 / 权限、Android SELinux / 外部访问拒绝、iOS 备份排除及中断清理。iOS Simulator 文件保护属性不可取单列未验证；正常 App 启动不等于真机 sandbox / entitlement 已通过，Android 模拟器 release 也不替代硬件保护与系统认证。本切片不重复计入逐点 pager 故障数。
+
 M0-C 退出需两端实际加密库、文件边界、系统密钥失效后的独立本机恢复和可评审的 KDF 资源证据。Android / iOS 策略可以适配平台能力，但不能降级为明文或删除独立恢复路径。
 
 ## 4. 单项证据格式与清理

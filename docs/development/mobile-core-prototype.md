@@ -281,7 +281,7 @@ python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793
 
 ### 7.9 DB pager 故障与临时文件边界
 
-`store_pager_tests.rs` 与 `store_test_vfs.rs` 仅由 `cfg(all(test, unix))` 接入，不进入生产核心、bridge 或移动 App 包；可以单独编译为移动模拟器原生测试可执行文件。父测试在独占子进程注册观察 VFS，原 VFS 继续执行真实文件 IO、锁、SHM 与 mmap；父进程及其他并行测试不切换默认 VFS。随机合成 DB key 仅通过 stdin 传递，不写参数、环境变量、报告或日志。
+`store_pager_tests.rs` 的故障调度仅由 `cfg(all(test, unix))` 接入，可以单独编译为移动模拟器原生测试可执行文件。临时工作负载与 VFS 透传器由 `store_boundary.rs` 复用，供第 7.11 节的专用合成 App 入口调用；App 不开放 pager 故障调度，也不切换默认 VFS。父测试在独占子进程注册观察 VFS，原 VFS 继续执行真实文件 IO、锁、SHM 与 mmap；父进程及其他并行测试不切换默认 VFS。随机合成 DB key 仅通过 stdin 传递，不写参数、环境变量、报告或日志。
 
 先取得同一 A11 账库在 WAL 提交、DELETE 日志提交和 checkpoint 中的成功 IO 序列，再逐个写入 / 同步位置注入；每次核对文件类别、调用序号、长度 / flags 和偏移，未命中不能通过。SQLite 的 `xWrite` 返回错误码而非已写字节数，所以短写场景实际调用原 VFS 写入严格少于请求的 2–7 bytes，再返回 `SQLITE_IOERR_WRITE`；不把正数当作 SQLite 的成功返回。`xSync` 分别在调用父同步前拒绝，以及父同步成功后报告 `SQLITE_IOERR_FSYNC`，覆盖可能已经持久化但调用方收到失败的情况。此处验证的是 pager 面对 IO 失败的行为，不证明内核实际发生短写 / fsync 故障或掉电。
 
@@ -342,3 +342,38 @@ python3 scripts/check-mobile-pager.py --platform ios \
 原生测试程序、`TMPDIR` / `SQLITE_TMPDIR`、随机合成库和报告仅位于本项目 `code_cache/m0-pager-<UUID>`（Android）或 `tmp/m0-pager-<UUID>`（iOS）。移动 `M0_PAGER_EVIDENCE_DIR` 只允许该 TMPDIR 下的 `evidence`。随机 key 仍由父子进程 stdin 传递。正常返回先核对所有原始测试目录已清理，再复制非秘密 JSON 到宿主忽略证据目录，最后精确删除本次 UUID 目录；不清理其他缓存或其他 App。每个报告保存测试二进制 SHA-256、目标、实际路径、退出码和清理状态，不覆盖已有批次。
 
 若失败，保留日志和已登记的精确目录，先排查失败阶段及本次进程，不得把 `cleaned=false` 改记通过或按宽泛前缀删除。完成后核对本轮控制器 / 测试进程与目录无残留，停止本轮启动的模拟器；既有 adb 或其他设备进程保留。锁屏、设备定义、快照与系统保护项不由此入口改动。最终结果与残余门槛维护在 current，历史批次记录在 devlog。
+
+
+### 7.11 App 进程安全域与文件路径复验
+
+本入口补充第 7.10 节未覆盖的正常 App 进程、桥接和文件路径。复用已有 M0 App、平台 `storage` 策略与两种 bridge 的 validation 调用；普通 `main.dart` 不执行本实验。它仍是合成验证 App，不是最终用户产品或正式发布包。
+
+`file_boundary_main.dart` 通过 `M0_APP_BOUNDARY_RUN` 接受 32 位小写十六进制批次身份。核心 `fileBoundary` 只在既有私有根下排他建立 `m0c-<run>`，随机 DB key 仅存在内存，不接受真实账库 / 解锁材料。运行 A11 后复用第 7.9 节的 8192 行临时文件工作负载；每个连接显式选择唯一命名 VFS，注册 / 注销均不改进程默认 VFS，另以普通 Store 连接验证观察器未截获默认连接。连接的 key / PRAGMA 配置仍共用 Store 原实现，不建立第二套存储策略。
+
+每端依次运行薄 FFI / FRB × MEMORY / FILE 请求四组，独立核对进程 ID、完整编译选项、完整账务摘要、8 个修订 / 序号、7 个 outbox、2 个候选、1 个删除，以及 10000 / 8000 分余额。所有 VFS 文件必须成功扫描并关闭。留存真实非空 WAL / SHM 供平台读取属性，再由 `fileBoundaryCleanup` 校验归属和锁后删除本次目录。
+
+| 观测 | 判据与限制 |
+| --- | --- |
+| Android 进程 | 正常 Activity 启动的 release 包，运行时 `debuggable=false`、`allowBackup=false`，`/proc/self/attr/current` 为 `untrusted_app`；外部 `run-as` 与 shell 私有目录访问实际拒绝 |
+| Android 路径 | 必须等于 `noBackupFilesDir/m0-c`；根 / 子目录 0700，DB、WAL、SHM、辅助库、扫描对照和 owner / lock 均 0600、App UID，实际 SELinux 标签为 `app_data_file` |
+| iOS 路径 | 必须等于本 App 容器 `Library/Application Support/m0-c`；根备份排除标记为 true，目录 0700、上述文件 0600、同一有效 UID；Simulator 不证明真机 sandbox 隔离 |
+| iOS 文件保护 | 原 storage 仍请求 `NSFileProtectionComplete`。可读取该属性时记录为属性观测，硬件保护仍未验证；仅 Simulator 返回 null 可标为 `unavailableOnSimulator`，不能改记保护通过。真机缺失、任意较弱属性均拒绝 |
+| VFS 短命文件 | 实际 DB / WAL / 回滚日志在本次目录且为 0600；super-journal 使用 SQLite 的 0644 默认值再受进程 umask 限制，允许实测 0600 / 0644，父目录必须 0700。匿名临时文件按原 VFS 关闭前扫描，不虚构可枚举路径 |
+| 正向对照 | Android `TEMP_STORE=3` 的 FILE 请求仍无磁盘临时文件；iOS `TEMP_STORE=2` 的 FILE 请求必须实际产生四类临时文件并检出匿名文件标记。独立明文 scanner 对照与加密文件判据分开 |
+
+App 在调用前原子登记批次 / 目录 / bridge / run / PID；只含合成身份。控制器可在 `filesReady` 实际停止 App，重启后验证新 PID、精确回收登记目录并完成全部四组。中断恢复证明本实验材料可清理，不是随机内存 key 丢失后可恢复账务；后者仍由 bootstrap 实验验证。登记损坏或归属不明时保留现场、明确失败，禁止按目录前缀批量删除。
+
+使用现有工具链构建专用入口，Android 必须 release，iOS Simulator 使用 debug；设备 / 包安装授权和精确恢复计划按项目协作规则执行。构建与 Flutter 检查串行使用同一工作区，沿用锁定依赖。
+
+```sh
+# 在 apps/m0_probe；批次值是新生成的非秘密身份，不是 key。
+flutter build apk --release --target-platform android-arm64 --target lib/file_boundary_main.dart --dart-define=M0_APP_BOUNDARY_RUN=<session>
+flutter run --debug --no-resident -d <existing-ios-simulator> --target lib/file_boundary_main.dart --dart-define=M0_APP_BOUNDARY_RUN=<session>
+# 回到仓库根；App 已安装且设备已启动。
+python3 scripts/check-mobile-app-files.py --platform android --device <existing-emulator> --session <session> --output-dir local-evidence/m0-c/<batch> --interrupt-once
+python3 scripts/check-mobile-app-files.py --platform ios --device <existing-ios-simulator> --session <session> --output-dir local-evidence/m0-c/<batch> --interrupt-once
+```
+
+`flutter run` 会自动启动一次实验；控制器前需核对并保存该次结果、确认已清理，再移除该精确报告。控制器拒绝混入旧 iOS 报告或覆盖既有输出。Android 不开放调试 / 导出组件，专用入口以 700 字符分片发布不超过 96 KiB 的合成诊断；接收端核对分片长度、数量与完整 JSON，截断不能当作通过。iOS 从本 App 临时目录读取合成报告；读取未完成只在整体超时内等待，不改变最终判据。报告不含 DB key、页面载荷或真实账单；普通入口不输出这些诊断。
+
+收尾核对全部已登记目录、报告和 journal 清理；截图需确认最终状态而非运行中画面。按初始状态恢复普通入口或移除本次临时安装包，停止本轮 App / 模拟器，保留原有 adb。原生 fault harness 结果不能与本 App 的四组无注入观测混算。本切片不证明真实系统认证、iOS 真机 entitlement / 文件保护、备份传输行为、最低系统、任意查询 / 导出缓存、真实 IO 故障或掉电。

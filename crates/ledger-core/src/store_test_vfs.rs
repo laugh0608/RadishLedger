@@ -1,9 +1,10 @@
-//! 仅在独占测试子进程注册；透传原 VFS，观察真实 SQLCipher IO，不替代 pager。
+//! 透传原 VFS，观察真实 SQLCipher IO。宿主子进程可设为默认，App 仅用命名注册。
 //! 契约来源：https://www.sqlite.org/c3ref/vfs.html 与 c3ref/io_methods.html。
 use rusqlite::ffi;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::os::unix::fs::MetadataExt;
 use std::ptr;
 use std::sync::Mutex;
 
@@ -99,6 +100,9 @@ pub struct FileObservation {
     pub kind: Kind,
     pub flags: i32,
     pub anonymous: bool,
+    pub path: Option<String>,
+    pub mode: Option<u32>,
+    pub owner_uid: Option<u32>,
     pub opened_during: Phase,
     pub written_during: BTreeSet<Phase>,
     pub shm_maps: usize,
@@ -141,11 +145,26 @@ struct File {
 pub struct Registration {
     vfs: Box<ffi::sqlite3_vfs>,
     context: Box<Context>,
+    name: CString,
+    make_default: bool,
 }
 
 impl Registration {
+    #[cfg(test)]
     pub fn new() -> Self {
-        // SAFETY: 只在专用单测试子进程调用；所有连接先关闭，之后才注销。
+        Self::register("radishledger-test-observer", true)
+    }
+
+    pub fn named(name: &str) -> Self {
+        Self::register(name, false)
+    }
+
+    pub fn name(&self) -> &str {
+        self.name.to_str().unwrap()
+    }
+
+    fn register(name: &str, make_default: bool) -> Self {
+        // SAFETY: App 采用唯一名称且不设为默认；对象保持稳定，所有连接先关闭再注销。
         unsafe {
             assert_eq!(ffi::sqlite3_initialize(), ffi::SQLITE_OK);
             let parent = ffi::sqlite3_vfs_find(ptr::null());
@@ -155,12 +174,13 @@ impl Registration {
                 registered: ptr::null_mut(),
                 observation: Mutex::new(Observation::default()),
             });
+            let name = CString::new(name).unwrap();
             let mut vfs = Box::new(ffi::sqlite3_vfs {
                 iVersion: 1,
                 szOsFile: size_of::<File>() as c_int,
                 mxPathname: (*parent).mxPathname,
                 pNext: ptr::null_mut(),
-                zName: c"radishledger-test-observer".as_ptr(),
+                zName: name.as_ptr(),
                 pAppData: (&mut *context as *mut Context).cast(),
                 xOpen: Some(open),
                 xDelete: Some(delete),
@@ -180,8 +200,16 @@ impl Registration {
                 xNextSystemCall: None,
             });
             context.registered = &mut *vfs;
-            assert_eq!(ffi::sqlite3_vfs_register(&mut *vfs, 1), ffi::SQLITE_OK);
-            Self { vfs, context }
+            assert_eq!(
+                ffi::sqlite3_vfs_register(&mut *vfs, i32::from(make_default)),
+                ffi::SQLITE_OK
+            );
+            Self {
+                vfs,
+                context,
+                name,
+                make_default,
+            }
         }
     }
 
@@ -208,10 +236,12 @@ impl Drop for Registration {
         // SAFETY: 本实例保持 Box 地址稳定，全部文件已关闭，回收前恢复原默认 VFS。
         unsafe {
             assert_eq!(ffi::sqlite3_vfs_unregister(&mut *self.vfs), ffi::SQLITE_OK);
-            assert_eq!(
-                ffi::sqlite3_vfs_register(self.context.parent, 1),
-                ffi::SQLITE_OK
-            );
+            if self.make_default {
+                assert_eq!(
+                    ffi::sqlite3_vfs_register(self.context.parent, 1),
+                    ffi::SQLITE_OK
+                );
+            }
         }
     }
 }
@@ -285,10 +315,21 @@ unsafe extern "C" fn open(
             .unwrap_or_else(|_| std::process::abort());
         let index = state.files.len();
         let phase = state.phase;
+        let path = if name.is_null() {
+            None
+        } else {
+            Some(CStr::from_ptr(name).to_string_lossy().into_owned())
+        };
+        let metadata = path
+            .as_ref()
+            .and_then(|path| std::fs::symlink_metadata(path).ok());
         state.files.push(FileObservation {
             kind: Kind::from_flags(flags),
             flags,
             anonymous: name.is_null(),
+            path,
+            mode: metadata.as_ref().map(|info| info.mode() & 0o777),
+            owner_uid: metadata.as_ref().map(|info| info.uid()),
             opened_during: phase,
             written_during: BTreeSet::new(),
             shm_maps: 0,

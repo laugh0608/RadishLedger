@@ -37,11 +37,28 @@ pub struct Request {
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Action {
     NativeError,
+    #[cfg(unix)]
+    FileBoundary {
+        run: String,
+        #[serde(rename = "fileControl")]
+        file_control: bool,
+    },
+    FileBoundaryCleanup {
+        run: String,
+    },
     Panic,
     Concurrent,
-    RecoveryStart { run: String, point: CommitPoint },
-    RecoveryInspect { run: String, point: CommitPoint },
-    RecoveryCleanup { run: String },
+    RecoveryStart {
+        run: String,
+        point: CommitPoint,
+    },
+    RecoveryInspect {
+        run: String,
+        point: CommitPoint,
+    },
+    RecoveryCleanup {
+        run: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -138,6 +155,14 @@ pub fn run(request: Request) -> Result<Value> {
         return Err(CoreError::new("invalid_directory", "实验临时目录不可用"));
     }
     match request.action {
+        #[cfg(unix)]
+        Action::FileBoundary { run, file_control } => {
+            crate::store::boundary::run(&request.directory, &run, file_control)
+        }
+        Action::FileBoundaryCleanup { run } => {
+            crate::bootstrap_files::Files::acquire(&request.directory, &run, false)?.cleanup()?;
+            Ok(json!({"cleaned":true}))
+        }
         Action::NativeError => Err(CoreError::new("synthetic_native_error", "合成 native 拒绝")),
         Action::Panic => panic!("M0 synthetic panic; no user data"),
         Action::Concurrent => concurrent(&request.directory),

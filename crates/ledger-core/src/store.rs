@@ -10,6 +10,10 @@ use zeroize::Zeroizing;
 #[path = "store_file_tests.rs"]
 mod file_tests;
 
+#[cfg(unix)]
+#[path = "store_boundary.rs"]
+pub(crate) mod boundary;
+
 #[cfg(all(test, unix))]
 #[path = "store_pager_tests.rs"]
 mod pager_tests;
@@ -152,6 +156,10 @@ impl Store {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
         };
         let connection = Connection::open_with_flags(path, flags).map_err(db_error)?;
+        Self::configure(connection, key, readonly)
+    }
+
+    fn configure(connection: Connection, key: &DbKey, readonly: bool) -> Result<Self> {
         // SAFETY: 连接归本函数所有；32 字节密钥仅在调用期间借用，不通过 SQL / 日志传递。
         let status =
             unsafe { rusqlite::ffi::sqlite3_key(connection.handle(), key.0.as_ptr().cast(), 32) };

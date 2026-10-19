@@ -95,6 +95,17 @@ final class M0Protection {
   }
 
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "fileEnvironment" || call.method == "fileAttributes" {
+      do {
+        let root = try storage()
+        if call.method == "fileEnvironment" { result(try M0FileBoundary.environment(storage: root)) }
+        else {
+          let arguments = call.arguments as? [String: Any]
+          result(try M0FileBoundary.attributes(storage: root, run: arguments?["run"] as? String ?? ""))
+        }
+      } catch { result(failure("file_boundary_unavailable", (error as NSError).code)) }
+      return
+    }
     if call.method == "control" || call.method == "removeControl" {
       do { result(try control(remove: call.method == "removeControl")) }
       catch { result(failure("control_unavailable", (error as NSError).code)) }

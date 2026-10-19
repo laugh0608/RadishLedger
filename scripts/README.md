@@ -79,3 +79,5 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 
 
 `build-mobile-core.py --pager-tests` 用既有目标配置生成独立的 `cfg(test)` 原生核心可执行文件，不改变 App code asset。新增 [check-mobile-pager.py](check-mobile-pager.py) 复用已有模拟器 / App 定位能力，先核对实际目标、默认 VFS 与全部编译选项，再运行相同 pager / 临时文件 harness，并要求所有子进程配置一致。Android `TEMP_STORE=3` 强制内存，FILE 请求仍须不落盘；iOS `TEMP_STORE=2` 执行真实 FILE 临时文件对照，两端另有独立明文扫描对照。配置、运行与精确清理见[移动原生复验](../docs/development/mobile-core-prototype.md#710-移动模拟器原生-pager-复验)；不自动启动设备、安装 App、改变锁屏或证明 Flutter / 生产安全域 / 真机行为。
+
+[check-mobile-app-files.py](check-mobile-app-files.py) 控制已安装专用入口的现有模拟器 App，不自行构建 / 安装或启动设备。正常 App 进程运行两 bridge × MEMORY / FILE，独立复核路径、UID、权限、Android release / SELinux / shell 拒绝及 iOS 备份排除；`--interrupt-once` 实际停止后要求新 PID 清理登记并重新完成。iOS Simulator 缺少文件保护属性记录未验证，不默认成功。专用入口、诊断传输和精确恢复步骤见 [App 文件复验](../docs/development/mobile-core-prototype.md#711-app-进程安全域与文件路径复验)。`check-mobile.sh` 的 `file_boundary_test.dart` 验证宿主真实双 bridge 以及弱保护、调试进程和越界路径拒绝；不代替移动证据。
