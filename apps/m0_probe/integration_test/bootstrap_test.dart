@@ -76,6 +76,13 @@ void main() {
             'unlock': 'recovery',
           }, issued.secret);
           final digest = seeded.report['contentDigest'];
+          final audit = seeded.report['audit'] as Map;
+          final snapshot = audit['snapshot'] as Map;
+          expect(audit['operations'], hasLength(7));
+          expect(audit['revisions'], 8);
+          expect(snapshot['deletedEventIds'], hasLength(1));
+          expect(snapshot['unresolvedCandidateRevisionIds'], hasLength(2));
+          expect(snapshot['netAssetsMinor'], '18000');
           seeded.clear();
           await tester.pumpWidget(BootstrapApp(service: service));
           await tester.pumpAndSettle();
@@ -145,6 +152,7 @@ void main() {
             'unlock': 'recovery',
           }, issued.secret);
           expect(reopened.report['contentDigest'], digest);
+          expect(reopened.report['audit'], audit);
           reopened.clear();
           await tester.ensureVisible(find.byKey(const ValueKey('m0c-success')));
           await tester.pumpAndSettle();
@@ -157,6 +165,8 @@ void main() {
             '${Platform.operatingSystem}-${bridge.name}-bootstrap',
           );
           reports[bridge.name] = {
+            'fixture': 'A11',
+            'nonemptyFactsPreserved': true,
             'wrongPasswordVisible': true,
             'cancelLateResultSuppressed': true,
             'retryUnlockedOriginal': true,

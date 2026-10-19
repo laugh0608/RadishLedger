@@ -192,7 +192,16 @@ class BootstrapService {
     Map<String, Object?> action,
     Uint8List input, {
     String? pauseAt,
-  }) => callBootstrap(bridge, directory, run, action, input, pauseAt: pauseAt);
+    Map<String, String>? fileFault,
+  }) => callBootstrap(
+    bridge,
+    directory,
+    run,
+    action,
+    input,
+    pauseAt: pauseAt,
+    fileFault: fileFault,
+  );
 
   Future<BootstrapResult> unlockSystem() async {
     final epoch = _epoch;

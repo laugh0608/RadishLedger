@@ -31,6 +31,7 @@ class ControlledService extends BootstrapService {
     Map<String, Object?> action,
     Uint8List input, {
     String? pauseAt,
+    Map<String, String>? fileFault,
   }) {
     calls++;
     input.fillRange(0, input.length, 0);

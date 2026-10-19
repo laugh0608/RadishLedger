@@ -3,7 +3,14 @@ import 'dart:io';
 import 'package:integration_test/integration_test_driver_extended.dart';
 
 Future<void> main() async {
-  final evidence = Directory('../../local-evidence/m0-c');
+  final subdirectory = Platform.environment['M0C_EVIDENCE_SUBDIR'];
+  if (subdirectory != null &&
+      !RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(subdirectory)) {
+    throw const FormatException('证据子目录必须是单个明确名称');
+  }
+  final evidence = Directory(
+    '../../local-evidence/m0-c${subdirectory == null ? '' : '/$subdirectory'}',
+  );
   await evidence.create(recursive: true);
   await integrationDriver(
     onScreenshot: (name, bytes, [arguments]) async {

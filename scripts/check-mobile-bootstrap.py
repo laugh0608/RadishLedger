@@ -118,6 +118,14 @@ class BootstrapDevice(Device):
                             shlex.quote("cd " + shlex.quote(prefix) + " && sha256sum *"))
         return {line.split()[1]: line.split()[0] for line in result.stdout.splitlines()}
 
+    def file_sizes(self, run):
+        prefix = self.prefix + "m0c-" + run + "/"
+        if self.platform == "ios":
+            return {p.name: p.stat().st_size for p in Path(prefix).iterdir() if p.is_file()}
+        result = self.shell("run-as", self.package, "sh", "-c",
+                            shlex.quote("cd " + shlex.quote(prefix) + " && stat -c '%n %s' *"))
+        return {line.split()[0]: int(line.split()[1]) for line in result.stdout.splitlines()}
+
 
 def success(response):
     result, secret = response
@@ -128,34 +136,224 @@ def success(response):
 
 
 def same_facts(before, after):
-    for field in ["vault", "device", "audit", "contentDigest", "fixtureComplete"]:
+    for field in ["vault", "device", "audit", "contentDigest", "fixtureComplete", "ready"]:
         if before[field] != after[field]:
             raise RuntimeError("恢复前后事实不一致：" + field)
+
+
+def nonempty_facts(report):
+    """A11 人工预期；不能把旧 A01 或只有余额的报告当作本轮通过。"""
+    audit = report["audit"]
+    snapshot = audit["snapshot"]
+    expected = (8, 8, 7, 3, 4, 1, 2, "18000", ["10000", "8000"])
+    actual = (audit["sequence"], audit["revisions"], len(audit["operations"]),
+              len(snapshot["activeEventIds"]), len(snapshot["selectedRevisionIds"]),
+              len(snapshot["deletedEventIds"]), len(snapshot["unresolvedCandidateRevisionIds"]),
+              snapshot["netAssetsMinor"], sorted(snapshot["balancesMinor"].values()))
+    if actual != expected or report["ready"] is not True or report["fixtureComplete"] is not True:
+        raise RuntimeError("A11 非空候选 / 删除 / outbox 与独立预期不符")
+
+
+def file_fault_cases(device, bridge, report, save, cleanup):
+    """设备上的真实文件发布路径；每次故障后重启进程，秘密不写报告。"""
+    stages = ["shortWrite", "writeZero", "writeError", "fileSync", "publish", "directorySync"]
+
+    def invoke(run, kind, secret=b"", **fields):
+        return device.call(bridge, run, secret=secret, action={"kind": kind, **fields})
+
+    def materials():
+        run = uuid.uuid4().hex
+        report["ownedRuns"].append(run)
+        save()
+        _, recovery = success(invoke(run, "newRecovery"))
+        password = bytearray(secrets.token_hex(32).encode())
+        return run, password, recovery, password + recovery
+
+    def check_result(response, stage):
+        result, secret = response
+        if stage == "shortWrite":
+            return success(response)
+        secret[:] = b"\0" * len(secret)
+        expected = "bootstrap_publish_uncertain" if stage == "directorySync" else "bootstrap_io"
+        if result.get("ok") is not False or result.get("error", {}).get("code") != expected:
+            raise RuntimeError("文件故障没有在预期边界拒绝：" + stage)
+        return result, secret
+
+    for file in ["bootstrap", "ready"]:
+        for stage in stages:
+            run, password, recovery, combined = materials()
+            try:
+                if file == "ready":
+                    success(invoke(run, "create", combined))
+                before_files = device.fingerprints(run) if file == "ready" else None
+                action = {"kind": "create" if file == "bootstrap" else "confirm"}
+                result, _ = check_result(device.call(bridge, run, secret=combined if file == "bootstrap" else recovery,
+                    action=action, fileFault={"file": file, "stage": stage}), stage)
+                pid = result["measurement"]["pid"]
+                if before_files is not None and stage not in ["shortWrite", "directorySync"]:
+                    assert before_files == device.fingerprints(run)
+                device.launch_ready()
+                incomplete = file == "bootstrap" and stage not in ["shortWrite", "directorySync"]
+                if incomplete:
+                    original = device.fingerprints(run)
+                    assert "bootstrap.json" not in original and "ledger.db" not in original
+                    rejected, _ = invoke(run, "resume", recovery, unlock="recovery")
+                    assert rejected["ok"] is False and rejected["measurement"]["pid"] != pid
+                    assert original == device.fingerprints(run)
+                    duplicate, _ = invoke(run, "create", combined)
+                    assert duplicate["error"]["code"] == "already_exists"
+                    assert original == device.fingerprints(run)
+                    actual = {"resumeRejected": True, "filesPreserved": True,
+                              "pid": rejected["measurement"]["pid"]}
+                else:
+                    if file == "bootstrap" and stage == "directorySync":
+                        assert "ledger.db" not in device.fingerprints(run)
+                        success(invoke(run, "resume", recovery, unlock="recovery"))
+                    if file == "ready":
+                        checked, _ = success(invoke(run, "inspect", recovery, unlock="recovery"))
+                        assert checked["report"]["ready"] == (stage in ["shortWrite", "directorySync"])
+                    success(invoke(run, "confirm", recovery))
+                    checked, _ = success(invoke(run, "seed", recovery, unlock="recovery"))
+                    actual = checked["report"]
+                    nonempty_facts(actual)
+                    assert checked["measurement"]["pid"] != pid
+                report["fileCases"].append({"bridge": bridge, "file": file, "stage": stage,
+                    "beforePid": pid, "actual": actual, "result": "passed"})
+                cleanup(bridge, run, incomplete=incomplete)
+            finally:
+                for material in [password, recovery, combined]: material[:] = b"\0" * len(material)
+            print(f"{device.platform} {bridge} {file}/{stage}: file boundary passed", flush=True)
+
+    run, password, recovery, combined = materials()
+    local = bytearray()
+    try:
+        success(invoke(run, "create", combined))
+        success(invoke(run, "confirm", recovery))
+        seeded, _ = success(invoke(run, "seed", recovery, unlock="recovery"))
+        baseline = seeded["report"]
+        nonempty_facts(baseline)
+        for file in ["localProtection", "activeProtection"]:
+            for stage in stages:
+                candidate, local = success(invoke(run, "prepareProtection", recovery, unlock="recovery"))
+                generation = candidate["report"]["candidateProtection"]
+                # 为活动引用覆盖建立完整旧代次；此前独立材料始终保留。
+                success(invoke(run, "commitProtection", local, generation=generation))
+                replacement, replacement_key = success(invoke(run, "prepareProtection", recovery, unlock="recovery"))
+                target = replacement["report"]["candidateProtection"]
+                written_key = bytearray()
+                try:
+                    before_files = device.fingerprints(run)
+                    action = ({"kind": "prepareProtection", "unlock": "recovery"} if file == "localProtection"
+                              else {"kind": "commitProtection", "generation": target})
+                    response, written_key = check_result(device.call(bridge, run,
+                        secret=recovery if file == "localProtection" else replacement_key,
+                        action=action, fileFault={"file": file, "stage": stage}), stage)
+                    pid = response["measurement"]["pid"]
+                    if stage not in ["shortWrite", "directorySync"]:
+                        assert before_files == device.fingerprints(run)
+                    device.launch_ready()
+                    opened, _ = success(invoke(run, "inspect", recovery, unlock="recovery"))
+                    same_facts(baseline, opened["report"])
+                    assert opened["measurement"]["pid"] != pid
+                    expected_active = target if file == "activeProtection" and stage in ["shortWrite", "directorySync"] else generation
+                    assert opened["report"]["activeProtection"] == expected_active
+                    if file == "localProtection" and stage == "shortWrite":
+                        success(invoke(run, "commitProtection", written_key, generation=response["report"]["candidateProtection"]))
+                        verified, _ = success(invoke(run, "inspect", written_key, unlock="system"))
+                        same_facts(baseline, verified["report"])
+                    success(invoke(run, "commitProtection", replacement_key, generation=target))
+                    device.launch_ready()
+                    reopened, _ = success(invoke(run, "inspect", replacement_key, unlock="system"))
+                    same_facts(baseline, reopened["report"])
+                    assert reopened["measurement"]["pid"] != opened["measurement"]["pid"]
+                    report["fileCases"].append({"bridge": bridge, "file": file, "stage": stage,
+                        "beforePid": pid, "independentPid": opened["measurement"]["pid"],
+                        "actual": reopened["report"], "result": "passed", "scope": "core local-wrap; no system authentication claim"})
+                    save()
+                finally:
+                    for material in [local, replacement_key, written_key]: material[:] = b"\0" * len(material)
+                print(f"{device.platform} {bridge} {file}/{stage}: nonempty recovery passed", flush=True)
+        cleanup(bridge, run)
+    finally:
+        for material in [password, recovery, combined, local]: material[:] = b"\0" * len(material)
+
+
+def wal_case(device, bridge, report, save, cleanup):
+    run = uuid.uuid4().hex
+    report["ownedRuns"].append(run)
+    save()
+    def invoke(kind, secret=b"", **fields):
+        return device.call(bridge, run, secret=secret, action={"kind": kind, **fields})
+    _, recovery = success(invoke("newRecovery"))
+    _, wrong_recovery = success(invoke("newRecovery"))
+    password = bytearray(secrets.token_hex(32).encode())
+    combined = password + recovery
+    try:
+        created, _ = success(invoke("create", combined))
+        success(invoke("confirm", recovery))
+        device.send(bridge, run, secret=recovery, action={"kind": "seed", "unlock": "recovery"}, pauseAt="fixtureSaved")
+        marker = device.wait_json(f"m0c-{run}/paused.json", seconds=35)
+        assert marker["point"] == "fixtureSaved"
+        sizes = device.file_sizes(run)
+        assert sizes["ledger.db-wal"] > 32
+        device.kill(marker["pid"])
+        device.launch_ready()
+        files = device.fingerprints(run)
+        for unlock, material in [("password", b"incorrect synthetic input"), ("recovery", wrong_recovery)]:
+            rejected, _ = invoke("inspect", material, unlock=unlock)
+            assert rejected["ok"] is False and rejected["error"]["code"] == "authentication_failed"
+            assert device.fingerprints(run) == files
+        recovered, _ = success(invoke("inspect", recovery, unlock="recovery"))
+        baseline = recovered["report"]
+        nonempty_facts(baseline)
+        for field in ["vault", "device"]: assert baseline[field] == created["report"][field]
+        assert recovered["measurement"]["pid"] != marker["pid"]
+        opened, _ = success(invoke("inspect", password, unlock="password"))
+        same_facts(baseline, opened["report"])
+        device.launch_ready()
+        replayed, _ = success(invoke("replay", recovery, unlock="recovery"))
+        same_facts(baseline, replayed["report"])
+        assert replayed["measurement"]["pid"] != opened["measurement"]["pid"]
+        report["coreCases"].append({"bridge": bridge, "scenario": "fixtureSaved", "signal": "SIGKILL",
+            "killedPid": marker["pid"], "walBytes": sizes["ledger.db-wal"], "actual": baseline,
+            "replayPid": replayed["measurement"]["pid"], "originalIntentReplay": True,
+            "wrongPasswordAndRecoveryPreservedFiles": True})
+        cleanup(bridge, run)
+        print(f"{device.platform} {bridge}: A11 WAL kill / independent unlock / replay passed", flush=True)
+    finally:
+        for material in [password, recovery, combined, wrong_recovery]: material[:] = b"\0" * len(material)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("platform", choices=["android", "ios"])
     parser.add_argument("device")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "local-evidence/m0-c")
     args = parser.parse_args()
-    evidence = ROOT / "local-evidence/m0-c" / (args.platform + "-bootstrap-report.json")
+    evidence = args.output_dir.resolve() / (args.platform + "-bootstrap-report.json")
+    if not evidence.parent.is_relative_to(ROOT / "local-evidence/m0-c"):
+        raise RuntimeError("报告必须保留在项目 M0-C 忽略证据目录")
     if evidence.exists():
         previous = json.loads(evidence.read_text())
         if previous.get("ownedRuns"):
             raise RuntimeError("前次报告仍登记未清理对象；先核对精确身份并保留清理记录，不能覆盖")
     device = BootstrapDevice(args.platform, args.device)
     ready = device.launch_ready()
-    report = {"schema": 1, "platform": args.platform, "device": args.device,
+    report = {"schema": 2, "platform": args.platform, "device": args.device, "fixture": "A11",
               "mode": "debug Flutter / release Rust", "capabilities": ready["capabilities"],
-              "coreCases": [], "platformCases": [], "measurements": [], "ownedRuns": [],
+              "coreCases": [], "fileCases": [], "platformCases": [], "measurements": [], "ownedRuns": [],
               "secretTransport": "private FIFO; controller memory only", "cleaned": False}
     evidence.parent.mkdir(parents=True, exist_ok=True)
     def save():
         evidence.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     def invoke(bridge, run, kind, secret=b"", **fields):
         return device.call(bridge, run, secret=secret, action={"kind": kind, **fields})
-    def cleanup(bridge, run):
-        success(device.call(bridge, run, op="cleanup"))
+    def cleanup(bridge, run, incomplete=False):
+        # 首次 bootstrap 发布前失败，没有执行过任何系统项操作；Rust 仍校验 owner。
+        if incomplete:
+            success(device.call(bridge, run, action={"kind": "cleanup"}))
+        else:
+            success(device.call(bridge, run, op="cleanup"))
         report["ownedRuns"].remove(run)
         save()
     try:
@@ -173,6 +371,7 @@ def main():
                 success(invoke(bridge, run, "confirm", recovery))
                 seeded, _ = success(invoke(bridge, run, "seed", recovery, unlock="recovery"))
                 baseline = seeded["report"]
+                nonempty_facts(baseline)
                 before_files = device.fingerprints(run)
                 wrong, _ = invoke(bridge, run, "inspect", b"incorrect synthetic input", unlock="password")
                 assert wrong["ok"] is False and wrong["error"]["code"] == "authentication_failed"
@@ -285,6 +484,11 @@ def main():
                     print(f"{args.platform} {bridge} {point}: interruption boundary passed", flush=True)
                 finally:
                     for material in [password, recovery, combined, local]: material[:] = b"\0" * len(material)
+            wal_case(device, bridge, report, save, cleanup)
+            file_fault_cases(device, bridge, report, save, cleanup)
+        assert len(report["coreCases"]) == 16 and len(report["fileCases"]) == 48
+        report["finalCapabilities"] = success(device.call("thin", uuid.uuid4().hex, op="capabilities"))[0]["report"]
+        assert report["finalCapabilities"] == report["capabilities"]
         success(device.call("thin", uuid.uuid4().hex, op="stop"))
         report["cleaned"] = not report["ownedRuns"]
         save()

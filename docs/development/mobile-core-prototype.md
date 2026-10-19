@@ -250,11 +250,11 @@ python3 -B scripts/check-mobile-bootstrap.py android emulator-5568
 python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793A0756
 ```
 
-控制器不启动设备，要求准确设备和本项目包。秘密只在内存和 `0600` 私有 FIFO 中传递；Android 写入用 `adb shell -T` 的定长 `dd`，读取用 `exec-out`，避免 raw exec 的输入方向 / 完成语义造成短帧。帧短读、长度错误和超时立即失败，不输出载荷。脚本结束逐个清理登记的随机账库及系统引用；失败时保留非秘密 ownedRuns 报告，后续仅按这些身份处理。不能覆盖失败报告后忘记残留对象。
+控制器不启动设备，要求准确设备和本项目包。可用 `--output-dir local-evidence/m0-c/<batch>` 分批保留报告；解析后的路径必须位于项目 M0-C 忽略证据目录内。秘密只在内存和 `0600` 私有 FIFO 中传递；Android 写入用 `adb shell -T` 的定长 `dd`，读取用 `exec-out`，避免 raw exec 的输入方向 / 完成语义造成短帧。帧短读、长度错误和超时立即失败，不输出载荷。脚本结束逐个清理登记的随机账库及系统引用；失败时保留非秘密 ownedRuns 报告，后续仅按这些身份处理。不能覆盖失败报告后忘记残留对象。
 
-实际 UI 验证入口为 `integration_test/bootstrap_test.dart`，驱动为 `test_driver/bootstrap_test.dart`，复用常规 `flutter drive --driver=... --target=... -d <device>`。它调用真实核心检查错误口令、锁定取消、晚结果抑制、重试及原库摘要，截图只在输入已清空的合成结果页生成。宿主 widget / platform 测试另验后台状态和只读 codec；模拟生命周期不代替系统任务预览或真机后台证据。
+实际 UI 验证入口为 `integration_test/bootstrap_test.dart`，驱动为 `test_driver/bootstrap_test.dart`，复用常规 `flutter drive --driver=... --target=... -d <device>`。Android 可先限定 arm64 构建 integration target，再通过 `--use-application-binary=<apk>` 安装同一产物。它调用真实核心检查错误口令、锁定取消、晚结果抑制、重试、A11 独立计数及原库完整摘要 / 审计，截图只在输入已清空的合成结果页生成。设置 `M0C_EVIDENCE_SUBDIR=<batch>` 可将 UI 报告和截图写入同批子目录；只接受字母、数字、下划线和连字符组成的单个名称。宿主 widget / platform 测试另验后台状态和只读 codec；模拟生命周期不代替系统任务预览或真机后台证据。
 
-报告与截图写入忽略目录 `local-evidence/m0-c/`。每端核心报告包含两条 bridge ×（正常重启 + 六个故障点）；`protectionPrepared` / `protectionPublished` 的核心 local-wrap 恢复单列，不冒充系统认证。实际平台测试根据现有能力执行：iOS Simulator 可核对精确 Keychain 项删除与重建；Android 无认证条件时明确记录 unsupported，日常保护与实际失效仍未验收。SIGKILL 不证明断电、磁盘短写或 fsync 失败恢复。
+报告与截图写入忽略目录 `local-evidence/m0-c/`。schema 2 每端核心报告包含两条 bridge ×（正常重启 + 六个故障点 + A11 非空 WAL 强杀 / 原意图重放），共 16 组；另有每条 bridge 四类文件 × 六种模式，共 48 组文件故障。恢复报告对照 A11 人工预期，并比较身份、完整摘要、审计及 ready；结束时复核平台能力未变。`protectionPrepared` / `protectionPublished` 及文件故障中的核心 local-wrap 恢复单列，不冒充系统认证。实际平台测试根据现有能力执行：iOS Simulator 可核对精确 Keychain 项删除与重建；Android 无认证条件时明确记录 unsupported，日常保护与实际失效仍未验收。SIGKILL 与显式故障注入不证明断电或实际磁盘故障恢复。
 
 ### 7.8 非空账务与文件发布故障
 
@@ -275,4 +275,6 @@ python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793
 
 `store_file_tests` 实际观察 SQLCipher DB / WAL / SHM、checkpoint 和显式 DELETE 模式下的回滚日志；用未加密合成库作标记扫描正向对照，并核对普通无 key 连接 / 错钥拒绝与回滚后完整事实。默认仍是 WAL、`synchronous=FULL`、`temp_store=MEMORY`；有界排序查询与实验目录清单检查不等于完整临时目录、索引、缓存、导出或内存审计，标记未检出也不是完整密码安全证明。
 
-复现继续使用 `check-core.sh` 与 `check-mobile.sh`。定向入口为 `cargo test --locked -p radishledger-core --test bootstrap_process`、`cargo test --locked -p radishledger-core store::file_tests` 和在 Flutter 工程内执行 `flutter test test/bootstrap_native_test.dart`。Flutter 宿主测试实际调用两种 bridge，验证错误分类、保真与恢复；跨 PID 证据来自 Rust 子进程测试，不从 Dart isolate 推断。设备端仍沿第 7.7 节入口取得独立证据。
+复现继续使用 `check-core.sh` 与 `check-mobile.sh`。定向入口为 `cargo test --locked -p radishledger-core --test bootstrap_process`、`cargo test --locked -p radishledger-core store::file_tests` 和在 Flutter 工程内执行 `flutter test test/bootstrap_native_test.dart`。Flutter 宿主测试实际调用两种 bridge，验证错误分类、保真与恢复；跨 PID 证据来自 Rust 子进程测试，不从 Dart isolate 推断。
+
+设备端沿第 7.7 节入口运行同一文件发布实现，每种故障后重启 App，并对照独立材料读取及原文件集合；活动保护切换还需重试后再次重启读取。A11 在 `fixtureSaved` 停住时实际读取非空 WAL 大小，再 SIGKILL、新 PID 解锁及原意图重放。移动报告覆盖封装文件发布与 WAL 恢复；宿主 DB / SHM / 回滚日志扫描未因此成为移动端扫描证据，DB pager 短写 / fsync 和完整临时文件边界仍需单独验证。

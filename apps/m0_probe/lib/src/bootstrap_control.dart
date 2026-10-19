@@ -78,6 +78,9 @@ Future<BootstrapResult> _dispatch(
         Map<String, Object?>.from(command['action'] as Map),
         input,
         pauseAt: command['pauseAt'] as String?,
+        fileFault: command['fileFault'] == null
+            ? null
+            : Map<String, String>.from(command['fileFault'] as Map),
       );
     case 'capabilities':
       return BootstrapResult({
