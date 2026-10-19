@@ -10,6 +10,10 @@ use zeroize::Zeroizing;
 #[path = "store_file_tests.rs"]
 mod file_tests;
 
+#[cfg(all(test, unix))]
+#[path = "store_pager_tests.rs"]
+mod pager_tests;
+
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {

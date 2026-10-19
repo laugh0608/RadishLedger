@@ -269,7 +269,7 @@ python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793
 | `fileSync` / `publish` | 在文件同步 / 原子发布边界注入拒绝；不能返回成功或覆盖旧目标 |
 | `directorySync` | 已原子发布后注入目录同步失败；返回 `bootstrap_publish_uncertain`，不得声称旧引用未变或掉电持久化成功；新进程核对已出现的完整新文件并通过独立材料继续 |
 
-真实目录同步错误与注入使用相同的“发布结果未定”分类，并保留可取得的 OS 错误码。上述错误注入验证控制流和文件保全，不宣称操作系统真实发生了磁盘故障；DB pager 的短写 / fsync、断电及文件系统丢写需要单独验证。
+真实目录同步错误与注入使用相同的“发布结果未定”分类，并保留可取得的 OS 错误码。上述错误注入验证控制流和文件保全，不宣称操作系统真实发生了磁盘故障；DB pager 注入见第 7.9 节，断电及文件系统丢写仍需单独验证。
 
 宿主 `bootstrap_process` 覆盖四类文件 × 六种模式、原六处强杀、新增 WAL 强杀、错误口令 / 合法格式错误恢复材料、损坏封装与重放。首次封装未发布时保留原目录且拒绝覆盖创建；已发布而目录同步未确认时可用原材料恢复原身份。日常保护重建失败后以独立材料核对原账库，再重试切换并在新进程读取。核心 local-wrap 成功不代表真实系统认证通过。
 
@@ -277,4 +277,34 @@ python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793
 
 复现继续使用 `check-core.sh` 与 `check-mobile.sh`。定向入口为 `cargo test --locked -p radishledger-core --test bootstrap_process`、`cargo test --locked -p radishledger-core store::file_tests` 和在 Flutter 工程内执行 `flutter test test/bootstrap_native_test.dart`。Flutter 宿主测试实际调用两种 bridge，验证错误分类、保真与恢复；跨 PID 证据来自 Rust 子进程测试，不从 Dart isolate 推断。
 
-设备端沿第 7.7 节入口运行同一文件发布实现，每种故障后重启 App，并对照独立材料读取及原文件集合；活动保护切换还需重试后再次重启读取。A11 在 `fixtureSaved` 停住时实际读取非空 WAL 大小，再 SIGKILL、新 PID 解锁及原意图重放。移动报告覆盖封装文件发布与 WAL 恢复；宿主 DB / SHM / 回滚日志扫描未因此成为移动端扫描证据，DB pager 短写 / fsync 和完整临时文件边界仍需单独验证。
+设备端沿第 7.7 节入口运行同一文件发布实现，每种故障后重启 App，并对照独立材料读取及原文件集合；活动保护切换还需重试后再次重启读取。A11 在 `fixtureSaved` 停住时实际读取非空 WAL 大小，再 SIGKILL、新 PID 解锁及原意图重放。移动报告覆盖封装文件发布与 WAL 恢复；宿主 DB / SHM / 回滚日志扫描及第 7.9 节结果未因此成为移动端 pager / 临时文件证据。
+
+### 7.9 DB pager 故障与临时文件边界
+
+`store_pager_tests.rs` 与 `store_test_vfs.rs` 仅由 `cfg(all(test, unix))` 接入，不进入生产核心、bridge 或移动包。父测试在独占子进程注册观察 VFS，原 VFS 继续执行真实文件 IO、锁、SHM 与 mmap；父进程及其他并行测试不切换默认 VFS。随机合成 DB key 仅通过 stdin 传递，不写参数、环境变量、报告或日志。
+
+先取得同一 A11 账库在 WAL 提交、DELETE 日志提交和 checkpoint 中的成功 IO 序列，再逐个写入 / 同步位置注入；每次核对文件类别、调用序号、长度 / flags 和偏移，未命中不能通过。SQLite 的 `xWrite` 返回错误码而非已写字节数，所以短写场景实际调用原 VFS 写入严格少于请求的 2–7 bytes，再返回 `SQLITE_IOERR_WRITE`；不把正数当作 SQLite 的成功返回。`xSync` 分别在调用父同步前拒绝，以及父同步成功后报告 `SQLITE_IOERR_FSYNC`，覆盖可能已经持久化但调用方收到失败的情况。此处验证的是 pager 面对 IO 失败的行为，不证明内核实际发生短写 / fsync 故障或掉电。
+
+每次操作返回后保持连接打开，父进程发送 SIGKILL 并等待实际退出；随后父进程通过普通 `Store::open` 恢复。A11 候选、删除和 outbox 必须保持，新增 123 分转账只能完整存在或完全不存在：余额为旧的 10000 / 8000 分或新的 9877 / 8123 分，净资产均为 18000 分。核对人工计数、完整摘要、审计及 `integrity_check` 后，用相同操作身份重试并再次重放；不得重复入队。checkpoint 失败必须保留此前已提交的完整新事实。同步报错不能推定事务没有提交。
+
+临时文件验证使用 8192 行合成数据和受限页面缓存，按下表建立实际工作负载与观测。`xOpen` / `xWrite` 记录文件类别和阶段；`xClose` 前通过原 VFS 分块扫描仍打开的真实文件，包含已经 unlink、目录枚举看不到的匿名文件。单文件扫描上限 64 MiB，超界或读取失败均阻断；不截断后宣称通过。SHM 由 `xShmMap` 单独计数，并在连接仍打开时扫描实际 sidecar。
+
+| 文件 / 操作类别 | 判据与正向对照 |
+| --- | --- |
+| DB、WAL、回滚日志、SHM | 真实文件 / 映射存在；加密构建的合成明文标记不应出现在实际写入与文件扫描中 |
+| TEMP 表、排序、自动索引、物化查询、索引创建 | 原 `temp_store=MEMORY` 不打开磁盘临时文件；相同构建的隔离 FILE 对照必须在每一阶段实际落盘。另核对排序结果、查询计划、排序计数、自动索引行数与物化结果 |
+| 语句回滚 / sub-journal | 大批更新最后触发 UNIQUE / ABORT，先前更新全部撤销；FILE 对照必须观察非空 sub-journal，不能只验证最终表内容 |
+| VACUUM | 验证重建与 A11 保全；FILE 对照观察真实临时 DB，逐个记录是否包含标记，不假设所有临时文件都明文或都加密 |
+| 多库提交 / super-journal | 仅在本次合成目录附加独立加密库，DELETE 模式下同时提交两库，观察非空 super-journal 与清理；这不是生产 ATTACH / 多库事务能力声明 |
+
+FILE 对照会在 TEMP 表、排序或索引等临时文件检出合成明文，这是用于验证观测有效性的预期结果；不能据此放宽生产 MEMORY 策略。SQLite 对临时文件类别与生命周期的说明见[临时文件](https://www.sqlite.org/tempfiles.html)、[VFS 契约](https://www.sqlite.org/c3ref/vfs.html)及 [IO 方法](https://www.sqlite.org/c3ref/io_methods.html)；SQLCipher 的临时存储保护边界见[官方设计](https://www.zetetic.net/sqlcipher/design/)。测试实现为本项目编写，仅使用已锁定绑定，不复制第三方 VFS 示例或新增依赖。
+
+日常入口为 `check-core.sh`。定向运行：
+
+```sh
+CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core --lib store::pager_tests -- --nocapture
+```
+
+可将 `M0_PAGER_EVIDENCE_DIR` 指向已创建的 `local-evidence/m0-c/<batch>`，保留不含 key / 页面载荷的 JSON；解析后的目录不能越出项目 M0-C 证据范围。两个父测试实际执行全部子进程，标为 ignored 的 `pager_worker` 仅是专用子进程入口，不是跳过故障覆盖。每个子进程最多等待 45 秒；超时 / 失败只终止本次 PID 并等待回收。`TMPDIR` / `SQLITE_TMPDIR` 仅在子进程指向本次独占目录，正常完成先关闭 / 回收进程与文件，再清理目录并保存成功报告。
+
+该切片覆盖宿主有界工作负载中的 SQLite 临时文件类别，不等于所有查询形态、移动平台、长时缓存、OS swap / crash dump、导出或归档边界已经验证。现有产品未开放任意 SQL、ATTACH 或导出入口；新增路径需补相应文件审计，不能直接沿用本批通过结论。
