@@ -408,12 +408,12 @@ fn populate_case(
     ))
 }
 
-/// 使用既有 A01 共同材料与独立预期，不为 bootstrap 重写账务样例。
+/// 使用 A11 共同材料与独立预期，不为 bootstrap 重写账务样例。
 pub(crate) fn populate_bootstrap_fixture(store: &mut Store) -> Result<CaseReport> {
     let input: Value = serde_json::from_str(CASES).map_err(|_| invalid_fixture())?;
     let case = array(&input, "cases")?
         .iter()
-        .find(|c| c["id"] == "A01")
+        .find(|c| c["id"] == "A11")
         .ok_or_else(invalid_fixture)?;
     Ok(populate_case(store, case, array(&input, "rejectedIntents")?)?.0)
 }
@@ -514,7 +514,7 @@ mod tests {
     fn common_material_runs_against_encrypted_transactions() {
         let temp = tempfile::tempdir().expect("isolated test directory");
         let report = super::run(temp.path()).expect("actual core and hand-authored expectations");
-        assert_eq!((report.case_count, report.checkpoint_count), (10, 34));
+        assert_eq!((report.case_count, report.checkpoint_count), (11, 40));
         assert_eq!(
             (
                 report.amount_input_count,

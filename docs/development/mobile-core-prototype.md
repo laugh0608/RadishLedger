@@ -239,7 +239,7 @@ bootstrap 位于 App 私有、排除自动备份的独立目录，与 DB 分开�
 
 `crates/ledger-core/src/bootstrap.rs` 是实验状态机，`crypto.rs` 执行固定算法与独立向量，`bootstrap_files.rs` 负责精确目录归属、发布和锁。Rust 1.96 的标准文件锁没有 Android 实现，因此 Android 显式调用现有固定 libc 的 NDK `flock`；其他目标使用标准库，锁占用与 IO 错误分别返回。没有在 Android 跳过排他。
 
-独立恢复材料为 `RLM0C1-` + 64 个十六进制字符 + `-` + 8 字符校验。UI 生成后显示一次，要求重新输入确认；未确认且没有账务的账库可用正确口令重新生成恢复材料，替换旧的未确认封装。已确认账库拒绝该入口。创建中途失败保留现场；DB 已开始但不存在时返回 `missing_database`，不自动新建。当前保真 fixture 使用 A01，恢复前后比较身份、完整业务表摘要及审计 / outbox，不宣称这一切片已覆盖非空候选和 tombstone 的跨重启恢复。
+独立恢复材料为 `RLM0C1-` + 64 个十六进制字符 + `-` + 8 字符校验。UI 生成后显示一次，要求重新输入确认；未确认且没有账务的账库可用正确口令重新生成恢复材料，替换旧的未确认封装。已确认账库拒绝该入口。创建中途失败保留现场；DB 已开始但不存在时返回 `missing_database`，不自动新建。新建合成账库的保真 fixture 使用 A11，恢复前后比较身份、完整业务表摘要及审计 / outbox；旧 A01 记录与既有材料不自动迁移，也不能作为 A11 的运行证据。
 
 两条 bridge 的秘密走独立有界字节输入 / 输出，不放入普通 JSON 结果句柄。薄 C ABI `radishledger_bootstrap_execute` 的 metadata 上限为 4096 bytes、秘密输入上限为 1104 bytes，调用方提供至少 128 bytes 的独立秘密输出缓冲区及实际长度指针；普通结果句柄只返回非秘密 JSON。普通句柄容量不足时不执行有副作用的核心动作，调用方负责清理秘密输入 / 输出，不能将第 2 节的 UTF-8 JSON 约束套用到随机秘密字节。平台 codec 可返回只读缓冲区，Dart 复制到本方可清理的字节数组；Swift Data / CFData、Dart 字符串和 codec 内部副本不承诺全部擦除。UI 锁定 / 取消使晚完成结果失效，核心工作结束前禁止重入；不宣称 Argon2 已被中途停止。
 
@@ -255,3 +255,24 @@ python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793
 实际 UI 验证入口为 `integration_test/bootstrap_test.dart`，驱动为 `test_driver/bootstrap_test.dart`，复用常规 `flutter drive --driver=... --target=... -d <device>`。它调用真实核心检查错误口令、锁定取消、晚结果抑制、重试及原库摘要，截图只在输入已清空的合成结果页生成。宿主 widget / platform 测试另验后台状态和只读 codec；模拟生命周期不代替系统任务预览或真机后台证据。
 
 报告与截图写入忽略目录 `local-evidence/m0-c/`。每端核心报告包含两条 bridge ×（正常重启 + 六个故障点）；`protectionPrepared` / `protectionPublished` 的核心 local-wrap 恢复单列，不冒充系统认证。实际平台测试根据现有能力执行：iOS Simulator 可核对精确 Keychain 项删除与重建；Android 无认证条件时明确记录 unsupported，日常保护与实际失效仍未验收。SIGKILL 不证明断电、磁盘短写或 fsync 失败恢复。
+
+### 7.8 非空账务与文件发布故障
+
+复用共同材料 A11，不另造第二套账务写入路径。`seed` 在所有人工预期检查通过后保存完整表摘要；新增 `fixtureSaved` 强杀观测点保持写连接打开，使新进程必须读取实际残留 WAL。`replay` 先认证并核对完整基线，再从原 outbox 取出原意图调用同一 `Store::commit`，要求每条都返回 `Replayed`。它只用于隔离合成实验，不是同步上传或生产恢复接口。
+
+文件故障通过每个请求的可选 `file_fault` 显式注入，不用全局状态、环境变量或第二套发布实现。`file` 仅接受 `bootstrap`、`ready`、`localProtection`、`activeProtection`；`stage` 及判据如下：
+
+| stage | 实际动作与必须观察到的结果 |
+| --- | --- |
+| `shortWrite` | 每次最多向真实临时文件写 7 bytes；同一 `write_all` 必须续写完整，再同步和发布，结果仍可解锁 |
+| `writeZero` / `writeError` | 已写入首段后返回零写 / 注入 IO 错误；拒绝发布，原文件集合不变，临时文件由本次作用域回收 |
+| `fileSync` / `publish` | 在文件同步 / 原子发布边界注入拒绝；不能返回成功或覆盖旧目标 |
+| `directorySync` | 已原子发布后注入目录同步失败；返回 `bootstrap_publish_uncertain`，不得声称旧引用未变或掉电持久化成功；新进程核对已出现的完整新文件并通过独立材料继续 |
+
+真实目录同步错误与注入使用相同的“发布结果未定”分类，并保留可取得的 OS 错误码。上述错误注入验证控制流和文件保全，不宣称操作系统真实发生了磁盘故障；DB pager 的短写 / fsync、断电及文件系统丢写需要单独验证。
+
+宿主 `bootstrap_process` 覆盖四类文件 × 六种模式、原六处强杀、新增 WAL 强杀、错误口令 / 合法格式错误恢复材料、损坏封装与重放。首次封装未发布时保留原目录且拒绝覆盖创建；已发布而目录同步未确认时可用原材料恢复原身份。日常保护重建失败后以独立材料核对原账库，再重试切换并在新进程读取。核心 local-wrap 成功不代表真实系统认证通过。
+
+`store_file_tests` 实际观察 SQLCipher DB / WAL / SHM、checkpoint 和显式 DELETE 模式下的回滚日志；用未加密合成库作标记扫描正向对照，并核对普通无 key 连接 / 错钥拒绝与回滚后完整事实。默认仍是 WAL、`synchronous=FULL`、`temp_store=MEMORY`；有界排序查询与实验目录清单检查不等于完整临时目录、索引、缓存、导出或内存审计，标记未检出也不是完整密码安全证明。
+
+复现继续使用 `check-core.sh` 与 `check-mobile.sh`。定向入口为 `cargo test --locked -p radishledger-core --test bootstrap_process`、`cargo test --locked -p radishledger-core store::file_tests` 和在 Flutter 工程内执行 `flutter test test/bootstrap_native_test.dart`。Flutter 宿主测试实际调用两种 bridge，验证错误分类、保真与恢复；跨 PID 证据来自 Rust 子进程测试，不从 Dart isolate 推断。设备端仍沿第 7.7 节入口取得独立证据。

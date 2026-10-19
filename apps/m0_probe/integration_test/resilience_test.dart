@@ -54,7 +54,7 @@ void main() {
           }
           expect(failure, isNull);
           expect(finished, isTrue);
-          expect(actual!.checkpointCount, 34);
+          expect(actual!.checkpointCount, 40);
           expect(beats, greaterThan(0));
           await tester.pumpAndSettle();
           expect(find.byKey(const ValueKey('probe-success')), findsNothing);

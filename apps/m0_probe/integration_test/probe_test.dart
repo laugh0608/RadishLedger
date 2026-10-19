@@ -42,8 +42,8 @@ void main() {
         expect(selected, candidate);
         await tester.pumpAndSettle();
         expect(find.byKey(const ValueKey('probe-success')), findsOneWidget);
-        expect(actual!.caseCount, 10);
-        expect(actual!.checkpointCount, 34);
+        expect(actual!.caseCount, 11);
+        expect(actual!.checkpointCount, 40);
         results[candidate.name] = actual!.data;
         if (Platform.isAndroid && !surfaceConverted) {
           await binding.convertFlutterSurfaceToImage();

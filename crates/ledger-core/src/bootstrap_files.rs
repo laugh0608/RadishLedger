@@ -1,5 +1,6 @@
 //! 仅管理单个本次 M0-C 合成账库；普通文件有界读取，发布不覆盖既有身份。
 use crate::{CoreError, Result};
+use serde::Deserialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 #[cfg(unix)]
@@ -11,6 +12,89 @@ pub(crate) const MAX_BOOTSTRAP: usize = 16 * 1024;
 pub(crate) struct Files {
     pub path: PathBuf,
     _lock: File,
+    fault: Option<FileFault>,
+}
+
+/// 仅供隔离 M0 实验，每个请求显式携带；不使用环境变量或全局故障开关。
+#[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileFault {
+    pub file: FaultFile,
+    pub stage: FaultStage,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FaultFile {
+    Bootstrap,
+    Ready,
+    LocalProtection,
+    ActiveProtection,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FaultStage {
+    ShortWrite,
+    WriteZero,
+    WriteError,
+    FileSync,
+    Publish,
+    DirectorySync,
+}
+
+impl FaultFile {
+    fn matches(self, name: &str) -> bool {
+        match self {
+            Self::Bootstrap => name == "bootstrap.json",
+            Self::Ready => name == "ready.json",
+            Self::LocalProtection => name.starts_with("local-") && name.ends_with(".json"),
+            Self::ActiveProtection => name == "active-protection.json",
+        }
+    }
+}
+
+fn reject(stage: Option<FaultStage>, at: FaultStage) -> std::io::Result<()> {
+    if stage == Some(at) {
+        Err(std::io::Error::other(
+            "M0 synthetic publication I/O failure",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+struct PublicationWriter<'a> {
+    file: &'a mut File,
+    stage: Option<FaultStage>,
+    written: usize,
+}
+
+impl Write for PublicationWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.written > 0 {
+            if self.stage == Some(FaultStage::WriteZero) {
+                return Ok(0);
+            }
+            reject(self.stage, FaultStage::WriteError)?;
+        }
+        // 正数短写应由同一 write_all 路径续写；零写 / IO 错误在真实部分写入后拒绝。
+        let limit = if matches!(
+            self.stage,
+            Some(FaultStage::ShortWrite | FaultStage::WriteZero | FaultStage::WriteError)
+        ) {
+            bytes.len().min(7)
+        } else {
+            bytes.len()
+        };
+        let n = self.file.write(&bytes[..limit])?;
+        self.written += n;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
 }
 
 pub(crate) fn io_error(error: std::io::Error) -> CoreError {
@@ -108,6 +192,15 @@ fn exclusive_lock(file: &File) -> Result<()> {
 }
 
 pub(crate) fn publish(path: &Path, bytes: &[u8], replace: bool) -> Result<()> {
+    publish_with_fault(path, bytes, replace, None)
+}
+
+fn publish_with_fault(
+    path: &Path,
+    bytes: &[u8],
+    replace: bool,
+    stage: Option<FaultStage>,
+) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| CoreError::new("invalid_directory", "实验目录无效"))?;
@@ -126,8 +219,16 @@ pub(crate) fn publish(path: &Path, bytes: &[u8], replace: bool) -> Result<()> {
         .as_file()
         .set_permissions(fs::Permissions::from_mode(0o600))
         .map_err(io_error)?;
-    temporary.write_all(bytes).map_err(io_error)?;
+    PublicationWriter {
+        file: temporary.as_file_mut(),
+        stage,
+        written: 0,
+    }
+    .write_all(bytes)
+    .map_err(io_error)?;
+    reject(stage, FaultStage::FileSync).map_err(io_error)?;
     temporary.as_file().sync_all().map_err(io_error)?;
+    reject(stage, FaultStage::Publish).map_err(io_error)?;
     if replace {
         temporary
             .persist(path)
@@ -137,7 +238,17 @@ pub(crate) fn publish(path: &Path, bytes: &[u8], replace: bool) -> Result<()> {
             .persist_noclobber(path)
             .map_err(|error| io_error(error.error))?;
     }
-    sync(parent)
+    // rename 已完成，不能把目录同步失败报告成“旧引用未变”，也不能回写旧文件。
+    reject(stage, FaultStage::DirectorySync)
+        .and_then(|()| File::open(parent)?.sync_all())
+        .map_err(|error| {
+            let mut result = CoreError::new(
+                "bootstrap_publish_uncertain",
+                "文件已发布但目录同步失败，持久化结果未定，请重新核对",
+            );
+            result.os_code = error.raw_os_error();
+            result
+        })
 }
 
 impl Files {
@@ -200,13 +311,25 @@ impl Files {
         lock.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(io_error)?;
         exclusive_lock(&lock)?;
-        Ok(Self { path, _lock: lock })
+        Ok(Self {
+            path,
+            _lock: lock,
+            fault: None,
+        })
+    }
+    pub fn with_fault(mut self, fault: Option<FileFault>) -> Self {
+        self.fault = fault;
+        self
     }
     pub fn read(&self, name: &str) -> Result<Vec<u8>> {
         read(&self.path.join(name), MAX_BOOTSTRAP)
     }
     pub fn publish(&self, name: &str, bytes: &[u8], replace: bool) -> Result<()> {
-        publish(&self.path.join(name), bytes, replace)
+        let stage = self
+            .fault
+            .filter(|fault| fault.file.matches(name))
+            .map(|fault| fault.stage);
+        publish_with_fault(&self.path.join(name), bytes, replace, stage)
     }
     pub fn exists(&self, name: &str) -> Result<bool> {
         exists(&self.path.join(name))

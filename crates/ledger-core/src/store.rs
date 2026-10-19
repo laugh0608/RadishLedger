@@ -1,10 +1,14 @@
 use crate::domain::{Event, EventKind, Projection, minor, project};
 use crate::{CoreError, Result};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use zeroize::Zeroizing;
+
+#[cfg(test)]
+#[path = "store_file_tests.rs"]
+mod file_tests;
 
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
@@ -38,7 +42,7 @@ pub struct Store {
     connection: Connection,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Write {
     pub operation_id: String,
@@ -265,6 +269,33 @@ impl Store {
         self.connection
             .execute("INSERT INTO bootstrap_fixture VALUES (1, ?1)", [digest])
             .map_err(db_error)?;
+        Ok(())
+    }
+
+    /// 仅重放本隔离合成账库内已提交的原意图，不生成新 operation identity。
+    pub(crate) fn replay_fixture_outbox(&mut self) -> Result<()> {
+        let writes = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT intent FROM outbox ORDER BY operation_id")
+                .map_err(db_error)?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(db_error)?
+                .map(|row| {
+                    serde_json::from_str::<Write>(&row.map_err(db_error)?)
+                        .map_err(|_| CoreError::new("corrupt_fact", "合成原意图无法解释"))
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        for write in writes {
+            if self.commit(&write)? != WriteEffect::Replayed {
+                return Err(CoreError::new(
+                    "fixture_mismatch",
+                    "已提交的合成意图不应重复入队",
+                ));
+            }
+        }
         Ok(())
     }
 

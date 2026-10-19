@@ -1,4 +1,5 @@
 //! M0-C 的合成账库生命周期。所有解密先认证；失效、取消和失败不重建旧库。
+pub use crate::bootstrap_files::{FaultFile, FaultStage, FileFault};
 use crate::bootstrap_files::{Files, identity, io_error};
 use crate::crypto::{self, Envelope, Profile, Secret};
 use crate::store::{DbKey, Store};
@@ -46,6 +47,7 @@ pub enum Point {
     ReadyPublished,
     ProtectionPrepared,
     ProtectionPublished,
+    FixtureSaved,
 }
 
 #[derive(Deserialize)]
@@ -57,6 +59,8 @@ pub struct Request {
     pub action: Action,
     #[serde(default)]
     pub pause_at: Option<Point>,
+    #[serde(default)]
+    pub file_fault: Option<FileFault>,
 }
 
 #[derive(Deserialize)]
@@ -69,6 +73,7 @@ pub enum Action {
     ReissueRecovery,
     Seed { unlock: Unlock },
     Inspect { unlock: Unlock },
+    Replay { unlock: Unlock },
     PrepareProtection { unlock: Unlock },
     CommitProtection { generation: String },
     Status,
@@ -353,7 +358,8 @@ fn create(request: &Request, input: &[u8]) -> Result<Reply> {
         salt,
         profile,
     };
-    let files = Files::acquire(&request.directory, &request.run, true)?;
+    let files =
+        Files::acquire(&request.directory, &request.run, true)?.with_fault(request.file_fault);
     files.publish("bootstrap.json", &encode(&b)?, false)?;
     point(&files, Point::EnvelopesSaved, request.pause_at)?;
     initialize_database(&files, &b, &root, request.pause_at)?;
@@ -379,7 +385,8 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
     if let Action::Create = request.action {
         return create(&request, input);
     }
-    let files = Files::acquire(&request.directory, &request.run, false)?;
+    let files =
+        Files::acquire(&request.directory, &request.run, false)?.with_fault(request.file_fault);
     if let Action::Cleanup = request.action {
         files.cleanup()?;
         return Ok(Reply::public(json!({"cleaned":true})));
@@ -395,6 +402,7 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         Action::Resume { unlock }
         | Action::Inspect { unlock }
         | Action::Seed { unlock }
+        | Action::Replay { unlock }
         | Action::PrepareProtection { unlock } => unlock,
         Action::Confirm => Unlock::Recovery,
         Action::ReissueRecovery => Unlock::Password,
@@ -463,6 +471,15 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
                 crate::probe::populate_bootstrap_fixture(&mut store)?;
                 store.save_fixture_digest(&store.content_digest()?)?;
             }
+            point(&files, Point::FixtureSaved, request.pause_at)?;
+            drop(store);
+        }
+        Action::Replay { .. } => {
+            let report = b.inspect(&files, &root)?;
+            if report["ready"] != true || report["fixtureComplete"] != true {
+                return Err(CoreError::new("not_ready", "先完成合成账务核对再重放"));
+            }
+            b.open(&files, &root, true)?.replay_fixture_outbox()?;
         }
         Action::PrepareProtection { .. } => {
             let mut report = b.inspect(&files, &root)?;

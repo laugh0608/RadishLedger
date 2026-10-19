@@ -39,6 +39,7 @@ Future<BootstrapResult> callBootstrap(
   Map<String, Object?> action,
   Uint8List input, {
   String? pauseAt,
+  Map<String, String>? fileFault,
   int abi = 1,
 }) async {
   final metadata = jsonEncode({
@@ -47,6 +48,7 @@ Future<BootstrapResult> callBootstrap(
     'run': run,
     'action': action,
     'pause_at': pauseAt,
+    'file_fault': fileFault,
   });
   final transfer = TransferableTypedData.fromList([input]);
   input.fillRange(0, input.length, 0);

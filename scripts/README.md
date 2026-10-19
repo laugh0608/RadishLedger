@@ -72,3 +72,5 @@ M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `loc
 ### M0-C bootstrap 与独立解锁
 
 [check-mobile-bootstrap.py](check-mobile-bootstrap.py) 经 App 私有 FIFO 传递有界秘密字节，复用 [mobile_probe_device.py](mobile_probe_device.py) 的现有模拟器控制；该共享模块同时供 M0-B 恢复入口使用。两种 bridge 验证创建确认、独立材料跨 PID 解锁、错误输入保全、六处中断和精确清理。系统认证能力不足会单独记录未执行，不降低保护。入口、安装模式、UI 验证与失败残留处理见[移动核心实验第 7 节](../docs/development/mobile-core-prototype.md#77-已接入的复现入口与证据边界)。本入口只操作合成数据，不接受真实账库。
+
+`check-core.sh` 同时执行 A11 非空候选 / 删除 / outbox 跨进程恢复、原意图重放、四类封装文件发布故障，以及实际 DB / WAL / 回滚日志检查；`check-mobile.sh` 的 `bootstrap_native_test.dart` 经宿主两种 bridge 验证非空账务和发布错误。故障注入、发布结果未定及宿主 / 设备证据边界见[文件故障专题](../docs/development/mobile-core-prototype.md#78-非空账务与文件发布故障)。这不等于真实磁盘损坏、断电或系统认证已验收。

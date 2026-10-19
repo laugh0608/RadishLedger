@@ -346,6 +346,311 @@
           }
         }
       ]
+    },
+    {
+      "id": "A11",
+      "name": "非空冲突候选、删除标记与未同步事实共同恢复",
+      "accounts": {
+        "bank": "bank",
+        "cash": "cash"
+      },
+      "categories": {
+        "dining": "expense"
+      },
+      "openingEvents": [
+        {
+          "eventId": "open-bank",
+          "revisionId": "open-bank-v1",
+          "accountId": "bank",
+          "deltaMinor": "10000",
+          "businessDate": "2026-01-01"
+        },
+        {
+          "eventId": "open-cash",
+          "revisionId": "open-cash-v1",
+          "accountId": "cash",
+          "deltaMinor": "10000",
+          "businessDate": "2026-01-01"
+        }
+      ],
+      "steps": [
+        {
+          "id": "transfer",
+          "action": "record",
+          "eventId": "transfer",
+          "revisionId": "transfer-v1",
+          "type": "transfer",
+          "amountMinor": "2000",
+          "fromAccountId": "bank",
+          "toAccountId": "cash",
+          "businessDate": "2026-01-05",
+          "expected": {
+            "balancesMinor": {
+              "bank": "8000",
+              "cash": "12000"
+            },
+            "netAssetsMinor": "20000",
+            "assetsMinor": "20000",
+            "liabilitiesMinor": "0",
+            "activeEventIds": [
+              "open-bank",
+              "open-cash",
+              "transfer"
+            ],
+            "selectedRevisionIds": {
+              "open-bank": "open-bank-v1",
+              "open-cash": "open-cash-v1",
+              "transfer": "transfer-v1"
+            },
+            "deletedEventIds": [],
+            "unresolvedCandidateRevisionIds": [],
+            "monthlyReports": {
+              "2026-01": {
+                "incomeMinor": "0",
+                "grossExpenseMinor": "0",
+                "refundMinor": "0",
+                "netExpenseMinor": "0",
+                "surplusMinor": "0",
+                "expenseCategoriesMinor": {
+                  "dining": "0"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "edit",
+          "action": "revise",
+          "eventId": "transfer",
+          "revisionId": "transfer-v2",
+          "previousRevisionId": "transfer-v1",
+          "type": "transfer",
+          "amountMinor": "3000",
+          "fromAccountId": "bank",
+          "toAccountId": "cash",
+          "businessDate": "2026-01-05",
+          "expected": {
+            "balancesMinor": {
+              "bank": "7000",
+              "cash": "13000"
+            },
+            "netAssetsMinor": "20000",
+            "assetsMinor": "20000",
+            "liabilitiesMinor": "0",
+            "activeEventIds": [
+              "open-bank",
+              "open-cash",
+              "transfer"
+            ],
+            "selectedRevisionIds": {
+              "open-bank": "open-bank-v1",
+              "open-cash": "open-cash-v1",
+              "transfer": "transfer-v2"
+            },
+            "deletedEventIds": [],
+            "unresolvedCandidateRevisionIds": [],
+            "monthlyReports": {
+              "2026-01": {
+                "incomeMinor": "0",
+                "grossExpenseMinor": "0",
+                "refundMinor": "0",
+                "netExpenseMinor": "0",
+                "surplusMinor": "0",
+                "expenseCategoriesMinor": {
+                  "dining": "0"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "delete",
+          "action": "delete",
+          "eventId": "transfer",
+          "revisionId": "transfer-v3",
+          "previousRevisionId": "transfer-v2",
+          "expected": {
+            "balancesMinor": {
+              "bank": "10000",
+              "cash": "10000"
+            },
+            "netAssetsMinor": "20000",
+            "assetsMinor": "20000",
+            "liabilitiesMinor": "0",
+            "activeEventIds": [
+              "open-bank",
+              "open-cash"
+            ],
+            "selectedRevisionIds": {
+              "open-bank": "open-bank-v1",
+              "open-cash": "open-cash-v1",
+              "transfer": "transfer-v3"
+            },
+            "deletedEventIds": [
+              "transfer"
+            ],
+            "unresolvedCandidateRevisionIds": [],
+            "monthlyReports": {
+              "2026-01": {
+                "incomeMinor": "0",
+                "grossExpenseMinor": "0",
+                "refundMinor": "0",
+                "netExpenseMinor": "0",
+                "surplusMinor": "0",
+                "expenseCategoriesMinor": {
+                  "dining": "0"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "original",
+          "action": "record",
+          "eventId": "expense",
+          "revisionId": "expense-v1",
+          "type": "expense",
+          "amountMinor": "1000",
+          "accountId": "cash",
+          "categoryId": "dining",
+          "businessDate": "2026-01-05",
+          "expected": {
+            "balancesMinor": {
+              "bank": "10000",
+              "cash": "9000"
+            },
+            "netAssetsMinor": "19000",
+            "assetsMinor": "19000",
+            "liabilitiesMinor": "0",
+            "activeEventIds": [
+              "open-bank",
+              "open-cash",
+              "expense"
+            ],
+            "selectedRevisionIds": {
+              "open-bank": "open-bank-v1",
+              "open-cash": "open-cash-v1",
+              "transfer": "transfer-v3",
+              "expense": "expense-v1"
+            },
+            "deletedEventIds": [
+              "transfer"
+            ],
+            "unresolvedCandidateRevisionIds": [],
+            "monthlyReports": {
+              "2026-01": {
+                "incomeMinor": "0",
+                "grossExpenseMinor": "1000",
+                "refundMinor": "0",
+                "netExpenseMinor": "1000",
+                "surplusMinor": "-1000",
+                "expenseCategoriesMinor": {
+                  "dining": "1000"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "local-edit",
+          "action": "revise",
+          "eventId": "expense",
+          "revisionId": "expense-v2-local",
+          "previousRevisionId": "expense-v1",
+          "type": "expense",
+          "amountMinor": "2000",
+          "accountId": "cash",
+          "categoryId": "dining",
+          "businessDate": "2026-01-05",
+          "expected": {
+            "balancesMinor": {
+              "bank": "10000",
+              "cash": "8000"
+            },
+            "netAssetsMinor": "18000",
+            "assetsMinor": "18000",
+            "liabilitiesMinor": "0",
+            "activeEventIds": [
+              "open-bank",
+              "open-cash",
+              "expense"
+            ],
+            "selectedRevisionIds": {
+              "open-bank": "open-bank-v1",
+              "open-cash": "open-cash-v1",
+              "transfer": "transfer-v3",
+              "expense": "expense-v2-local"
+            },
+            "deletedEventIds": [
+              "transfer"
+            ],
+            "unresolvedCandidateRevisionIds": [],
+            "monthlyReports": {
+              "2026-01": {
+                "incomeMinor": "0",
+                "grossExpenseMinor": "2000",
+                "refundMinor": "0",
+                "netExpenseMinor": "2000",
+                "surplusMinor": "-2000",
+                "expenseCategoriesMinor": {
+                  "dining": "2000"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "conflict",
+          "action": "receiveCandidate",
+          "eventId": "expense",
+          "revisionId": "expense-v2-remote",
+          "previousRevisionId": "expense-v1",
+          "type": "expense",
+          "amountMinor": "3000",
+          "accountId": "cash",
+          "categoryId": "dining",
+          "businessDate": "2026-01-05",
+          "expected": {
+            "balancesMinor": {
+              "bank": "10000",
+              "cash": "8000"
+            },
+            "netAssetsMinor": "18000",
+            "assetsMinor": "18000",
+            "liabilitiesMinor": "0",
+            "activeEventIds": [
+              "open-bank",
+              "open-cash",
+              "expense"
+            ],
+            "selectedRevisionIds": {
+              "open-bank": "open-bank-v1",
+              "open-cash": "open-cash-v1",
+              "transfer": "transfer-v3",
+              "expense": "expense-v2-local"
+            },
+            "deletedEventIds": [
+              "transfer"
+            ],
+            "unresolvedCandidateRevisionIds": [
+              "expense-v2-local",
+              "expense-v2-remote"
+            ],
+            "monthlyReports": {
+              "2026-01": {
+                "incomeMinor": "0",
+                "grossExpenseMinor": "2000",
+                "refundMinor": "0",
+                "netExpenseMinor": "2000",
+                "surplusMinor": "-2000",
+                "expenseCategoriesMinor": {
+                  "dining": "2000"
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "amountInputs": [

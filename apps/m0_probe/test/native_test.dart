@@ -14,7 +14,7 @@ void main() {
             jsonDecode(runThin(directory.path)) as Map<String, Object?>;
         expect(value['ok'], true);
         final report = ProbeReport(value['report']! as Map<String, Object?>);
-        expect((report.caseCount, report.checkpointCount), (10, 34));
+        expect((report.caseCount, report.checkpointCount), (11, 40));
         expect(directory.listSync(), isEmpty);
         expect(File(loadedLibraryPath()).existsSync(), true);
       } finally {
@@ -32,6 +32,6 @@ void main() {
   });
   test('FRB candidate executes the same actual core', () async {
     final report = await runProbe(BridgeCandidate.frb);
-    expect((report.caseCount, report.checkpointCount), (10, 34));
+    expect((report.caseCount, report.checkpointCount), (11, 40));
   });
 }
