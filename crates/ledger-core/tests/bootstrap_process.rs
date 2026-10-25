@@ -184,9 +184,21 @@ fn kill_at(directory: &Path, run: &str, mut child: Child, point: &str) {
 #[test]
 #[ignore = "需显式提供升级前 SQLCipher 4.14.0 的独立 worker，日常检查不冒充跨版本验证"]
 fn previous_sqlcipher_preserves_closed_and_interrupted_vaults() {
+    previous_native_preserves_vaults("M0_PREVIOUS_BOOTSTRAP_WORKER", "4.14.0");
+}
+
+#[test]
+#[ignore = "需非 Apple 目标及独立保存的 SQLCipher 4.19.0 / OpenSSL 3.6.3 worker"]
+fn previous_openssl_preserves_closed_and_interrupted_vaults() {
+    if cfg!(target_vendor = "apple") {
+        panic!("CommonCrypto 目标不能冒充 OpenSSL 迁移验证");
+    }
+    previous_native_preserves_vaults("M0_PREVIOUS_OPENSSL_WORKER", "4.19.0");
+}
+
+fn previous_native_preserves_vaults(worker_variable: &str, previous_cipher: &str) {
     let previous_worker = std::path::PathBuf::from(
-        std::env::var_os("M0_PREVIOUS_BOOTSTRAP_WORKER")
-            .expect("必须提供升级前构建并单独保存的 worker"),
+        std::env::var_os(worker_variable).expect("必须提供升级前构建并单独保存的 worker"),
     );
     assert!(previous_worker.is_absolute() && previous_worker.is_file());
     assert_ne!(
@@ -229,7 +241,7 @@ fn previous_sqlcipher_preserves_closed_and_interrupted_vaults() {
             created["cipherVersion"]
                 .as_str()
                 .unwrap()
-                .starts_with("4.14.0")
+                .starts_with(previous_cipher)
         );
         ok(previous(
             directory.path(),
@@ -291,7 +303,7 @@ fn previous_sqlcipher_preserves_closed_and_interrupted_vaults() {
             baseline["cipherVersion"]
                 .as_str()
                 .unwrap()
-                .starts_with("4.14.0")
+                .starts_with(previous_cipher)
         );
         let original = hashes(&path);
         let wrong_recovery =
@@ -333,7 +345,7 @@ fn previous_sqlcipher_preserves_closed_and_interrupted_vaults() {
         assert_eq!(directory.path().read_dir().unwrap().count(), 0);
         assert_eq!(reference.path().read_dir().unwrap().count(), 0);
         eprintln!(
-            "SQLCipher 4.14.0 -> 4.19.0: interrupted={interrupted}; A11 facts, wrong-material preservation, replay and cleanup passed"
+            "{worker_variable}: SQLCipher {previous_cipher} -> 4.19.0; interrupted={interrupted}; A11 facts, wrong-material preservation, replay and cleanup passed"
         );
     }
 }

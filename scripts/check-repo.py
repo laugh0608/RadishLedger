@@ -2,6 +2,7 @@
 """Repository checks (read-only by default), using Python's standard library and Git."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -311,8 +312,44 @@ def check_docs(root, files, texts):
     return errors
 
 
+def check_openssl_patch(root, files, documents):
+    """核对完整发布源码；只允许两份 manifest 的 source 约束及 VCS JSON 末尾 LF。"""
+    prefix = "third-party/openssl-sys/"
+    manifest = documents.get("third-party/openssl-sys-upstream.json", {})
+    hashes = manifest.get("files", {})
+    errors = []
+    if (manifest.get("name") != "openssl-sys" or manifest.get("version") != "0.9.117"
+            or manifest.get("archiveSha256") != "b47e7e6bb2c38cd930d25a23b40fa52e068c10e85f3e03a7f5ba5aaca5713695"
+            or not isinstance(hashes, dict) or len(hashes) != 81):
+        return ["openssl-sys: invalid upstream provenance manifest"]
+    actual = {name.removeprefix(prefix) for name in files if name.startswith(prefix)}
+    if actual != set(hashes):
+        errors.append("openssl-sys: source inventory differs from upstream")
+    for name in sorted(actual & set(hashes)):
+        raw = (root / prefix / name).read_bytes()
+        if name in {"Cargo.toml", "Cargo.toml.orig"}:
+            if raw.count(b'version = "=400.0.2"') != 1:
+                errors.append(f"openssl-sys: unexpected source requirement in {name}")
+                continue
+            raw = raw.replace(b'version = "=400.0.2"', b'version = "300.2.0"')
+        elif name == ".cargo_vcs_info.json":
+            raw = raw.removesuffix(b"\n")
+        if hashlib.sha256(raw).hexdigest() != hashes[name]:
+            errors.append(f"openssl-sys: unapproved upstream source change: {name}")
+    try:
+        workspace = tomllib.loads((root / "Cargo.toml").read_text())
+        if workspace.get("patch", {}).get("crates-io", {}).get("openssl-sys") != {"path": prefix.rstrip("/")}:
+            errors.append("openssl-sys: workspace does not select the reviewed local patch")
+        if workspace.get("workspace", {}).get("exclude") != [prefix.rstrip("/")]:
+            errors.append("openssl-sys: local dependency must not become a workspace member")
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"openssl-sys: cannot inspect workspace: {error}")
+    return errors
+
+
 def check_governance(root, files, documents):
     errors = []
+    errors.extend(check_openssl_patch(root, files, documents))
 
     def require(condition, message):
         if not condition:
@@ -505,6 +542,8 @@ def check_governance(root, files, documents):
     covered = lambda name: (
         name == "Cargo.toml" or name.startswith("crates/ledger-core/")
         or name.startswith("crates/ledger-mobile/") or name.startswith("apps/m0_probe/")
+        # 完整来源另由 check_openssl_patch 校验；Linux core-quality 实际编译此依赖。
+        or name.startswith("third-party/openssl-sys/")
     ) and Path(name).suffix != ".go"
     uncovered = [name for name in sources if not covered(name)]
     require(

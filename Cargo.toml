@@ -1,6 +1,11 @@
 [workspace]
 members = ["crates/ledger-core", "crates/ledger-mobile"]
+exclude = ["third-party/openssl-sys"]
 resolver = "2"
+
+[patch.crates-io]
+# 0.9.117 已识别 OpenSSL 4.x；仅修正 vendored source 的版本约束，来源见补丁说明。
+openssl-sys = { path = "third-party/openssl-sys" }
 
 [workspace.package]
 version = "26.10.1"

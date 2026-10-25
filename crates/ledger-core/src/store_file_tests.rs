@@ -26,7 +26,7 @@ fn sqlcipher_build_uses_expected_native_provider() {
     #[cfg(not(target_vendor = "apple"))]
     {
         assert_eq!(provider, "openssl");
-        assert!(provider_version.starts_with("OpenSSL 3.6.3 "));
+        assert!(provider_version.starts_with("OpenSSL 4.0.3 "));
     }
     eprintln!("SQLCipher 4.19.0 / SQLite 3.53.4: {provider} {provider_version}");
 }

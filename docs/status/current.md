@@ -1,14 +1,14 @@
 # 当前状态
 
-更新日期：2026-10-25（Asia/Shanghai，M0 SQLCipher 升级与旧库兼容验证）。
+更新日期：2026-10-25（Asia/Shanghai，M0 OpenSSL 4.0.3 候选迁移受阻）。
 
 ## 当前结论
 
 项目处于 M0 移动核心与加密恢复验证，尚未满足 M0-B / M0-C 正式退出条件。已有 Flutter 合成验证 App、同一 Rust 领域 / SQLCipher 核心，以及薄 C ABI / Dart FFI 与 flutter_rust_bridge 两种候选；没有正式用户账簿、同步服务、备份迁移或公开发行。实验 schema、ABI、依赖与工具链候选尚未冻结为生产契约。
 
-专项审查与异常路径修复已提交为 `7c5a63b`，ctutils 0.4.4 与 Tokio 1.53.3 修补分别提交为 `7008933`、`0a690d1`，桥接和恢复回归通过。RUSTSEC-2026-0385 / 0386 的受影响锁定版本均已移除。本轮经确认已将存储链升级至 rusqlite 0.41.0 / libsqlite3-sys 0.39.1 / sqlcipher-src 419.0.6，实际 SQLCipher 4.19.0 / SQLite 3.53.4；旧版非空库的正常关闭与强杀后 WAL 恢复、两桥接及两端 native 构建通过。Apple CommonCrypto 与 Android vendored OpenSSL 保持不变。OpenSSL 3.6.5 暂无符合现有 openssl-sys 约束的发布封装，另案处理，不能因本轮升级而视为已修补。
+专项审查与异常路径修复已提交为 `7c5a63b`，ctutils 0.4.4 与 Tokio 1.53.3 修补分别提交为 `7008933`、`0a690d1`，桥接和恢复回归通过。RUSTSEC-2026-0385 / 0386 的受影响锁定版本均已移除。前批 `29d8edd` 已将存储链升级至 rusqlite 0.41.0 / libsqlite3-sys 0.39.1 / sqlcipher-src 419.0.6，实际 SQLCipher 4.19.0 / SQLite 3.53.4；旧版非空库的正常关闭与强杀后 WAL 恢复、两桥接及两端 native 构建通过。Apple CommonCrypto 与 Android vendored OpenSSL 保持不变。本轮已获准实施 OpenSSL 4.0.3 及 openssl-sys 最小本地补丁，工作树候选已构建。Linux 旧库兼容 / 故障恢复及宿主回归通过，但 Android 实际加载触发 SIGILL，未满足采用门槛。项目所有者随后明确要求先提交工作区候选并继续下一步；该保存提交不代表目标运行通过。最近可运行的 OpenSSL 基线仍为 3.6.3，不能宣布修补完成。
 
-10 月 19 日已有模拟器文件与恢复证据继续保留；本轮新增宿主跨版本、桥接和恢复运行证据，以及两端 arm64 native 构建 / 提供方符号核对；没有新设备运行结果。Android 系统认证、两端真机 release / 硬件保护 / 生命周期、iOS 实际文件保护、真实 IO 故障与掉电仍有缺口，不能进入 M1。真机条件和补验顺序已整理，机型、系统、签名及安装 / 清理范围尚未确认。
+10 月 19 日已有模拟器文件与恢复证据继续保留；SQLCipher 前批新增宿主跨版本、桥接和恢复运行证据，以及两端 arm64 native 构建 / 提供方符号核对。本轮新增 Linux OpenSSL 3.6.3→4.0.3 运行对照、独立算法向量与 Android 实际失败证据；Android pager / 两桥接恢复和后续 iOS 回归未完成。Android 系统认证、两端真机 release / 硬件保护 / 生命周期、iOS 实际文件保护、真实 IO 故障与掉电仍有缺口，不能进入 M1。真机条件和补验顺序已整理，机型、系统、签名及安装 / 清理范围尚未确认。
 
 ## 已完成与证据入口
 
@@ -26,6 +26,7 @@
 | 锁定依赖审查 | SQLCipher 升级后，OSV 对 133 个 Cargo registry 包查询无命中；三个新版本包的归档 / 源文件及嵌套许可核对通过。40 个 Pub 包沿用前批未命中记录 | 无漏洞证明、OpenSSL 已修补或完整工具链供应链审计 |
 | 最近工程批次验证 | SQLCipher 升级后 26 项 Rust 宿主测试及 fmt / 严格 clippy / C header 通过；另显式执行 1 项 release 跨版本测试、覆盖 2 种旧库状态。Flutter 19 项宿主测试、格式与严格分析通过；仓库治理结果见本批 devlog | 完整移动 App / 真机、最低系统、机器码恒定时间、远端 CI 或发布门禁 |
 | SQLCipher 升级 | 4.14.0 创建的 A11 非空库由 4.19.0 打开；正常关闭及强杀后待恢复 WAL 均保留完整事实 / 身份，错材料不改写、恢复与原意图重放通过。Android / iOS arm64 release 库构建与原密码提供方符号核对通过 | 新写库向旧版回退兼容、设备上升级 / 恢复、上游源码生成已独立复现 |
+| OpenSSL 候选迁移 | 最小 sys 补丁、来源 / 许可校验；Linux 4.0.3 实际 provider、旧库两种状态 / 恢复、26 项 Rust 与独立向量通过；Apple 宿主 26 项 Rust、Flutter 19 项通过。Android 旧库可加载，新库在 ARM SVE 探测 SIGILL，实际 App 同样失败 | 候选可采用、Android 运行 / 恢复通过、iOS 本批目标回归、真机兼容、当前新链 OSV 审查或迁移已完成 |
 
 10 月 19 日两端实际 SQLCipher 4.14.0 / SQLite 3.51.3、默认 unix VFS v3 已核对。Android `TEMP_STORE=3` 强制内存，FILE 请求也不提供磁盘临时文件正向对照；iOS `TEMP_STORE=2` 的 FILE 对照确实产生临时文件并检出合成标记。正常 App 的命名 VFS 不替换默认 VFS，原 MEMORY 策略不因对照实验改变。
 
@@ -35,8 +36,8 @@
 
 ### 接下来的事项
 
-1. **另案确定 OpenSSL 修补路径。** 当前保留 openssl-src `300.6.1+3.6.3` / openssl-sys `0.9.117`；OpenSSL `3.6.5` 暂无 300 系列发布封装，现有 `^300.2.0` 不接受 400 系列。独立构建 / fork / patch 或 4.x 迁移会改变供应与兼容边界，需明确范围后实施。SQLCipher 升级已完成，详见[原生依赖范围](../development/mobile-core-prototype.md#31-原生依赖修补候选与验证范围)；没有启用 libtomcrypt，也不以当前未用到相关路径为理由冻结存在已知问题的原生依赖。
-2. **确认两端真机验证条件，并保持 Android 认证缺口显式可见。** 依据[准备与补验清单](../development/mobile-core-validation.md#6-真机批次准备与补验清单)确认机型、系统、认证、签名、安装 / 数据范围与精确清理方式；本轮未连接或写入设备，不能声明设备已就绪。最近一次 Android 模拟器能力为 `deviceSecure=false`、代码 11，条件未变时不重复 unsupported 流程。API 24 仅为编译候选，当前系统认证实现要求 API 30+；支持范围待验证冻结。现有控制器只允许模拟器，真机执行入口不能通过删除限制来冒充就绪。
+1. **继续 Android / OpenSSL ARM 能力探测阻塞诊断，形成最小修复。** 同一 API35 arm64 / 16 KiB 模拟器报告 SVE=0、SVE2=1，PR_SVE_GET_VL 为 EINVAL；旧 OpenSSL 3.6.3 库加载成功，4.0.3 在 OPENSSL_cpuid_setup 的 cntb 指令崩溃。仅改 sys 依赖约束不能解决。项目所有者已要求提交候选并继续下一步，当前推进最小 ARM 能力探测 / 模拟器兼容诊断；涉及新的 OpenSSL 源码供应方式或系统镜像修改时先给出精确方案；不直接扩大供应链、更新系统镜像、关闭硬件能力或换目标绕过失败。通过后才继续 Android provider / pager / 双桥接 / UI、资源比较、iOS 与公告检查并提交。详情与已取得证据见[OpenSSL 专题](../development/mobile-core-prototype.md#32-openssl-修补方案评审与验证计划)。
+2. **确认两端真机验证条件，并保持 Android 认证缺口显式可见。** 依据[准备与补验清单](../development/mobile-core-validation.md#6-真机批次准备与补验清单)确认机型、系统、认证、签名、安装 / 数据范围与精确清理方式；本轮仅使用既有 Android 模拟器，未连接真机，不能声明真机已就绪。最近一次 Android 模拟器能力为 `deviceSecure=false`、代码 11，条件未变时不重复 unsupported 流程。API 24 仅为编译候选，当前系统认证实现要求 API 30+；支持范围待验证冻结。现有控制器只允许模拟器，真机执行入口不能通过删除限制来冒充就绪。
 3. **具备条件后执行两端真机 release 闭环（B01–B06、C01 / C04 / C06–C12）。** 优先补 Android 创建 / 日常解锁、取消 / 拒绝 / 暂不可取、精确项失效后的独立恢复、重建及跨 PID 解锁；同步验证 iOS sandbox / entitlement 与实际文件保护。再取得设备重启、后台 / 任务预览、KDF 时间 / 峰值内存和较长压力证据。保持 A11 候选、删除及未同步事实保真，按实际能力报告硬件等级。
 4. **按真实新增路径补剩余文件与持久化边界（B07 / B09、C02 / C05 / C08）。** 新增查询、导出或归档时补相应缓存 / 临时文件审计，不为测试提前建设未批准功能。真实 IO 故障、掉电 / 文件系统丢写与系统备份传输另定可恢复的实验范围；不能复用 VFS 注入、字符串扫描或备份排除标记宣布通过。
 5. **证据齐备后再做选型与阶段评审。** 汇总两 bridge 的维护成本、异常边界、依赖审查及真机结果，决定生产 ABI、支持矩阵、SQLCipher / 系统保护和 KDF profile，按需形成 ADR。M0-D / E 按路线图分别推进同步与归档；独立本机恢复不等于空白设备完整恢复，不提前宣布 M0 退出。
@@ -55,9 +56,9 @@
 
 日常开发继续在 `dev`；`origin` 为 [laugh0608/RadishLedger](https://github.com/laugh0608/RadishLedger)，默认分支 master。分支晋级、PR 与 Rulesets 以[仓库治理](../governance/repository-governance.md)为准，不在本次收尾改变远端状态。
 
-本轮实施基于 `dev`、HEAD `0a690d1`（相对本地 `origin/dev` 领先 3 个提交，未 fetch）；启动时保留前序候选评审的 3 份未提交文档，并纳入同一任务收口。修改仅含存储依赖链、受影响的 SQLCipher 版本读取、兼容 / 提供方回归、许可生成及相关文档；验证通过后按授权本地提交。没有 push、PR、tag、Release 或发布；Pub lockfile、生成 bridge、密码提供方、密钥 / KDF / schema 与 AGENTS / CLAUDE 不变。
+本轮延续 OpenSSL 评审的 3 份文档改动，在 `dev`、HEAD `29d8edd` 上实施；相对本地 `origin/dev` 领先 4 个提交，未 fetch。候选涉及根 Cargo 声明 / lockfile、openssl-sys 最小副本及完整性检查、native notices、验证用例 / 证据目录选项和专题文档，按项目所有者的新指令保存为候选提交，Android 失败边界继续显式保留。未改变 SQLCipher / 其他依赖、Pub lockfile、生产密码 / schema / bridge 或 AGENTS / CLAUDE；无 push、PR、tag、Release、上传或发布。
 
-候选来源评审保留在 `local-evidence/m0-c/2026-10-25-native-review/`；实施证据位于 `local-evidence/m0-c/2026-10-25-sqlcipher/`，含旧 worker / 锁定指纹、依赖图、跨版本 / pager / 桥接日志、OSV 响应及两端库。均为忽略的本地材料。合成临时目录已清理，测试与构建进程均退出，无后台服务；新依赖缓存保留供复现。本轮未运行移动 App、连接设备或改变系统保护配置。未验证新版写库向旧版回退，不把旧源码 / 二进制留存描述为数据回退保证。
+证据保存在忽略的 `local-evidence/m0-c/2026-10-25-openssl/`；旧评审和 SQLCipher 批次证据仍保留。仅新下载锁定 openssl-src 归档，使用已有工具链 / 镜像 / Android AVD。模拟器初始无本项目 App，本次安装的测试 App 已卸载并确认包不存在，本次 emulator-5568 与 ADB 已停止，运行容器均自动移除；缓存、基线二进制与失败日志保留。停止前没有通过修改 OpenSSL 源码、环境能力覆盖或模拟器配置规避失败。
 
 ## 当前停止线
 
@@ -65,4 +66,4 @@
 - 系统项仅限明确授权批次的随机 Android alias / iOS service 引用；不操作宿主用户密钥链、正式签名 / 生产密钥，不改变共享模拟器锁屏。
 - 不将随机内存 key 的合成实验当作生产解锁 / 恢复方案，不公开分发实验签名包，不降低系统保护制造通过。
 - 不铺大量生产页面、Go 服务、同步端点或可部署模板，不跳过 M0 风险验证；录入效率、大字号、键盘、安全区和生产 UI 仍待实际流程验收。
-- 不推送本日工程或扩大远端授权，不改写共享历史或写入兄弟项目。后续 OpenSSL 升级与设备写入按具体目标另定范围；不安排后台自动继续。
+- 不推送本日工程或扩大远端授权，不改写共享历史或写入兄弟项目。当前已批准的 sys 最小补丁范围之外，OpenSSL 源码修补 / 其他版本 / 系统环境调整须另定范围；不安排后台自动继续。

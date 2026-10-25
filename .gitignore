@@ -10,6 +10,10 @@ __pycache__/
 !.env.example
 target/
 build/
+# openssl-sys 的 build/ 是已校验的上游构建源码，不是本机构建产物。
+!third-party/openssl-sys/build/
+!third-party/openssl-sys/build/*.rs
+!third-party/openssl-sys/build/*.c
 .dart_tool/
 coverage/
 *.sqlite

@@ -74,8 +74,13 @@ def render():
         document = metadata(target)
         used = reachable(document)
         for package in document["packages"]:
-            if package["id"] in used and package["source"]:
-                packages[package["id"]] = package
+            if package["id"] not in used or package["id"] in document["workspace_members"]:
+                continue
+            if not package["source"]:
+                expected = ROOT / "third-party/openssl-sys/Cargo.toml"
+                if package["name"] != "openssl-sys" or Path(package["manifest_path"]).resolve() != expected:
+                    raise SystemExit("存在未经登记的本地 native 依赖，不能遗漏其许可")
+            packages[package["id"]] = package
     config = json.loads((ROOT / "apps/m0_probe/.dart_tool/package_config.json").read_text())
     frb = next(p for p in config["packages"] if p["name"] == "flutter_rust_bridge")
     frb_root = Path(unquote(urlparse(frb["rootUri"]).path))
@@ -88,6 +93,8 @@ def render():
         name = package["name"]
         attribution = f"{name} {package['version']}"
         source = f"https://crates.io/crates/{name}/{package['version']}"
+        if not package["source"]:
+            attribution += " (RadishLedger local source-dependency patch)"
         for content in package_notices(package, frb_root, apache_file):
             groups.setdefault(content, set()).add(f"{attribution} — {source}")
     result = [

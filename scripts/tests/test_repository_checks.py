@@ -56,6 +56,32 @@ class RepositoryChecksTest(unittest.TestCase):
         self.assertFalse(CHECKS.check_docs(self.root, files, texts))
         self.assertFalse(CHECKS.check_governance(self.root, files, documents))
 
+    def test_native_patch_rejects_source_drift_and_extra_files(self):
+        source = "third-party/openssl-sys/src/lib.rs"
+        original = (self.root / source).read_text()
+        self.write(source, original + "// synthetic unauthorized change\n")
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("unapproved upstream source change" in e
+                            for e in CHECKS.check_openssl_patch(self.root, files, documents)))
+        self.write(source, original)
+        self.write("third-party/openssl-sys/extra.rs", "// synthetic\n")
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("source inventory differs" in e
+                            for e in CHECKS.check_openssl_patch(self.root, files, documents)))
+
+    def test_native_patch_rejects_unselected_or_widened_requirement(self):
+        name = "third-party/openssl-sys/Cargo.toml"
+        self.write(name, (self.root / name).read_text().replace('"=400.0.2"', '"400"'))
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("unexpected source requirement" in e
+                            for e in CHECKS.check_openssl_patch(self.root, files, documents)))
+        name = "Cargo.toml"
+        self.write(name, (self.root / name).read_text().replace('path = "third-party/openssl-sys"',
+                                                              'path = "third-party/unreviewed"'))
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("does not select" in e
+                            for e in CHECKS.check_openssl_patch(self.root, files, documents)))
+
     def test_untracked_included_ignored_excluded_tracked_never_hidden(self):
         self.write("bad.md", "synthetic\r\n")
         self.write("local-data/private.txt", "ignored synthetic\r\n")

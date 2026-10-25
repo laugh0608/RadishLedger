@@ -53,7 +53,7 @@ FRB runtime / generator 均为 `2.13.0`，Rust 输入只有 `crate::api`；生�
 | Gradle / AGP | Gradle `9.1.0` bin 发行包及官方 SHA-256；AGP `9.0.1`，沿用 Flutter 模板的兼容开关 |
 | iOS | arm64 真机与 arm64 Simulator；App deployment target `15.0`；每批记录 `xcrun` 实际选择的 Xcode / SDK，历史构建版本不代表当前环境 |
 | 存储 | rusqlite `0.41.0`、libsqlite3-sys `0.39.1`、sqlcipher-src `419.0.6`，内含 SQLCipher `4.19.0 community` / SQLite `3.53.4` |
-| 密码底层 | Apple 使用 CommonCrypto；Android / Linux 验证宿主静态构建 OpenSSL `3.6.3`，不依赖开发机动态 libcrypto |
+| 密码底层 | Apple 使用 CommonCrypto；Android / Linux 使用静态 OpenSSL；已提交基线 `3.6.3`，受阻的 `4.0.3` 候选与阻塞见第 3.2 节，不依赖开发机动态 libcrypto |
 | Dart code assets | hooks `1.0.2`、code_assets `1.0.0`、ffi `2.2.0`；`pubspec.lock` 固定传递依赖 |
 
 实验采用 Dart build hook 构建 Rust release code asset。构建入口 [build-mobile-core.py](../../scripts/build-mobile-core.py) 根据真实目标选择 Rust triple，传递 NDK clang / ar / ranlib 或 Apple SDK 与 deployment 参数；不支持的目标明确拒绝，缺库不能生成空资产或使用另一平台库代替。Flutter 当前传给 hook 的 iOS native 最低版本可能低于 App 的 deployment target，最终 App 安装下限仍为 `15.0`，不据此承诺较旧系统可用。
@@ -64,13 +64,13 @@ FRB runtime / generator 均为 `2.13.0`，Rust 输入只有 `crate::api`；生�
 
 ### 3.1 原生依赖修补候选与验证范围
 
-原生源码包可能改变数据库版本、构建选项、密码提供方和许可材料，不能仅按 Cargo 包级公告判断修补是否完成。2026-10-25 评审的 SQLCipher 链已获项目所有者确认并接入，OpenSSL 另案；实际验证状态以[当前进度](../status/current.md)为准。
+原生源码包可能改变数据库版本、构建选项、密码提供方和许可材料，不能仅按 Cargo 包级公告判断修补是否完成。2026-10-25 评审的 SQLCipher 链已获项目所有者确认并接入，OpenSSL 后续候选见第 3.2 节；实际验证状态以[当前进度](../status/current.md)为准。
 
 | 项目 | 已核对的候选 | 影响与采用条件 |
 | --- | --- | --- |
 | SQLCipher 绑定链 | rusqlite `0.41.0` → libsqlite3-sys `0.39.1` → sqlcipher-src `419.0.6+sqlcipher-4.19.0-sqlite-3.53.4-libtomcrypt-1.18.2` | SQLCipher `4.19.0` / SQLite `3.53.4`；新增独立源码包，不能当作原包内仅替换一个 C 文件。发布包分别声明 Rust 1.89.0 / 1.88.0 / 1.81，既有 1.96.0 满足 |
-| 密码提供方 | Apple CommonCrypto 与 Android / Linux vendored OpenSSL | 保持提供方及现有 feature 选择，不启用 libtomcrypt、系统动态 libcrypto、SQLCipher 5 beta 或 OpenSSL 4；源包包含 libtomcrypt 不等于目标已编译它 |
-| OpenSSL | 官方 `3.6.5` 有安全修复；crates.io 的 openssl-src 300 系列最新为 `300.6.1+3.6.3` | openssl-sys `0.9.117` 要求 openssl-src `^300.2.0`，不能直接选择已发布的 `400.0.2+4.0.3`。独立构建 3.6.5、维护 fork / patch 或迁移 4.x 都改变供应 / 兼容边界，需另评审，不能修改缓存绕过 |
+| 密码提供方 | Apple CommonCrypto 与 Android / Linux vendored OpenSSL | 保持提供方及现有 feature 选择，该 SQLCipher 批次不启用 libtomcrypt、系统动态 libcrypto、SQLCipher 5 beta 或改变 OpenSSL 版本；源包包含 libtomcrypt 不等于目标已编译它 |
+| OpenSSL | 官方 `3.6.5` 有安全修复；crates.io 的 openssl-src 300 系列最新为 `300.6.1+3.6.3` | openssl-sys `0.9.117` 要求 openssl-src `^300.2.0`，不能直接选择已发布的 `400.0.2+4.0.3`。后续已批准的最小本地 patch 与迁移停止线见第 3.2 节，不能修改缓存绕过 |
 
 来源为 [SQLCipher 4.19.0 公告](https://www.zetetic.net/blog/2026/09/08/sqlcipher-4.19.0-release/)、[rusqlite 0.41.0 发布](https://github.com/rusqlite/rusqlite/releases/tag/v0.41.0)、[sqlcipher-src](https://github.com/LucaCappelletti94/sqlcipher-src)、[OpenSSL 3.6 发行记录](https://openssl-library.org/news/openssl-3.6-notes/)及 crates.io 发布索引 / 包。rusqlite 发布说明中的 4.17.0 条目不是实际源包版本的充分证据；需核对锁定链、源码常量与运行报告。源包 SHA-256 匹配 registry 不等于已经独立复现源码生成或验证所有上游签名。
 
@@ -84,9 +84,68 @@ FRB runtime / generator 均为 `2.13.0`，Rust 输入只有 `crate::api`；生�
 2. 复用密码 / 错钥拒绝、文件密文与明文对照、WAL / DELETE / checkpoint、pager 故障、TEMP_STORE 与清理重试检查；读取实际 SQLCipher / SQLite、密码提供方和编译选项，记录与旧基线的差异。
 3. 运行 Rust 与 Flutter 宿主检查、双桥接压力 / 并发 / 错误 / 恢复、两端 arm64 native 构建及许可 / 治理检查。宿主与 native 构建作为本地候选证据；移动端实际运行、真机文件保护和系统认证仍按既有矩阵补验，不外推通过。
 
-跨版本用例及旧 worker 保存要求见[检查说明](../../scripts/README.md#移动构建生成与证据)。该用例在默认检查中明确 ignored，只有显式提供旧 worker 才执行；不把同版本恢复计作旧库兼容。另有实际版本 / 密码提供方回归，要求 Apple 为 CommonCrypto、非 Apple 为锁定的 OpenSSL 3.6.3；平台未执行时不能宣称其运行通过。
+跨版本用例及旧 worker 保存要求见[检查说明](../../scripts/README.md#移动构建生成与证据)。该用例在默认检查中明确 ignored，只有显式提供旧 worker 才执行；不把同版本恢复计作旧库兼容。另有实际版本 / 密码提供方回归，要求 Apple 为 CommonCrypto、非 Apple 为对应批次锁定的 OpenSSL；平台未执行时不能宣称其运行通过。
 
-候选源码与日志只在忽略的评审目录和 Cargo 缓存保留，不复制进正式源码或提交第三方大包；未通过来源、许可、编译或恢复验证时停止采用，保留真实原因。
+SQLCipher 候选源码与日志只在忽略的评审目录和 Cargo 缓存保留；第 3.2 节另行批准的 openssl-sys 最小源码副本有明确来源清单。未通过来源、许可、编译或恢复验证时停止采用，保留真实原因。
+
+### 3.2 OpenSSL 修补方案评审与验证计划
+
+2026-10-25 评审后，项目所有者已批准 **OpenSSL 4.0.3 的受控迁移**及仅调整构建依赖约束的 openssl-sys 最小本地补丁。候选已进入工作树并完成部分验证，但 Android 实际加载触发 SIGILL，尚未通过采用门槛。项目所有者随后要求提交候选并继续诊断，最近可运行的基线仍为 3.6.3；3.6.5 只作明确期限内的应急选择。保留 Apple CommonCrypto、Android / Linux 静态 OpenSSL，不调整 SQLCipher 4.19.0 / SQLite 3.53.4、业务加密、KDF、schema、bridge 或支持矩阵。
+
+#### 已核对的约束
+
+- [官方发行与支持期限](https://openssl-library.org/source/)列出 3.6.5 支持至 **2026-11-01**，4.0.3 至 **2027-05-14**；截至本次评审，3.6 只剩一周公开支持。4.0 也不是长期支持版本。官方另已于 2026-10-23 发布 4.1.0，但本次 crates.io 索引尚无对应 openssl-src；不能把 4.0.3 称为最新 OpenSSL。
+- 重新读取 [openssl-src 索引](https://index.crates.io/op/en/openssl-src)和 [openssl-sys 索引](https://index.crates.io/op/en/openssl-sys)：未撤回的 300 系列最高为 `300.6.1+3.6.3`，4.0.3 对应 `400.0.2+4.0.3`；openssl-sys 最新仍为 `0.9.117`。当前发布包要求 openssl-src `^300.2.0` 且启用 `legacy`，所以不能仅用 cargo update 选择 400 系列，添加一个未被选择的 patch 也不解决范围约束。
+- 本地已锁定 openssl-sys 0.9.117 的 build/main.rs 有 `Openssl4xx` 分支，build/cfgs.rs 有 `ossl400`；这与 vendored 的 300 系列约束是两个问题。能识别 4.x 不等于已验证 SQLCipher、整个 FFI 绑定或 Android 构建兼容。
+- SQLCipher 4.19.0 已锁定源码的 OpenSSL provider 使用 AES-256-CBC、EVP_MAC HMAC、PKCS5_PBKDF2_HMAC、RAND_bytes / RAND_add 与版本 / 错误接口；当前 Store 通过 sqlite3_key 传入 32 字节材料，不是 SQLCipher hex raw-key 语法，需保留 PBKDF2 路径验证。外层口令封装与恢复材料仍由 RustCrypto 实现。
+- [3.6.4 / 3.6.5 发行记录](https://openssl-library.org/news/openssl-3.6-notes/)包含多项安全修复，3.6.5 最高为 High；其中网络协议、证书、EC / SM2 和 AEAD 等路径在当前 SQLCipher provider 中未观察到调用，不能据此宣称全库无风险或继续冻结 3.6.3。AES-CBC 不能与 AES-SIV / CCM 的公告路径混为一谈。
+
+#### 两条路径的影响
+
+| 维度 | 保留 3.6：修补至 3.6.5 | 迁移 4.x：本批限定 4.0.3 |
+| --- | --- | --- |
+| 兼容范围 | 同系列补丁，预计 API / ABI 与行为变化较小，仍需旧库与恢复验证 | major 版本，必须重编译；不能假定 API / ABI 无变化，也不能直接替换已有二进制 |
+| 接入成本 | 没有现成 3.6.5 的 300 系列发布包；需维护真实版本的 openssl-src 源码封装，或独立构建官方 3.6.5 并显式接入 | 已有 openssl-src 发布包；需解决 openssl-sys 的 vendored 版本约束，并验证现有 4.x 分支是否充分 |
+| 供应链 / 许可 | 自维护源码封装意味着追溯 OpenSSL 官方归档 / 签名、包装代码、构建参数及实际许可；不能改缓存冒充原包 | 保留发布的 400 系列源码包；若使用本地 openssl-sys 补丁，保存完整来源、原包哈希、最小 diff 与 MIT，OpenSSL Apache-2.0 / 包装许可重新收集 |
+| 生命周期 | 2026-11-01 即停止公开支持；投入自建封装后仍很快需要再次迁移 | 4.0 支持至 2027-05-14，窗口更长，但不能作为多年稳定基线冻结 |
+| 主要工程风险 | 第二套原生下载 / 编译入口、头文件与静态库混配、notices 仍引用旧 bundle，以及维护短命分支 | 移除旧 API、初始化 / 清理和算法获取行为变化、原生编译与绑定兼容；需要实际 OpenSSL 运行证据 |
+| 本项目判断 | 仅当存在迫切修补期限且 4.x 有明确阻塞时采用；必须同时约定退出日期 | 推荐先执行下述有停止线的最小迁移验证，通过后再采用 |
+
+[4.0 官方迁移说明](https://docs.openssl.org/4.0/man7/ossl-guide-migration/)与[移除 API 清单](https://docs.openssl.org/4.0/man7/ossl-removed-api/)明确了 major 兼容变化，包括 ENGINE / 旧接口、ASN1_STRING 不透明化、X509 const 变化、算法获取与退出清理。当前 SQLCipher 的有效 3.x / 4.x provider 路径未使用所列 ASN1 / X509 / ENGINE 接口，因而预计影响小于通用 TLS 应用，这是源码推断而非运行结论。4.0 不再自动注册 atexit 清理；应验证长寿命进程与重复开关库，不为让泄漏报告归零就在单连接关闭时调用全局 OPENSSL_cleanup，以免破坏其他连接。
+
+若目标是多年维护，3.5.9 LTS（官方支持至 2030-04-08）值得另案比较；它是另一个版本方向，不在本次两选一里自动替换，也不默认已解决 Rust 封装与回退兼容问题。
+
+#### 已批准的实施范围
+
+1. 固定 SQLCipher 链及其他包；仅为非 Apple 目标引入 OpenSSL 4.0.3 / openssl-src `400.0.2+4.0.3`。保持现有静态构建、算法 / provider 配置与已启用 feature，不混入 legacy 裁剪、FIPS、TLS、动态库或新密码提供方。
+2. 优先采用正式发布、明确支持 400 系列的 openssl-sys；若实施时仍无该版本，使用已批准的**仓库内可审计的 openssl-sys 0.9.117 最小补丁**：保留完整发布源码与许可，仅将 openssl-src 构建依赖约束精确指向 400.0.2，记录原包哈希、补丁 diff 与撤除条件。禁止将 400 包伪装成 300 版本、修改 Cargo 缓存或关闭版本检查。工作树已包含完整 81 文件副本；来源、两个 manifest 的精确版本差异、JSON 末尾 LF 及撤除条件见[补丁说明](../../third-party/openssl-sys-patch.md)。治理检查反向还原差异并逐文件核对原包哈希。
+3. 上游可直接替代该补丁且全部验证通过后撤除。若发现需要修改 openssl-src / OpenSSL C 或汇编、改 SQLCipher 算法、广泛修改 FFI 绑定、升级无关包、改变系统范围或增加新 provider，则停止此切片并报告真实阻塞，不不断扩大补丁。
+4. 不推荐默认使用独立 OpenSSL 安装目录接入：现有 vendored 路径通过 DEP_OPENSSL_INCLUDE 获取头文件，而普通 bundled-sqlcipher 外部路径会输出动态 crypto 链接。确需独立构建时，必须统一 openssl-sys 与 SQLCipher 的目标头文件 / 静态库、限定 OPENSSL_NO_VENDOR / OPENSSL_STATIC 等目标环境、修正来源清单，并拒绝意外系统 pkg-config / Homebrew 库。它不是设置 OPENSSL_DIR 即告完成的低成本办法。
+
+#### 验证顺序与通过条件
+
+| 顺序 | 必须取得的证据 | 停止条件 / 限制 |
+| --- | --- | --- |
+| 1. 保存基线与来源 | 从当前 29d8edd / 旧锁定值保存 **SQLCipher 4.19.0 + OpenSSL 3.6.3 的非 Apple worker**、锁定 / 二进制指纹及正常关闭和待恢复 WAL 的合成 A11 库；核对新发布包 registry 哈希、上游来源、许可和构建参数 | 前批 macOS worker 使用 CommonCrypto，不能代替 OpenSSL 旧基线；不从当前 Cargo 缓存手工换源码 |
+| 2. 最小构建与实际 provider | 在已授权 Android 环境运行 `cipher_version / cipher_provider / cipher_provider_version`，确认 4.19.0 / openssl / OpenSSL 4.0.3；检查架构、静态符号、NEEDED、compile options 与库体积；Linux 验证宿主另跑相应路径 | macOS 成功和 Android 库构建不能替代 OpenSSL 运行。出现 CommonCrypto / libtomcrypt、动态 libcrypto / libssl 或实际 provider 仍报告旧版本即停止 |
+| 3. 算法与数据保真 | 在实际 OpenSSL 目标用公开独立向量覆盖 AES-CBC / HMAC / PBKDF2；验证 RAND 错误传播，创建、错钥、密文篡改拒绝；旧库正常关闭 / 待恢复 WAL 在新版打开，完整摘要、vault / device、候选 / 删除 / outbox、恢复材料、原意图重放均保持 | 不以两个版本自洽代替独立期望；不得重建库、丢候选、重新发身份或调整密码格式来通过；不可因仅验证升级便宣称可降级 |
+| 4. 故障、并发与资源 | 复用 pager / 文件发布故障、checkpoint / DELETE、临时文件、SIGKILL / 重启及清理重试；重复开关库和多连接 / 两 bridge 并发，记录 CPU / 内存 / 延迟与旧基线差异 | 并发初始化 / 清理失败、持续资源增长或无法解释的性能回退阻止采用；不以全局 cleanup 破坏其他连接 |
+| 5. 工程与目标回归 | Rust fmt / 严格 clippy / C header / 测试；Flutter 两桥接压力 / 错误 / 取消 / 所有权；Android 实际 native harness 与普通 App 路径；iOS 构建及 CommonCrypto 不变的回归；来源 / notices / 公告 / 治理检查 | 新版测试版本断言需同步；现有跨版本用例硬编码 SQLCipher 4.14.0→4.19.0，需补独立 OpenSSL 基线用例，不能拿旧用例结果充数 |
+| 6. 采用与恢复边界 | 只提交精确依赖、最小补丁、必要验证与文档；保留旧合成库、版本指纹和失败记录；列明模拟器 / 真机 / Linux 实际执行范围 | 真机保护、认证与系统掉电缺口不自动关闭。未验证新版写库可被旧版读取前，不能将二进制回退称为数据恢复方案 |
+
+Android / Linux 的运行入口、模拟器实例 / 数据与清理范围已在本批实施授权中明确，不能为了补证据私自更换目标、升级系统镜像或修改 CPU 能力覆盖。
+
+#### 本次结果与继续条件
+
+- 来源与最小修改：openssl-src `400.0.2+4.0.3` 发布归档 SHA-256 匹配 registry，2492 个缓存源文件逐字匹配归档；openssl-sys `0.9.117` 的 81 文件来源清单通过。根锁定 135 个包中仅 openssl-src 版本及 openssl-sys 来源改变，133 个包条目和 Pub lockfile 不变。MIT / Apache-2.0 等实际许可已重新收集，notices 检查通过；本批未完成新的 OSV 查询，不能沿用旧查询声称新链无命中。
+- Linux 实际 OpenSSL：旧 3.6.3 / 新 4.0.3 worker 都用 SQLCipher 4.19.0；正常关闭和 SIGKILL 后待恢复 WAL 的旧 A11 库由新版成功打开，完整事实、身份、错材料不改写、独立恢复和原意图重放通过。新链 26 项核心 / 桥接 Rust 测试通过，包括 pager、临时文件与并发。现有离线容器是 Rust 1.96.1，旧 / 新使用相同镜像；这项辅助证据不等于主机 / Android 的 Rust 1.96.0 工具链验证。
+- 独立算法：显式链接旧 / 新实际静态库的 [C 验证程序](../../scripts/tests/openssl_vectors.c)，以 NIST SP800-38A F.2.5、RFC4231 §4.2、RFC7914 §11 的固定期望检查 AES-256-CBC 加解密、HMAC-SHA512 与 PBKDF2-HMAC-SHA256；正常 RAND 与合成加密库创建通过。独立进程指定不存在的算法提供方后，RAND 失败，SQLCipher 在 sqlite3_open 初始化即报错；没有继续创建明文库。该结果不是随机熵质量证明，也不覆盖 Android 执行。
+- Apple 宿主回归：Rust 1.96.0 的 26 项测试、fmt、严格 clippy 与 C header 检查通过；Flutter 19 项宿主测试、格式和严格分析通过。Apple 仍为 CommonCrypto；本批因 Android 阻塞未继续 iOS native 构建或设备回归。
+- Android 阻塞：既有 Pixel_9_Pro / API35 / arm64 / 16 KiB 页模拟器上，原生 pager 测试和实际 Flutter App 均在加载库时 SIGILL。addr2line / 反汇编定位到 OPENSSL_cpuid_setup → _armv8_sve_get_vl_bytes 的 cntb 指令。独立 C 诊断读到 HWCAP 的 SVE=0、HWCAP2 的 SVE2=1，PR_SVE_GET_VL 返回 -1 / EINVAL；同设备加载已保存旧 3.6.3 库成功，新 4.0.3 库退出 132。证据支持“当前模拟器能力报告与执行能力不一致触发新初始化路径”，不能推断所有 Android 真机均失败，也不能认定是 SQLCipher 账务错误。
+
+最小 sys 版本补丁可以编译，但不足以通过目标运行门槛。项目所有者已要求保存候选提交并继续 ARM 能力探测 / 模拟器兼容诊断；若需要 OpenSSL C 源码修补、系统镜像 / 模拟器更新或其他版本选择，必须另行说明精确差异、维护责任和重新验证范围后确认。不得用 OPENSSL_armcap 覆盖、全局 no-asm、改提供方或跳过失败目标制造通过。Android 的 provider 查询、pager / 恢复、两桥接压力 / UI、资源比较，以及其后的 iOS / 公告检查和最终提交尚未完成。
+
+本批证据保存在忽略的 `local-evidence/m0-c/2026-10-25-openssl/`，包含旧基线、来源哈希、日志、加载对照和清理记录。候选按新指令保存提交，未推送；实际下一步以[当前进度](../status/current.md)为准。
 
 ## 4. 复现入口
 

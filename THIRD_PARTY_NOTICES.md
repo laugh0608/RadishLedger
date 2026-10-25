@@ -11,7 +11,9 @@
 | sqlcipher-src | `419.0.6+sqlcipher-4.19.0-sqlite-3.53.4-libtomcrypt-1.18.2`；[源码封装](https://github.com/LucaCappelletti94/sqlcipher-src) | 包声明 MIT AND BSD-3-Clause AND blessing AND WTFPL；包装代码 MIT，Copyright 2026 Luca Cappelletti；内含材料分别保留原许可 |
 | SQLCipher / SQLite | `4.19.0 community` / `3.53.4`，由固定 sqlcipher-src 引入；[SQLCipher](https://github.com/sqlcipher/sqlcipher) | SQLCipher BSD-3-Clause，SQLite public domain；收集内含 LICENSE-sqlcipher 和 sqlite3.h 首段声明 |
 | libtomcrypt 源码材料 | `1.18.2`，内含于 sqlcipher-src；[LibTomCrypt](https://github.com/libtom/libtomcrypt) | public domain / WTFPL 双许可全文保留在保守来源清单；当前 Android / Apple native 构建未选择或编译该提供方 |
-| OpenSSL | `3.6.3`，openssl-src `300.6.1+3.6.3`；[OpenSSL](https://github.com/openssl/openssl) | Apache-2.0；Android / Linux 的静态密码底层，Apple 使用系统 CommonCrypto |
+| OpenSSL | 候选 `4.0.3`，openssl-src `400.0.2+4.0.3`（候选，目标验证受阻）；[OpenSSL](https://github.com/openssl/openssl) | Apache-2.0；Android / Linux 的静态密码底层，Apple 使用系统 CommonCrypto |
+| openssl-sys 最小源码补丁 | `0.9.117`；[来源 / 差异](third-party/openssl-sys-patch.md)、[原包哈希清单](third-party/openssl-sys-upstream.json) | MIT；完整保留上游 81 文件，仅改 openssl-src 约束及 JSON 末尾 LF；候选受阻，未改绑定实现 |
+| 密码验证公开向量 | [NIST SP800-38A F.2.5](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf)、[RFC4231 §4.2](https://www.rfc-editor.org/rfc/rfc4231.html)、[RFC7914 §11](https://www.rfc-editor.org/rfc/rfc7914.html) | NIST 美国政府出版物；RFC 分别 © ISOC 2005 / IETF Trust 2016，按各文档版权声明。仅使用公开输入 / 期望数值，未移植算法代码或说明正文；验证程序为项目原创，不随 App 打包 |
 | flutter_rust_bridge / generator | `2.13.0`；[FRB](https://github.com/fzyzcjy/flutter_rust_bridge) | MIT，Copyright 2021 fzyzcjy；Rust 与 Dart runtime 共用上游同版许可，生成代码保留标记 |
 | Tokio（FRB 传递依赖） | `1.53.3`；[Tokio](https://github.com/tokio-rs/tokio)、[crate](https://crates.io/crates/tokio/1.53.3) | MIT；异步运行时，按 RUSTSEC-2026-0386 升级；许可正文未变，全文由 native notices 保留 |
 | serde / serde_json | `1.0.228` / `1.0.150`；[serde](https://github.com/serde-rs/serde)、[serde_json](https://github.com/serde-rs/json) | MIT OR Apache-2.0；结构化输入 / 输出，不形成第二份金额真相 |
@@ -26,7 +28,7 @@
 | Temurin JDK | `17.0.20.1+1`；[Adoptium](https://github.com/adoptium/temurin17-binaries) | GPL-2.0 with Classpath Exception；仅本地构建工具，未提交或随 App 分发 |
 | Gradle / AGP / cargo-expand | `9.1.0` / `9.0.1` / `1.0.118`；各官方发行与 registry 包 | 构建 / 生成工具，仅在缓存中使用，未作为 App 资产引入 |
 
-Rust 传递包、SQLCipher 与 OpenSSL 的许可全文由 [collect-native-notices.py](scripts/collect-native-notices.py) 从锁定缓存收集到 [native-notices.txt](apps/m0_probe/assets/native-notices.txt)，并作为 Flutter asset 随实验包保留。该清单含两端 arm64 与验证宿主的 build dependencies，是保守并集；不能当作最终二进制扫描。完全相同的许可正文分组保留各包名、版本与来源。allo-isolate 依包内 Apache-2.0 LICENSE 登记；dart-sys 采用声明的 Apache-2.0 选项，额外保留其内含 Dart SDK 的 BSD notice。sqlcipher-src 的根 MIT 不代替内含 SQLCipher / SQLite / libtomcrypt 材料；生成器显式收集嵌套许可和 SQLite 首段声明，缺失或为空即失败。
+Rust 传递包、SQLCipher 与 OpenSSL 的许可全文由 [collect-native-notices.py](scripts/collect-native-notices.py) 从锁定缓存收集到 [native-notices.txt](apps/m0_probe/assets/native-notices.txt)，并作为 Flutter asset 随实验包保留。本地 openssl-sys 虽无 registry source，仍显式记录补丁来源并收集 MIT 正文。该清单含两端 arm64 与验证宿主的 build dependencies，是保守并集；不能当作最终二进制扫描。完全相同的许可正文分组保留各包名、版本与来源。allo-isolate 依包内 Apache-2.0 LICENSE 登记；dart-sys 采用声明的 Apache-2.0 选项，额外保留其内含 Dart SDK 的 BSD notice。sqlcipher-src 的根 MIT 不代替内含 SQLCipher / SQLite / libtomcrypt 材料；生成器显式收集嵌套许可和 SQLite 首段声明，缺失或为空即失败。
 
 生成器需要本机已取得锁定包、Flutter pub 配置和固定 Rust 工具链，不访问网络或安装工具；依赖变化后重新生成并运行 `--check`。只规范许可的文本行尾，不删除原归属。Flutter 的自动 LICENSE asset 与本项目 native notices 各覆盖对应来源，公开发行前复核实际打包内容及新增资产。
 
