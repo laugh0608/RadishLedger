@@ -839,7 +839,7 @@ THE SOFTWARE.
 ========================================================================
 allo-isolate 0.1.27 — https://crates.io/crates/allo-isolate/0.1.27
 cmov 0.5.4 — https://crates.io/crates/cmov/0.5.4
-ctutils 0.4.3 — https://crates.io/crates/ctutils/0.4.3
+ctutils 0.4.4 — https://crates.io/crates/ctutils/0.4.4
 zeroize 1.8.2 — https://crates.io/crates/zeroize/1.8.2
 
 Apache License
@@ -2132,7 +2132,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-ctutils 0.4.3 — https://crates.io/crates/ctutils/0.4.3
+ctutils 0.4.4 — https://crates.io/crates/ctutils/0.4.4
 
 Copyright (c) 2025-2026 The RustCrypto Project Developers
 

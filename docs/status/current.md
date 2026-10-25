@@ -1,14 +1,14 @@
 # 当前状态
 
-更新日期：2026-10-25（Asia/Shanghai，M0 专项审查）。
+更新日期：2026-10-25（Asia/Shanghai，M0 受控依赖修补）。
 
 ## 当前结论
 
 项目处于 M0 移动核心与加密恢复验证，尚未满足 M0-B / M0-C 正式退出条件。已有 Flutter 合成验证 App、同一 Rust 领域 / SQLCipher 核心，以及薄 C ABI / Dart FFI 与 flutter_rust_bridge 两种候选；没有正式用户账簿、同步服务、备份迁移或公开发行。实验 schema、ABI、依赖与工具链候选尚未冻结为生产契约。
 
-本轮完成诊断入口、VFS / 连接异常释放、平台文件保护与备份配置、锁定依赖的专项审查，修复 VFS 关闭错误导致二次 panic，以及合成目录载荷删除失败后丢失归属的问题；补充错误密钥配置失败后的释放回归。审查完成不等于全部风险关闭：`ctutils 0.4.3` 和 `tokio 1.53.2` 命中新安全公告，SQLCipher / OpenSSL 也存在后续安全修复，需按下述范围继续处置。
+专项审查与异常路径修复已提交为 `7c5a63b`。随后按授权将密码传递依赖 `ctutils` 从 `0.4.3` 精确升级至 `0.4.4`，仅该包版本 / 校验值及生成 notices 引用变化，依赖边与 features 不变。已完成宿主密码、双桥接和恢复回归；RUSTSEC-2026-0385 的锁定版本命中已消除，不等于项目已取得完整恒定时间或设备侧信道证明。`tokio 1.53.2`、SQLCipher / OpenSSL 的后续安全修复继续保留处置项。
 
-10 月 19 日已有模拟器文件与恢复证据继续保留；本轮只新增宿主验证，没有移动包 / 设备复验。Android 系统认证、两端真机 release / 硬件保护 / 生命周期、iOS 实际文件保护、真实 IO 故障与掉电仍有缺口，不能进入 M1。真机条件和补验顺序已整理，机型、系统、签名及安装 / 清理范围尚未确认。
+10 月 19 日已有模拟器文件与恢复证据继续保留；本轮新增宿主验证与两端 arm64 native 库构建，没有完整移动 App 打包 / 设备复验。Android 系统认证、两端真机 release / 硬件保护 / 生命周期、iOS 实际文件保护、真实 IO 故障与掉电仍有缺口，不能进入 M1。真机条件和补验顺序已整理，机型、系统、签名及安装 / 清理范围尚未确认。
 
 ## 已完成与证据入口
 
@@ -23,8 +23,8 @@
 | 有界临时文件 | 同一 8192 行工作负载覆盖 TEMP 表、排序 / 索引、物化、语句回滚、VACUUM、super-journal 和 SHM；MEMORY 不落临时文件，独立明文扫描对照有效 | 任意查询、导出 / 归档缓存、OS swap / crash dump 的完整审计 |
 | 正常 App 文件环境 | 每端两 bridge × MEMORY / FILE 共 4 组，实际中断后新 PID 精确清理；A11 完整摘要 / 审计保全。Android release 为 untrusted_app，私有目录 / UID / 权限 / SELinux 与外部访问拒绝通过；iOS 容器路径、权限和备份排除通过 | iOS 真机 sandbox / entitlement / 文件保护、两端硬件保护与实际系统备份传输 |
 | 专项审查与异常恢复 | VFS 关闭错误保留失败状态并安全注销；载荷删除失败保留 owner / lock，原身份可重试；错误密钥配置失败后原库可重新打开 | 内核真实 close / unlink 故障、最终归属标记删除 / 目录同步失败后的自动恢复、生产包诊断能力编译排除 |
-| 锁定依赖审查 | 132 个 Cargo registry 包、40 个 Pub hosted 包查询；Cargo 缓存归档校验与 native notices 核对通过。命中及调用路径见本月 devlog | 无漏洞证明、完整工具链供应链审计或依赖已升级 |
-| 本轮宿主验证 | 25 项 Rust 测试及 fmt / 严格 clippy / C header 通过；Flutter 文件边界 / bootstrap 两桥接 8 项定向测试通过；仓库治理 24 条回归 / 192 个文件通过 | 本轮 Flutter 全量静态分析、移动包 / 真机、远端 CI 或发布门禁 |
+| 锁定依赖审查 | 本轮复查 132 个 Cargo registry 包，ctutils 0.4.4 无命中，Tokio 项仍在；新包归档 / 源文件及 notices 核对通过。40 个 Pub 包沿用前批未命中记录 | 无漏洞证明、完整工具链供应链审计或其他依赖已修补 |
+| 本轮宿主验证 | 25 项 Rust 测试及 fmt / 严格 clippy / C header 通过；Flutter 19 项宿主测试、格式与严格分析通过；另复验 release 密码向量 / 资源边界；仓库治理 24 条回归 / 192 个文件通过 | 完整移动 App / 真机、机器码恒定时间、远端 CI 或发布门禁 |
 
 10 月 19 日两端实际 SQLCipher 4.14.0 / SQLite 3.51.3、默认 unix VFS v3 已核对。Android `TEMP_STORE=3` 强制内存，FILE 请求也不提供磁盘临时文件正向对照；iOS `TEMP_STORE=2` 的 FILE 对照确实产生临时文件并检出合成标记。正常 App 的命名 VFS 不替换默认 VFS，原 MEMORY 策略不因对照实验改变。
 
@@ -34,7 +34,7 @@
 
 ### 接下来的事项
 
-1. **优先处置专项审查命中的依赖公告。** `ctutils 0.4.3` 命中 [RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html)，位于密码依赖链，补丁候选为 `0.4.4`，尚无目标机器码不可达证明；`tokio 1.53.2` 命中 [RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html)，两端当前未启用涉及 AsyncFd 的 net 功能，补丁候选为 `1.53.3`。本轮按既定范围保持 manifests / lockfile 不变；下一批先明确受控升级范围，复核锁定图与 notices，再运行密码 / 桥接 / 恢复验证。SQLCipher `4.14.0` 与 OpenSSL `3.6.3` 的后续修复另做绑定 / source bundle 候选评审；当前未使用相关 export / URI hexkey 和 TLS 等路径，不等于可以冻结旧依赖或扩大用途。
+1. **继续处置剩余依赖安全项。** `ctutils 0.4.4` 已修补 [RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html) 的受影响锁定版本；本轮不改密码算法、KDF profile、数据格式或 bridge。下一项为 `tokio 1.53.2` 的 [RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html)，两端当前未启用涉及 AsyncFd 的 net 功能，补丁候选为 `1.53.3`。SQLCipher `4.14.0` 与 OpenSSL `3.6.3` 另做绑定 / source bundle 候选评审；当前未使用相关 export / URI hexkey 和 TLS 等路径，不等于可以冻结旧依赖或扩大用途。每批保持精确升级、依赖图 / notices 核对和风险匹配复验。
 2. **确认两端真机验证条件，并保持 Android 认证缺口显式可见。** 依据[准备与补验清单](../development/mobile-core-validation.md#6-真机批次准备与补验清单)确认机型、系统、认证、签名、安装 / 数据范围与精确清理方式；本轮未连接或写入设备，不能声明设备已就绪。最近一次 Android 模拟器能力为 `deviceSecure=false`、代码 11，条件未变时不重复 unsupported 流程。API 24 仅为编译候选，当前系统认证实现要求 API 30+；支持范围待验证冻结。现有控制器只允许模拟器，真机执行入口不能通过删除限制来冒充就绪。
 3. **具备条件后执行两端真机 release 闭环（B01–B06、C01 / C04 / C06–C12）。** 优先补 Android 创建 / 日常解锁、取消 / 拒绝 / 暂不可取、精确项失效后的独立恢复、重建及跨 PID 解锁；同步验证 iOS sandbox / entitlement 与实际文件保护。再取得设备重启、后台 / 任务预览、KDF 时间 / 峰值内存和较长压力证据。保持 A11 候选、删除及未同步事实保真，按实际能力报告硬件等级。
 4. **按真实新增路径补剩余文件与持久化边界（B07 / B09、C02 / C05 / C08）。** 新增查询、导出或归档时补相应缓存 / 临时文件审计，不为测试提前建设未批准功能。真实 IO 故障、掉电 / 文件系统丢写与系统备份传输另定可恢复的实验范围；不能复用 VFS 注入、字符串扫描或备份排除标记宣布通过。
@@ -54,9 +54,9 @@
 
 日常开发继续在 `dev`；`origin` 为 [laugh0608/RadishLedger](https://github.com/laugh0608/RadishLedger)，默认分支 master。分支晋级、PR 与 Rulesets 以[仓库治理](../governance/repository-governance.md)为准，不在本次收尾改变远端状态。
 
-本轮从干净 `dev`、HEAD `d3af5cd` 开始，与本地 `origin/dev` 引用一致，未 fetch。修改限于 Rust 异常路径 / 回归与对应专题、进度、devlog；尚未暂存或提交，无 push、PR、tag、Release 或发布。依赖声明 / lockfile 和 AGENTS / CLAUDE 保持不变。
+本轮先将前批 7 个审查文件提交为 `7c5a63b`，再进行 ctutils 精确修补与文档收口，按授权另作本地提交；提交身份与 ahead 数以 Git 为准。没有 fetch、push、PR、tag、Release 或发布。Cargo manifests、Pub lockfile、AGENTS / CLAUDE 不变。
 
-本轮只运行会退出的宿主检查，未启动模拟器、安装 App、调用系统认证或修改签名 / 锁屏。10 月 19 日的设备清理为最后已记录状态，本轮未重新盘点设备。宿主合成临时目录由测试清理，非秘密审查材料保留在忽略目录 `local-evidence/m0-c/2026-10-25-review/`；OSV 查询仅发送公开包名 / 版本，不发送仓库源码、账务或秘密。
+本轮未启动模拟器、安装 App、调用系统认证或修改签名 / 锁屏。真机条件仍未确认；10 月 19 日为最后已记录设备状态。本机只读盘点发现现用 Xcode 为 27.1 / iPhoneOS 27.1，与历史 27.0 不同；本轮 native 构建按实际环境记录，不外推旧工具链复现。检查均退出，合成临时目录由测试清理；新包留在既有 Cargo 缓存，非秘密报告及两端 native 产物保留在忽略目录 `local-evidence/m0-c/2026-10-25-ctutils/`，前批审查材料仍在 `2026-10-25-review/`。
 
 ## 当前停止线
 

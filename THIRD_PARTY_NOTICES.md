@@ -16,6 +16,7 @@
 | chacha20poly1305 | `0.11.0`；[RustCrypto AEAD](https://github.com/RustCrypto/AEADs) | MIT OR Apache-2.0；XChaCha20-Poly1305 认证封装，仅实验格式 |
 | argon2 | `0.6.0`；[RustCrypto password-hashes](https://github.com/RustCrypto/password-hashes) | MIT OR Apache-2.0；Argon2id v19，固定有界 profile |
 | hkdf / sha2 | `0.13.0` / `0.11.1`；[RustCrypto KDFs](https://github.com/RustCrypto/KDFs)、[RustCrypto hashes](https://github.com/RustCrypto/hashes) | MIT OR Apache-2.0；用途隔离与非秘密完整性核对 |
+| ctutils（密码传递依赖） | `0.4.4`；[RustCrypto utils](https://github.com/RustCrypto/utils)、[crate](https://crates.io/crates/ctutils/0.4.4) | Apache-2.0 OR MIT；恒定时间工具，按 RUSTSEC-2026-0385 升级；许可全文由 native notices 保留 |
 | libc | `0.2.189`；[libc](https://github.com/rust-lang/libc) | MIT OR Apache-2.0；实际 code asset 定位与上游 bridge 兼容 |
 | ffi / hooks / code_assets | `2.2.0` / `1.0.2` / `1.0.0`；[dart-lang/native](https://github.com/dart-lang/native) | BSD-3-Clause；Dart native 调用和构建资产 |
 | Material Icons 与 Flutter / Dart 传递包 | SDK 内含字体与 `pubspec.lock` 固定包；[Material Icons](https://github.com/google/material-design-icons) | 字体 Apache-2.0，各包许可由 SDK / pub 包随附并进入 Flutter LICENSE asset；没有额外引入第三方字体或图标资产 |

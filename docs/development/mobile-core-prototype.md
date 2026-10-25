@@ -51,7 +51,7 @@ FRB runtime / generator 均为 `2.13.0`，Rust 输入只有 `crate::api`；生�
 | Rust | `1.96.0`；root workspace、`rust-toolchain.toml`、`Cargo.lock`；fmt / clippy 必需 |
 | Android | arm64；API `24` 构建候选、compile SDK `36`、Build-Tools `36.0.0`（AGP 默认）、NDK `28.2.13676358`；JDK `17` |
 | Gradle / AGP | Gradle `9.1.0` bin 发行包及官方 SHA-256；AGP `9.0.1`，沿用 Flutter 模板的兼容开关 |
-| iOS | arm64 真机与 arm64 Simulator；App deployment target `15.0`，符合本批 Xcode `27.0` SDK 的目标范围 |
+| iOS | arm64 真机与 arm64 Simulator；App deployment target `15.0`；每批记录 `xcrun` 实际选择的 Xcode / SDK，历史构建版本不代表当前环境 |
 | 存储 | rusqlite `0.40.2`、libsqlite3-sys `0.38.2`，内含 SQLCipher `4.14.0 community` / SQLite `3.51.3` |
 | 密码底层 | Apple 使用 CommonCrypto；Android / Linux 验证宿主静态构建 OpenSSL `3.6.3`，不依赖开发机动态 libcrypto |
 | Dart code assets | hooks `1.0.2`、code_assets `1.0.0`、ffi `2.2.0`；`pubspec.lock` 固定传递依赖 |
