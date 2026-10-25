@@ -471,7 +471,7 @@ python3 scripts/check-mobile-pager.py --platform ios \
 
 本入口补充第 7.10 节未覆盖的正常 App 进程、桥接和文件路径。复用已有 M0 App、平台 `storage` 策略与两种 bridge 的 validation 调用；普通 `main.dart` 不执行本实验。它仍是合成验证 App，不是最终用户产品或正式发布包。
 
-真机准备时先读[现有实现与入口缺口](mobile-core-validation.md#63-现有实现与真机入口缺口)和[单批操作单](mobile-core-validation.md#64-单批操作单与验收停止线)。本节控制器仍只支持模拟器；App 内属性观测没有锁屏期间实际读写阶段，不能把真机属性读取等同于实际文件保护验收。
+真机准备时先读[现有实现与入口缺口](mobile-core-validation.md#63-现有实现与真机入口缺口)和[单批操作单](mobile-core-validation.md#64-单批操作单与验收停止线)。本节控制器仍只支持模拟器；可选的 iOS 有界锁屏观测见第 7.15 节，不能把真机属性读取等同于实际文件保护验收。
 
 `file_boundary_main.dart` 通过 `M0_APP_BOUNDARY_RUN` 接受 32 位小写十六进制批次身份。核心 `fileBoundary` 只在既有私有根下排他建立 `m0c-<run>`，随机 DB key 仅存在内存，不接受真实账库 / 解锁材料。运行 A11 后复用第 7.9 节的 8192 行临时文件工作负载；每个连接显式选择唯一命名 VFS，注册 / 注销均不改进程默认 VFS，另以普通 Store 连接验证观察器未截获默认连接。连接的 key / PRAGMA 配置仍共用 Store 原实现，不建立第二套存储策略。
 
@@ -562,3 +562,20 @@ python3 -B scripts/collect-bootstrap-evidence.py \
 [collect-bootstrap-evidence.py](../../scripts/collect-bootstrap-evidence.py) 只接受本仓库 M0-C 忽略证据目录内已保存的普通 UTF-8 文件（上限 2 MiB），不启动任何设备命令。乱序与相同分片重试可以重组；目标标记畸形、缺片、冲突、超限、坏 base64 / JSON、重复 JSON 键、身份 / 版本或固定证据边界不符均失败，不覆盖既有输出。错误不回显原始输入；IO 错误保留 errno。输出成功只说明传输与外层报告边界满足要求，不验证 App 来源、不认证内容、不清洗任意输入为公开材料，也不根据 succeeded / 摘要 / 计数判断 B / C 验收。原始报告和过滤日志仍留在本地忽略目录，不随源码提交。
 
 `bootstrap_evidence_test.dart` 验证字段排除、未知失败、停止等待与晚成功、记录上限、默认禁止输出、传输失败重试、原文件报告格式，以及 Dart 实际输出到 Python 收集器的往返；`bootstrap_experiment_test.dart` 另以两 bridge 的真实核心结果核对摘要投影。`scripts/tests/test_bootstrap_evidence.py` 验证缺片 / 冲突 / 畸形 / 大小 / 身份 / 路径 / 非普通文件 / 输出不覆盖。上述均为宿主证据；报告不是完整审计归档、设备签名证明或真机结论。
+
+
+### 7.15 iOS 有界锁屏访问观测
+
+在第 7.11 节专用入口额外设置 `--dart-define=M0_IOS_LOCK_OBSERVATION=true`，可在第一组 thin / MEMORY 的真实合成文件准备与属性核对后，进入 45 秒人工锁屏观测窗口。默认不开启，Android 拒绝该选项，Simulator 原生入口直接返回 `unsupportedSimulator`。此选项不授权安装、签名、锁屏设置变更或设备操作；实际批次仍先填操作单。
+
+[M0FileProtectionProbe](../../apps/m0_probe/ios/Runner/M0FileProtectionProbe.swift) 校验随机 run、精确 owner、同 UID 的普通 DB / WAL / SHM，并以不跟随链接的目录描述符固定归属。每次只重新打开三个文件、核对 inode / device、读取一个字节并关闭，再以 `O_WRONLY` 打开并关闭；不带 create / truncate，不写字节，不输出文件内容。写方式打开不等于实际 write、SQLite 写事务或已有 mmap / 文件描述符的锁屏行为。
+
+原生阶段依次为可访问基线、保护数据不可用时的一次访问、恢复可用后的一次访问。每次记录 `isProtectedDataAvailable` 前后状态、文件名、实际 IO 阶段、返回值、errno 和关闭错误；只有状态前后均不可用、三个文件的 read / writeOpen 均得到明确 `EACCES` / `EPERM` 且无关闭错误，才设置 `accessDeniedObserved=true`。文件缺失、链接、身份变化、EOF、普通 IO 错误与状态变化均不能当作保护拒绝。解锁恢复要求同一身份的三个文件全部恢复可读和写方式打开；`accessRestored` 只代表访问恢复。
+
+采用包含系统休眠时间的 `mach_continuous_time` 截止时间和主线程 250 ms timer；不申请后台延长、不增加 entitlement、不持有跨阶段数据库文件描述符。到期检查先于新的 IO：进程恢复时已超过窗口且未执行锁屏调用，返回 `lockedIoNotExecuted`，不能断言确实发生过暂停；已有锁屏调用但未及时观察恢复，返回 `restorationNotObserved`。App 暂停期间无法保证准时回调，只能在获得下一次执行机会时结束。`protectedDataWillBecomeUnavailableNotification` 发生在实际不可用之前，不将通知本身当作拒绝证据；状态含义依据 [Apple 可用状态说明](https://developer.apple.com/documentation/uikit/uiapplication/isprotecteddataavailable)和[保护不可用通知](https://developer.apple.com/documentation/uikit/uiapplication/protecteddatawillbecomeunavailablenotification)。
+
+UI 可取消本次窗口，原生 timer / 引用在正常、取消、基线失败或超时返回时释放，随后沿用精确目录清理。若保护尚不可用导致清理失败，报告失败并保留已有归属登记；解锁后以同一 session 重开原入口核对和重试，不另建前缀清理。登记仍是临时目录文件，不增加掉电保证。
+
+结果置于原文件报告的 `lockObservation`，含精确 run / bridge；`outcome=observed` 仅表示两阶段均执行，不意味着拒绝与恢复成功。外层 `passed` 仍只判断原四组文件实验与清理，不能代替锁屏判据。所有结果保留 `hardwareProtectionVerified=false`、`acceptance=not-assessed`。原实验随机 DB key 在核心调用后释放，因此本切片不验证解锁后的 SQL / A11 事实恢复；真实 write 拒绝、恢复后原事实保全、跨 PID 与真机 release 日志仍需单独补齐。
+
+macOS 可运行 `sh scripts/check-ios-file-protection.sh`：现有 Swift 工具链编译真实原生采样器，以临时合成文件验证内容未改写、身份替换与链接拒绝，并用注入状态 / 错误验证基线、拒绝分类、恢复、取消及跨截止时间不补记调用。临时文件与编译缓存在退出时精确清理。此入口不连接设备，不模拟硬件保护；原生目标类型检查与 Flutter 宿主检查也不代替完整 App 构建或移动 UI / 真机执行。

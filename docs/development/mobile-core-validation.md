@@ -138,8 +138,8 @@ API 24 仍只是 Android 编译候选；当前系统保护 adapter 在 API 30 �
 | [bootstrap.dart](../../apps/m0_probe/lib/src/bootstrap.dart)、[bootstrap_selection.dart](../../apps/m0_probe/lib/src/bootstrap_selection.dart) | 人工清理先保存全部候选，再清平台项与核心目录，最后撤销 selection；失败保留身份，重开页可重试，核心目录已删除时也不依赖 status | 实现边界见[人工实验流程](mobile-core-prototype.md#713-人工实验页的精确失效清理与候选切换)。真实平台项删除失败、设备中断和最后 owner / lock 清理仍需目标证据；不增加 shell / 外部秘密命令通道 |
 | [mobile_probe_device.py](../../scripts/mobile_probe_device.py)、[check-mobile-bootstrap.py](../../scripts/check-mobile-bootstrap.py) | 模拟器显式目标校验、跨 PID 恢复和独立 A11 比对 | Android 依赖 `run-as` 与私有 FIFO，iOS 依赖 `simctl` 和宿主可访问容器；不是非 debuggable 真机 release 通道。保留限制，不传入真机 ID 重试，也不打开调试权限来满足控制器 |
 | [Android M0Protection](../../apps/m0_probe/android/app/src/main/kotlin/com/radishledger/radishledger_probe/M0Protection.kt) | API 30+ 能力检查、逐次认证、结构化失败、精确 alias 删除；API 31+ 创建响应读取 `KeyInfo.securityLevel`，API 30 记录 `unmeasured`；service 已将非秘密等级带到结果，UI 可显示原始代码 | 真机诊断仍需实际等级与平台错误码；转发与显示在宿主使用替身验证。UI 显示“可用”或等级代码不能代替实际认证与硬件等级核验 |
-| [iOS M0Protection](../../apps/m0_probe/ios/Runner/M0Protection.swift)、[M0FileBoundary](../../apps/m0_probe/ios/Runner/M0FileBoundary.swift) | Keychain 精确 service / account；storage 创建时请求 Complete；读取根、子目录及实际文件属性 | 需分别实测首次创建与已有目录重开、新 DB / WAL / SHM 属性，以及锁屏期间实际读写拒绝、解锁后原事实恢复。现有代码没有锁屏读写实验，不能只凭属性值通过 C02 / C09 |
-| [file_boundary_main.dart](../../apps/m0_probe/lib/file_boundary_main.dart)、[file_boundary.dart](../../apps/m0_probe/lib/src/file_boundary.dart) | App 内运行双 bridge × MEMORY / FILE、独立 A11 计数、属性验证与精确目录清理；真机属性缺失 / 较弱时拒绝，硬件结论始终未验证 | 当前实验自动结束并清理，没有等待锁屏的操作阶段；iOS 报告读取仍由模拟器控制器完成。需确定真机可用的有界非秘密报告获取方式与新 PID 证明；临时目录 journal 不作为设备重启后的持久归属保证 |
+| [iOS M0Protection](../../apps/m0_probe/ios/Runner/M0Protection.swift)、[M0FileBoundary](../../apps/m0_probe/ios/Runner/M0FileBoundary.swift) | Keychain 精确 service / account；storage 创建时请求 Complete；读取根、子目录及实际文件属性 | 需分别实测首次创建与已有目录重开、新 DB / WAL / SHM 属性，以及锁屏期间实际读写拒绝、解锁后原事实恢复。已有有界读 / 写方式打开观测，真实 write 拒绝与恢复后 A11 仍未覆盖，不能只凭属性值通过 C02 / C09 |
+| [file_boundary_main.dart](../../apps/m0_probe/lib/file_boundary_main.dart)、[file_boundary.dart](../../apps/m0_probe/lib/src/file_boundary.dart) | App 内运行双 bridge × MEMORY / FILE、独立 A11 计数、属性验证与精确目录清理；真机属性缺失 / 较弱时拒绝，硬件结论始终未验证 | 新增可选 45 秒锁屏阶段与取消，明确未执行 / 拒绝 / 恢复，详见[有界锁屏观测](mobile-core-prototype.md#715-ios-有界锁屏访问观测)；iOS 报告读取仍由模拟器控制器完成。需确定真机可用的有界非秘密报告获取方式与新 PID 证明；临时目录 journal 不作为设备重启后的持久归属保证 |
 | [Android 构建配置](../../apps/m0_probe/android/app/build.gradle.kts)、[iOS 工程](../../apps/m0_probe/ios/Runner.xcodeproj/project.pbxproj) | Android release 使用项目隔离测试签名；iOS 已有测试 bundle 标识和 native 构建链 | Android 核验现有包签名是否冲突；iOS 明确 team / profile 后再审阅最终签名包 entitlement 与 provisioning。native 构建成功不表示签名、安装或容器权限已验证 |
 | [人工非秘密报告](mobile-core-prototype.md#714-人工实验的有界非秘密报告) | 固定字段投影、最近 64 条观测、省略计数、失败与晚成功区分；有效批次下显式输出不可变快照；本地收集器检查完整分片与外层证据边界 | 宿主已验证 Dart / Python 往返，仍未取得真机 release 日志与跨 PID 证据；不记录完整账务 / 操作载荷，不鉴别报告来源，不能把重组成功当作验收 |
 
@@ -168,6 +168,6 @@ API 24 仍只是 Android 编译候选；当前系统保护 adapter 在 API 30 �
 4. 仅删除本批精确日常保护项，确认系统解锁明确失败，再用独立材料读取原 A11；错材料不得覆盖原库。精确项缺失与真实生物识别 / 锁屏变更失效分别记账。
 5. 核对 8 个修订、7 个 outbox、2 个候选、1 个删除及完整事实 / 操作身份后重建日常保护，再以新 PID 解锁；计数一致不能代替完整内容比对。最后执行并核验精确清理。
 
-iOS 文件保护批次先核对最终 entitlement / provisioning 和实际 sandbox 路径，再分别记录首次创建、已有目录重开及新文件继承的属性。锁屏读写实验必须另有可审阅的执行阶段与观测点：记录实际受保护数据状态、读写调用是否真的执行、原始结果及解锁后保真；App 被暂停而没有执行 IO 时只能标未执行，不能当作系统拒绝。现有自动完成的文件观测入口不具备这一阶段，不以三秒等待或截图替代。
+iOS 文件保护批次先核对最终 entitlement / provisioning 和实际 sandbox 路径，再分别记录首次创建、已有目录重开及新文件继承的属性。锁屏读写实验必须另有可审阅的执行阶段与观测点：记录实际受保护数据状态、读写调用是否真的执行、原始结果及解锁后保真；App 被暂停而没有执行 IO 时只能标未执行，不能当作系统拒绝。现有可选阶段仅对第一组合成 DB / WAL / SHM 执行 read 与写方式 open；不代表 write 拒绝、原 A11 恢复或两 bridge 均已补验，也不以三秒等待或截图替代。
 
 没有真机时止于仓库准备：保留既有模拟器证据，不重做无变化的构建、压力或已知 unsupported 流程，不自动改虚拟设备锁屏。设备可用后先填操作单和补齐入口，再按已确认范围执行。设备与授权缺项、实施顺位统一更新 current，历史结果只追加 devlog；本节不累计通过数量。

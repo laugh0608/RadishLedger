@@ -172,7 +172,11 @@ Future<void> _removeOwned(
   }
 }
 
-Future<Map<String, dynamic>> runAppFileBoundary(String session) async {
+Future<Map<String, dynamic>> runAppFileBoundary(
+  String session, {
+  bool observeIosLock = false,
+  void Function(bool waiting)? onLockObservation,
+}) async {
   final report = <String, dynamic>{
     'schema': 1,
     'session': session,
@@ -189,6 +193,7 @@ Future<Map<String, dynamic>> runAppFileBoundary(String session) async {
   var journalValid = true;
   try {
     _require(RegExp(r'^[0-9a-f]{32}$').hasMatch(session), '必须提供唯一的合成运行身份');
+    _require(!observeIosLock || Platform.isIOS, '锁屏观测仅支持 iOS 专用入口');
     journal = File(
       '${Directory.systemTemp.path}/m0-app-boundary-owned-$session.json',
     );
@@ -267,6 +272,18 @@ Future<Map<String, dynamic>> runAppFileBoundary(String session) async {
           '核心进程、VFS 或账务保全不符',
         );
         verifyAppFileAttributes(environment, attributes, run);
+        if (observeIosLock && (report['cases'] as List).length == 1) {
+          onLockObservation?.call(true);
+          try {
+            report['lockObservation'] = {
+              'bridge': bridge.name,
+              'run': run,
+              ...await _platform('observeFileProtection', {'run': run}),
+            };
+          } finally {
+            onLockObservation?.call(false);
+          }
+        }
         final audit = core['a11Audit'] as Map;
         final snapshot = audit['snapshot'] as Map;
         _require(
@@ -324,6 +341,9 @@ Future<Map<String, dynamic>> runAppFileBoundary(String session) async {
   }
   return report;
 }
+
+Future<void> cancelFileProtectionObservation() => SystemProtection.channel
+    .invokeMethod<void>('cancelFileProtectionObservation');
 
 /// Android release 不开放 run-as 或导出组件；仅此专用入口输出有界合成诊断。
 Future<void> publishAppBoundaryReport(Map<String, dynamic> report) async {

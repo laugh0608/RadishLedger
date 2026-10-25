@@ -11,6 +11,9 @@ final class M0Protection {
   private var pending: LAContext?
   private var epoch = 0
   private var observer: NSObjectProtocol?
+  private var fileObservation: M0FileProtectionObservation?
+  private var fileTimer: Timer?
+  private var fileResult: FlutterResult?
 
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: "radishledger/m0c/protection", binaryMessenger: messenger)
@@ -23,6 +26,7 @@ final class M0Protection {
   deinit {
     if let observer { NotificationCenter.default.removeObserver(observer) }
     pending?.invalidate()
+    fileTimer?.invalidate()
     channel.setMethodCallHandler(nil)
   }
 
@@ -95,6 +99,37 @@ final class M0Protection {
   }
 
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "cancelFileProtectionObservation" {
+      if let observation = fileObservation { finishFileObservation(observation.cancel()) }
+      result(nil)
+      return
+    }
+    if call.method == "observeFileProtection" {
+      guard fileObservation == nil else { result(failure("protection_busy")); return }
+      #if targetEnvironment(simulator)
+      result(["schema": 1, "outcome": "unsupportedSimulator", "lockedAttempted": false,
+              "hardwareProtectionVerified": false, "acceptance": "not-assessed"])
+      #else
+      guard UIApplication.shared.isProtectedDataAvailable else {
+        result(failure("temporarily_unavailable")); return
+      }
+      do {
+        let arguments = call.arguments as? [String: Any]
+        let probe = try M0FileProtectionProbe(storage: storage(), run: arguments?["run"] as? String ?? "")
+        let observation = M0FileProtectionObservation(
+          now: M0FileProtectionObservation.continuousTime(),
+          available: { UIApplication.shared.isProtectedDataAvailable }, sample: { probe.sample() })
+        fileObservation = observation
+        fileResult = result
+        if let report = observation.start() { finishFileObservation(report); return }
+        fileTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+          guard let self, let report = self.fileObservation?.tick(now: M0FileProtectionObservation.continuousTime()) else { return }
+          self.finishFileObservation(report)
+        }
+      } catch { result(failure("file_boundary_unavailable", (error as NSError).code)) }
+      #endif
+      return
+    }
     if call.method == "fileEnvironment" || call.method == "fileAttributes" {
       do {
         let root = try storage()
@@ -194,5 +229,14 @@ final class M0Protection {
         else { result(response) }
       }
     }
+  }
+
+  private func finishFileObservation(_ report: [String: Any]) {
+    fileTimer?.invalidate()
+    fileTimer = nil
+    fileObservation = nil
+    let result = fileResult
+    fileResult = nil
+    result?(report)
   }
 }
