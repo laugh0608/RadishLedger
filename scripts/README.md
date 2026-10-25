@@ -93,6 +93,8 @@ M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `loc
 
 `check-core.sh` 同时执行 A11 非空候选 / 删除 / outbox 跨进程恢复、原意图重放、四类封装文件发布故障，以及实际 DB / WAL / 回滚日志检查；`check-mobile.sh` 的 `bootstrap_native_test.dart` 经宿主两种 bridge 验证非空账务和发布错误。故障注入、发布结果未定及宿主 / 设备证据边界见[文件故障专题](../docs/development/mobile-core-prototype.md#78-非空账务与文件发布故障)。这不等于真实磁盘损坏、断电或系统认证已验收。
 
+`bootstrap_experiment_test.dart` 经两种真实 bridge / 核心验证人工实验管理：精确项缺失后的 A11 独立恢复、重建、全部候选清理登记、失败 / 取消重试、核心目录删除后的继续清理与无关对象保留；平台系统保护为内存替身。`bootstrap_widget_test.dart` 覆盖确认、后台取消等待、清理失败后重开页及清理成功后切换 bridge，宿主页面重建不算设备重启。正常测试发现入口包含这两份测试；操作和登记边界见[人工实验流程](../docs/development/mobile-core-prototype.md#713-人工实验页的精确失效清理与候选切换)。
+
 Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程中的测试 VFS 在实际 WAL 提交、DELETE 提交和 checkpoint 的写入 / 同步位置注入故障，SIGKILL 后由未注入的普通入口恢复并重试；另观察 TEMP 表、排序 / 索引、物化查询、语句回滚、VACUUM、super-journal 和 SHM。MEMORY 策略与 FILE 正向对照分别断言，匿名临时文件在关闭前扫描。可通过 `M0_PAGER_EVIDENCE_DIR` 保存忽略目录内的有界 JSON 证据；子进程入口标记 ignored，由两个父测试实际调度，不能作为未运行或单独通过的业务测试计数。完整判据、清理和适用边界见[DB pager 与临时文件](../docs/development/mobile-core-prototype.md#79-db-pager-故障与临时文件边界)。
 
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:isolate';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -6,6 +7,7 @@ import 'frb_generated/api.dart' as frb;
 import 'frb_generated/frb_generated.dart';
 import 'native.dart';
 import 'probe.dart';
+import 'bootstrap_selection.dart';
 
 class BootstrapFailure implements Exception {
   const BootstrapFailure(this.code, [this.platformCode]);
@@ -224,6 +226,108 @@ class BootstrapService {
     return result;
   }
 
+  Future<(String?, List<String>)> _protectionStatus() async {
+    final result = await core({'kind': 'status'}, Uint8List(0));
+    try {
+      result.requireSuccess();
+      final candidates = BootstrapSelection.generations(
+        result.report['candidates'],
+      );
+      final active = result.report['activeProtection'];
+      if (active != null &&
+          (!BootstrapSelection.validIdentity(active) ||
+              !candidates.contains(active))) {
+        throw const BootstrapFailure('invalid_response');
+      }
+      return (active as String?, candidates);
+    } finally {
+      result.clear();
+    }
+  }
+
+  Future<String> activeProtection() async {
+    final (active, _) = await _protectionStatus();
+    if (active == null) throw const BootstrapFailure('protection_missing');
+    return active;
+  }
+
+  /// 仅制造所选合成项缺失；保留活动封装、原库和独立恢复材料。
+  Future<BootstrapResult> removeActiveProtection(String expected) async {
+    final epoch = _epoch;
+    final active = await activeProtection();
+    if (expected != active) {
+      throw const BootstrapFailure('selection_changed');
+    }
+    if (epoch != _epoch) throw const BootstrapFailure('interrupted');
+    final deleted = await platform.delete(run, active);
+    return BootstrapResult({
+      'ok': true,
+      'report': {
+        'protectionRemoved': active,
+        'alreadyMissing': deleted['alreadyMissing'] == true,
+      },
+    }, Uint8List(0));
+  }
+
+  /// 人工页清理先发布候选清单。即使核心目录已删除，重启仍可精确重试平台项。
+  Future<BootstrapResult> cleanupSelection() async {
+    final epoch = _epoch;
+    var selection = await BootstrapSelection.load(directory);
+    if (selection == null) throw const BootstrapFailure('selection_changed');
+    selection.requireOwner(this);
+    var candidates = selection.cleanupCandidates;
+    if (candidates == null) {
+      final (_, found) = await _protectionStatus();
+      if (epoch != _epoch) throw const BootstrapFailure('interrupted');
+      candidates = found;
+      selection = BootstrapSelection(
+        run,
+        bridge,
+        cleanupCandidates: candidates,
+      );
+      await selection.save(directory);
+    }
+    for (final generation in candidates) {
+      if (epoch != _epoch) throw const BootstrapFailure('interrupted');
+      await platform.delete(run, generation);
+    }
+    if (epoch != _epoch) throw const BootstrapFailure('interrupted');
+    final path = '$directory/m0c-$run';
+    final type = await FileSystemEntity.type(path, followLinks: false);
+    if (type != FileSystemEntityType.notFound) {
+      if (type != FileSystemEntityType.directory) {
+        throw const BootstrapFailure('invalid_selection');
+      }
+      final result = await core({'kind': 'cleanup'}, Uint8List(0));
+      try {
+        result.requireSuccess();
+        if (result.report['cleaned'] != true) {
+          throw const BootstrapFailure('invalid_response');
+        }
+      } finally {
+        result.clear();
+      }
+    }
+    if (await FileSystemEntity.type(path, followLinks: false) !=
+        FileSystemEntityType.notFound) {
+      throw const BootstrapFailure('cleanup_failed');
+    }
+    final remaining = await BootstrapSelection.load(directory);
+    if (remaining == null) throw const BootstrapFailure('selection_changed');
+    remaining.requireOwner(this);
+    final saved = remaining.cleanupCandidates;
+    if (saved == null ||
+        saved.length != candidates.length ||
+        !saved.every(candidates.contains)) {
+      throw const BootstrapFailure('selection_changed');
+    }
+    await File('$directory/selection.json').delete();
+    return BootstrapResult({
+      'ok': true,
+      'report': {'cleaned': true, 'removedProtectionCount': candidates.length},
+    }, Uint8List(0));
+  }
+
   Future<BootstrapResult> establishProtection(
     String unlock,
     Uint8List input,
@@ -247,7 +351,7 @@ class BootstrapService {
       final generation = prepared.report['candidateProtection'] as String;
       try {
         if (epoch != _epoch) throw const BootstrapFailure('interrupted');
-        await platform.create(
+        final protection = await platform.create(
           run,
           generation,
           Uint8List.fromList(prepared.secret),
@@ -269,6 +373,14 @@ class BootstrapService {
         }
         final previous = committed.report['previousProtection'] as String?;
         if (previous != null) await platform.delete(run, previous);
+        // 仅保留平台已返回的非秘密诊断；不从“创建成功”推定硬件保护。
+        committed.report['platformProtection'] = {
+          if (protection['securityLevelCode'] is String)
+            'securityLevelCode': protection['securityLevelCode'],
+          if (protection['protection'] is String)
+            'protection': protection['protection'],
+          'hardwareVerified': false,
+        };
         return committed;
       } finally {
         prepared.clear();

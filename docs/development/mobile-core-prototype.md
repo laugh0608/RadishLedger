@@ -513,3 +513,20 @@ python3 scripts/check-mobile-app-files.py --platform ios --device <existing-ios-
 `Files::cleanup` 先验证平面目录中的所有条目，再删除载荷，最后撤销 owner、移除 lock 和目录。载荷删除失败时保留原 owner / lock 并返回 `bootstrap_io`，后续可用同一身份重新取得锁并精确清理。删除回调注入只用于宿主回归，不增加对外故障字段；最终 owner / lock / 目录移除或父目录同步失败仍保留为错误与人工核对边界，不宣称任意 IO 故障、并发目录篡改或掉电均能自动恢复。
 
 专用 App 的登记 / 诊断仍使用平台临时目录，只证明已观测的跨进程中断恢复；不能推定 OS 清缓存、重装或设备重启后登记一定存在。真实备份、重装与归档恢复另按两端矩阵验证。
+
+
+### 7.13 人工实验页的精确失效、清理与候选切换
+
+`bootstrap_main.dart` 的默认人工页增加三条操作：使本次活动日常保护项缺失、使用恢复材料重建日常保护、清理本次合成实验。仍复用 `BootstrapService`、平台精确 `delete` 与 Rust bootstrap；不改变密码格式 / 提供方，不开放外部控制组件。`M0C_DRIVER=true` 的模拟器 FIFO 路径和设备限制保持原样。
+
+- **精确项缺失：** 先读当前活动 generation，弹窗显示 run / generation 和影响；确认后再读一次活动身份，不一致则拒绝。仅删除该平台项，保留活动封装、原账库、独立材料与未同步事实，供系统解锁失败、独立恢复及重建实验使用。它不等于真实生物识别 / 锁屏设置失效。弹窗期间切后台会撤销此次等待；已执行的删除不能靠取消撤回。
+- **独立重建：** 新按钮直接使用恢复材料调用原 `establishProtection('recovery', …)`；仍由核心先验证原账库完整事实，再建立、读回及提交保护项。成功报告仅保留平台返回的 `securityLevelCode` / `protection`，硬件验证标志始终为 false；其他平台字段不进入报告。Android API 30 的 `unmeasured` 仍保持未知，API 31+ 原始代码也不等于已经实测硬件安全等级。
+- **清理与切换：** 首次清理弹窗明确将删除本次合成账务、未同步操作、候选、独立恢复封装与系统保护项。只有本次平台候选和核心目录均清理后才撤销 selection，人工页换新 run 并重新允许选择 bridge；不先卸载 App，也不按前缀批量删除。失败后保留登记，页面只允许重试清理，不再解锁、重建保护或创建新账库；重试沿用已确认范围。
+
+[BootstrapSelection](../../apps/m0_probe/lib/src/bootstrap_selection.dart) 管理本 App 私有根内 `selection.json`，兼容原 `{run, bridge}` 记录。清理前增加非秘密 `cleanupCandidates`：来自同一核心 `status` 的全部 local generation，包含活动项、旧项与认证取消后遗留的候选；最多 256 个唯一的 32 位小写十六进制身份，记录上限 16 KiB。活动身份必须在候选集中，归属必须同时匹配 run / bridge。未知键、坏 JSON、重复 / 非法身份、符号链接和未完成的 `.pending` 发布均拒绝，不能当成“没有账库”。普通创建的空 / 超限口令在写入 selection 前拒绝，核心仍执行正式输入校验。
+
+清理顺序为：完整写入并 flush `.pending` → rename 发布候选清单 → 逐个精确删除平台项 → 原 Rust `cleanup` 校验 owner / lock 并删除本次核心目录 → 核对目录不存在和登记未变化 → 删除 selection。平台项已缺失可以精确重试；若进程在核心目录删除后、selection 删除前中断，后续从已保存清单重新删除平台项并确认核心目录不存在，不再依赖已删除的 bootstrap `status`。平台删除失败、后台中断或核心清理失败均不能提前清掉登记。尚无清理清单而 status 不可读时停止，不猜测候选；核心 owner / lock 最后阶段失败仍沿第 7.12 节保留人工核对边界。
+
+该登记位于 App 私有根而非临时目录；发布采用文件 flush / rename，但没有新增目录同步或掉电保证。遗留 `.pending` 不自动覆盖、丢弃或当作已确认计划；需按精确身份核对现场。它只支持本机人工合成实验的归属恢复，不是生产数据删除协议、备份归档或跨设备恢复格式。
+
+宿主验证入口为 `flutter test --no-pub test/bootstrap_experiment_test.dart test/bootstrap_widget_test.dart test/bootstrap_platform_test.dart`（在 `apps/m0_probe`）。两 bridge 使用实际 Rust / SQLCipher 检查 A11 完整事实和身份、错材料保全、精确项缺失后的独立恢复、重建与清理重试；系统认证与密钥存储为内存替身。widget 测试覆盖确认取消、后台撤销等待、核心清理失败后重开页面及清理后切换 bridge。宿主对象 / 页面重建不称为设备新 PID 或设备重启；实际 UI 视觉、系统认证、两端 release 安装与文件保护仍需对应目标证据。

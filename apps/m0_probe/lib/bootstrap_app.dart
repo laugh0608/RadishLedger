@@ -1,9 +1,9 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'src/bootstrap.dart';
+import 'src/bootstrap_selection.dart';
 import 'src/probe.dart';
 
 class BootstrapApp extends StatelessWidget {
@@ -38,6 +38,7 @@ class _BootstrapPageState extends State<BootstrapPage>
   BridgeCandidate _bridge = BridgeCandidate.thin;
   bool _busy = false;
   bool _hasVault = false;
+  bool _cleanupPending = false;
   bool _shield = false;
   int _epoch = 0;
   Uint8List? _issuedRecovery;
@@ -67,25 +68,14 @@ class _BootstrapPageState extends State<BootstrapPage>
       final directory = widget.service?.directory ?? await platform.storage();
       var run = widget.service?.run ?? _newRun();
       _bridge = widget.service?.bridge ?? _bridge;
-      if (widget.service == null) {
-        final selection = File('$directory/selection.json');
-        if (await selection.exists()) {
-          if (await selection.length() > 512) {
-            throw const BootstrapFailure('invalid_selection');
-          }
-          final value =
-              jsonDecode(await selection.readAsString())
-                  as Map<String, dynamic>;
-          run = value['run'] as String;
-          if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(run)) {
-            throw const BootstrapFailure('invalid_selection');
-          }
-          _bridge = BridgeCandidate.values.byName(value['bridge'] as String);
-          _hasVault = true;
-        }
-      } else {
-        _hasVault = true;
+      final selection = await BootstrapSelection.load(directory);
+      if (selection != null) {
+        if (widget.service != null) selection.requireOwner(widget.service!);
+        run = selection.run;
+        _bridge = selection.bridge;
+        _cleanupPending = selection.cleanupCandidates != null;
       }
+      _hasVault = selection != null || widget.service != null;
       final capability = await platform.capabilities();
       if (!mounted) return;
       setState(() {
@@ -93,7 +83,11 @@ class _BootstrapPageState extends State<BootstrapPage>
             widget.service ??
             BootstrapService(directory, run, _bridge, platform);
         _capability = capability;
-        _status = _hasVault ? '已找到原实验账库，请解锁或继续创建' : '仅用于合成材料；创建后请保存恢复材料';
+        _status = _cleanupPending
+            ? '上次清理尚未完成，请重试本次清理；不能再解锁或创建'
+            : _hasVault
+            ? '已找到原实验账库，请解锁或继续创建'
+            : '仅用于合成材料；创建后请保存恢复材料';
       });
     } catch (_) {
       if (mounted) {
@@ -143,10 +137,17 @@ class _BootstrapPageState extends State<BootstrapPage>
     'invalid_bootstrap' ||
     'storage_error' => '原材料不完整或不可读，已保留文件，请勿新建覆盖。',
     'kdf_busy' || 'vault_busy' || 'protection_busy' => '已有操作尚未结束，请稍后再试。',
+    'selection_changed' => '本次实验归属已变化，已停止操作，请重新打开核对。',
+    'invalid_selection' ||
+    'selection_publish_incomplete' => '本次归属登记损坏或发布未完成，保留现场，请勿新建覆盖。',
+    'cleanup_failed' => '清理尚未完成，保留本次登记，请重试精确清理。',
     _ => '操作未完成（$code），原材料保留。',
   };
 
-  Future<void> _perform(Future<BootstrapResult> Function() action) async {
+  Future<void> _perform(
+    Future<BootstrapResult> Function() action, {
+    bool refreshSelection = false,
+  }) async {
     if (_busy || _service == null) return;
     FocusManager.instance.primaryFocus?.unfocus();
     final epoch = ++_epoch;
@@ -167,7 +168,13 @@ class _BootstrapPageState extends State<BootstrapPage>
           _clearIssued();
           _issuedRecovery = Uint8List.fromList(result.secret);
         }
-        _status = result.report['fixtureComplete'] == true
+        _status = result.report['cleaned'] == true
+            ? '本次合成实验已清理，可以选择另一接入候选'
+            : result.report['actionCancelled'] == true
+            ? '已取消实验操作，原材料保留'
+            : result.report['protectionRemoved'] != null
+            ? '本次日常保护项已删除；请验证系统解锁失败，再用独立材料读取原账库'
+            : result.report['fixtureComplete'] == true
             ? '原账库核对成功，未同步操作 ${(result.report['audit'] as Map)['operations'].length} 条'
             : result.report['ready'] == true
             ? '恢复材料已确认，可以写入合成账务'
@@ -189,6 +196,7 @@ class _BootstrapPageState extends State<BootstrapPage>
       }
     } finally {
       result?.clear();
+      if (refreshSelection && mounted) await _refreshSelection();
       if (mounted) {
         _password.clear();
         _recovery.clear();
@@ -204,16 +212,16 @@ class _BootstrapPageState extends State<BootstrapPage>
     final password = _passwordBytes();
     BootstrapResult? generated;
     try {
+      // 与既有核心输入上限一致；拒绝输入时不要先留下无法继续的 selection。
+      if (password.isEmpty || password.length > 1024) {
+        throw const BootstrapFailure('invalid_password');
+      }
       generated = await service.core({'kind': 'newRecovery'}, Uint8List(0));
       generated.requireSuccess();
-      final selection = File('${service.directory}/selection.json');
-      if (await selection.exists()) {
-        throw const BootstrapFailure('already_exists');
-      }
-      await selection.writeAsString(
-        jsonEncode({'run': service.run, 'bridge': _bridge.name}),
-        flush: true,
-      );
+      await BootstrapSelection(
+        service.run,
+        _bridge,
+      ).save(service.directory, create: true);
       _hasVault = true;
       final input = Uint8List(password.length + generated.secret.length)
         ..setAll(0, password)
@@ -229,6 +237,94 @@ class _BootstrapPageState extends State<BootstrapPage>
       generated?.clear();
     }
   }
+
+  Future<void> _refreshSelection() async {
+    final service = _service!;
+    try {
+      final selection = await BootstrapSelection.load(service.directory);
+      if (!mounted) return;
+      if (selection != null) selection.requireOwner(service);
+      setState(() {
+        _hasVault = selection != null;
+        _cleanupPending = selection?.cleanupCandidates != null;
+        if (selection == null) {
+          _clearIssued();
+          _report = null;
+          _service = BootstrapService(
+            service.directory,
+            _newRun(),
+            _bridge,
+            service.platform,
+          );
+          _status = '本次合成实验已清理，可以选择另一接入候选';
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _service = null;
+          _error = '无法核对实验归属，已停止操作并保留现场。';
+        });
+      }
+    }
+  }
+
+  Future<bool> _confirmExperiment(String title, String detail) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(detail),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认本次操作'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  BootstrapResult _cancelledAction() => BootstrapResult({
+    'ok': true,
+    'report': {'actionCancelled': true},
+  }, Uint8List(0));
+
+  Future<void> _removeProtection() => _perform(() async {
+    final service = _service!;
+    final epoch = _epoch;
+    final generation = await service.activeProtection();
+    if (!mounted || epoch != _epoch) {
+      throw const BootstrapFailure('interrupted');
+    }
+    final confirmed = await _confirmExperiment(
+      '使本次日常保护项缺失？',
+      '仅删除本次系统保护项，保留原账库和独立恢复封装。请先确保独立材料可用。\n'
+          '实验：${service.run}\n保护项：$generation',
+    );
+    if (!confirmed) return _cancelledAction();
+    if (epoch != _epoch) throw const BootstrapFailure('interrupted');
+    return service.removeActiveProtection(generation);
+  });
+
+  Future<void> _cleanup() => _perform(() async {
+    final service = _service!;
+    final epoch = _epoch;
+    if (!_cleanupPending) {
+      final confirmed = await _confirmExperiment(
+        '清理本次合成实验？',
+        '将删除本次合成账务、未同步操作、候选、恢复封装及本次全部日常保护项，无法撤回。\n'
+            '仅限 ${service.bridge.name} 实验：${service.run}',
+      );
+      if (!confirmed) return _cancelledAction();
+    }
+    if (epoch != _epoch) throw const BootstrapFailure('interrupted');
+    return service.cleanupSelection();
+  }, refreshSelection: true);
 
   Future<void> _lock() async {
     FocusManager.instance.primaryFocus?.unfocus();
@@ -295,6 +391,7 @@ class _BootstrapPageState extends State<BootstrapPage>
   Widget build(BuildContext context) {
     if (_shield) return const Scaffold(body: Center(child: Text('已锁定')));
     final enabled = !_busy && _service != null;
+    final vaultEnabled = enabled && !_cleanupPending;
     return Scaffold(
       appBar: AppBar(
         title: const Text('萝卜账簿 · 解锁实验'),
@@ -356,7 +453,7 @@ class _BootstrapPageState extends State<BootstrapPage>
               autocorrect: false,
               enableSuggestions: false,
               decoration: const InputDecoration(labelText: '独立解锁口令'),
-              enabled: enabled,
+              enabled: vaultEnabled,
             ),
             const SizedBox(height: 12),
             TextField(
@@ -366,7 +463,7 @@ class _BootstrapPageState extends State<BootstrapPage>
               autocorrect: false,
               enableSuggestions: false,
               decoration: const InputDecoration(labelText: '已保存的恢复材料'),
-              enabled: enabled,
+              enabled: vaultEnabled,
             ),
             if (_issuedRecovery != null) ...[
               const SizedBox(height: 12),
@@ -393,7 +490,7 @@ class _BootstrapPageState extends State<BootstrapPage>
                     onPressed: enabled ? () => _perform(_create) : null,
                     child: const Text('创建合成账库'),
                   ),
-                if (_hasVault) ...[
+                if (_hasVault && !_cleanupPending) ...[
                   FilledButton(
                     key: const ValueKey('m0c-unlock-password'),
                     onPressed: enabled
@@ -477,7 +574,30 @@ class _BootstrapPageState extends State<BootstrapPage>
                         : null,
                     child: const Text('系统认证解锁'),
                   ),
+                  OutlinedButton(
+                    key: const ValueKey('m0c-rebuild-recovery'),
+                    onPressed: enabled
+                        ? () => _perform(
+                            () => _service!.establishProtection(
+                              'recovery',
+                              _recoveryBytes(),
+                            ),
+                          )
+                        : null,
+                    child: const Text('用恢复材料重建日常保护'),
+                  ),
+                  OutlinedButton(
+                    key: const ValueKey('m0c-remove-protection'),
+                    onPressed: enabled ? _removeProtection : null,
+                    child: const Text('实验：使日常保护项缺失'),
+                  ),
                 ],
+                if (_hasVault)
+                  OutlinedButton(
+                    key: const ValueKey('m0c-cleanup'),
+                    onPressed: enabled ? _cleanup : null,
+                    child: Text(_cleanupPending ? '重试本次清理' : '清理本次合成实验'),
+                  ),
                 if (_busy)
                   TextButton(
                     key: const ValueKey('m0c-cancel'),
@@ -489,6 +609,10 @@ class _BootstrapPageState extends State<BootstrapPage>
             const SizedBox(height: 20),
             if (_busy) const LinearProgressIndicator(),
             Text(_status, key: const ValueKey('m0c-status')),
+            if (_report?['platformProtection']?['securityLevelCode'] != null)
+              Text(
+                '系统返回安全等级代码：${_report!['platformProtection']['securityLevelCode']}（尚未经真机核验）',
+              ),
             if (_error != null)
               Text(
                 _error!,
