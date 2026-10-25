@@ -1,6 +1,6 @@
 # 当前状态
 
-更新日期：2026-10-25（Asia/Shanghai，M0 OpenSSL 4.0.3 与 ARM 能力补丁正式接入、工作区复验通过）。
+更新日期：2026-10-25（Asia/Shanghai，真机准备盘点完成；已确认仅有本机虚拟机，真机补验待设备）。
 
 ## 当前结论
 
@@ -8,7 +8,7 @@
 
 专项审查、ctutils / Tokio 与 SQLCipher 链修补已完成。当前使用 rusqlite 0.41.0 / libsqlite3-sys 0.39.1 / sqlcipher-src 419.0.6，实际 SQLCipher 4.19.0 / SQLite 3.53.4。非 Apple 目标已正式采用 OpenSSL 4.0.3、openssl-sys 最小版本约束补丁，以及完整 openssl-src 源包的一处 SVE 前置条件修复；Apple 保持 CommonCrypto。完整来源 / 许可、原始字节例外、构建资产依赖与正式工作区回归均已补齐。其他依赖、业务密码 / KDF、schema、bridge 与支持矩阵不变。首次 Android SIGILL 及隔离诊断过程保留在专题和 devlog。
 
-正式工作区已通过 Linux 旧 OpenSSL 库正常关闭 / 中断 WAL 的升级恢复、独立算法向量、宿主工程检查、Android 实际 provider / pager / 两桥接恢复 / UI / 压力，以及 iOS arm64 native 构建。Android 系统认证、两端真机 release / 硬件保护 / 生命周期、iOS 实际文件保护、真实 IO 故障与掉电仍有缺口，不能进入 M1。真机机型、系统、签名及安装 / 清理范围仍待确认。
+正式工作区已通过 Linux 旧 OpenSSL 库正常关闭 / 中断 WAL 的升级恢复、独立算法向量、宿主工程检查、Android 实际 provider / pager / 两桥接恢复 / UI / 压力，以及 iOS arm64 native 构建。Android 系统认证、两端真机 release / 硬件保护 / 生命周期、iOS 实际文件保护、真实 IO 故障与掉电仍有缺口，不能进入 M1。项目所有者已确认目前没有真机，仅有本机虚拟机，也未提供可用认证 / 签名条件；安装、签名配置、系统设置和数据删除尚未授权。
 
 ## 已完成与证据入口
 
@@ -36,7 +36,7 @@
 
 ### 接下来的事项
 
-1. **确认两端真机验证条件，并保持 Android 认证缺口显式可见。** 依据[准备与补验清单](../development/mobile-core-validation.md#6-真机批次准备与补验清单)确认机型、系统、认证、签名、安装 / 数据范围与精确清理方式；本轮仅使用既有 Android 模拟器，未连接真机，不能声明真机已就绪。最近一次 Android 模拟器能力为 `deviceSecure=false`、代码 11，条件未变时不重复 unsupported 流程。API 24 仅为编译候选，当前系统认证实现要求 API 30+；支持范围待验证冻结。现有控制器只允许模拟器，真机执行入口不能通过删除限制来冒充就绪。
+1. **等待可用真机，按已完成的盘点补齐执行入口。** 当前仅有本机虚拟机；[准备与补验清单](../development/mobile-core-validation.md#6-真机批次准备与补验清单)已列出源码能力、缺口、单批操作单和验收顺序。真机入口还需 App 内精确项失效 / 清理及 bridge 切换闭环、保留 Android 非秘密安全等级、取得真机报告和 iOS 锁屏实际 IO 观测；这些尚未实现，不能只补签名就宣称就绪。设备可用后确认机型、系统、认证、签名及安装 / 清理范围再执行。最近一次 Android 模拟器能力仍为 `deviceSecure=false`、代码 11，条件未变不重复 unsupported 流程。API 24 仅为编译候选，当前系统认证实现要求 API 30+；支持范围待冻结。现有控制器的模拟器限制保持不变。
 2. **具备条件后执行两端真机 release 闭环（B01–B06、C01 / C04 / C06–C12）。** 优先补 Android 创建 / 日常解锁、取消 / 拒绝 / 暂不可取、精确项失效后的独立恢复、重建及跨 PID 解锁；同步验证 iOS sandbox / entitlement 与实际文件保护。再取得设备重启、后台 / 任务预览、KDF 时间 / 峰值内存和较长压力证据。保持 A11 候选、删除及未同步事实保真，按实际能力报告硬件等级。
 3. **按真实新增路径补剩余文件与持久化边界（B07 / B09、C02 / C05 / C08）。** 新增查询、导出或归档时补相应缓存 / 临时文件审计，不为测试提前建设未批准功能。真实 IO 故障、掉电 / 文件系统丢写与系统备份传输另定可恢复的实验范围；不能复用 VFS 注入、字符串扫描或备份排除标记宣布通过。
 4. **证据齐备后再做选型与阶段评审。** 汇总两 bridge 的维护成本、异常边界、依赖审查及真机结果，决定生产 ABI、支持矩阵、SQLCipher / 系统保护和 KDF profile，按需形成 ADR。M0-D / E 按路线图分别推进同步与归档；独立本机恢复不等于空白设备完整恢复，不提前宣布 M0 退出。
@@ -55,9 +55,11 @@
 
 日常开发继续在 `dev`；`origin` 为 [laugh0608/RadishLedger](https://github.com/laugh0608/RadishLedger)，默认分支 master。分支晋级、PR 与 Rulesets 以[仓库治理](../governance/repository-governance.md)为准，不在本次收尾改变远端状态。
 
-本轮从干净 `dev` / `1d000cf` 开始，当时领先本地 origin/dev 6 个提交，未 fetch。项目所有者明确批准完整 openssl-src 与两行补丁、仅对来源哈希验证通过的精确文本例外、正式工作区验证和本地提交。范围包括源码与来源清单、根 Cargo source 选择、完整性 / 许可检查、Flutter 构建依赖及最近文档；AGENTS / CLAUDE 同步加入已批准上游原字节例外边界。相比 1d000cf，135 个 Cargo 条目仅 openssl-src 的来源身份改变，其他 134 条及 Pub lockfile 不变。无 push、PR、tag、Release、上传或发布。
+上一轮正式接入从干净 `dev` / `1d000cf` 开始，当时领先本地 origin/dev 6 个提交，未 fetch。项目所有者明确批准完整 openssl-src 与两行补丁、仅对来源哈希验证通过的精确文本例外、正式工作区验证和本地提交。范围包括源码与来源清单、根 Cargo source 选择、完整性 / 许可检查、Flutter 构建依赖及最近文档；AGENTS / CLAUDE 同步加入已批准上游原字节例外边界。相比 1d000cf，135 个 Cargo 条目仅 openssl-src 的来源身份改变，其他 134 条及 Pub lockfile 不变。无 push、PR、tag、Release、上传或发布。
 
 正式证据位于忽略的 `local-evidence/m0-c/2026-10-25-openssl-adoption/`，历史阻塞与隔离诊断仍分别保留。复用既有工具链 / 离线容器镜像 / Android AVD，没有新增依赖下载或系统配置变更。测试 App 已由 driver 卸载并确认包不存在；本次 emulator-5568、ADB 和验证容器已停止 / 移除，合成 owner 与 UUID 目录已清理。源码维护与上游替代 / 撤除条件见[来源说明](../../third-party/openssl-src-patch.md)。
+
+上述正式接入已保存为 `079bac9`。本次真机准备从该干净基线开始，仍在 `dev`，领先本地 origin/dev 7 个提交，未 fetch；没有并行工作区改动。本次只修改验证专题、实验专题路由、current 和 devlog，未改变实现、依赖、密码提供方或模拟器限制；未启动设备 / ADB / 服务、构建安装包或操作签名。改动保持未暂存 / 未提交，本任务没有新增提交授权，也无 push 或发布。设备不可用是实际真机验证的阻塞，文档准备不新增 B / C 通过项。
 
 ## 当前停止线
 

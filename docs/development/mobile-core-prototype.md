@@ -471,6 +471,8 @@ python3 scripts/check-mobile-pager.py --platform ios \
 
 本入口补充第 7.10 节未覆盖的正常 App 进程、桥接和文件路径。复用已有 M0 App、平台 `storage` 策略与两种 bridge 的 validation 调用；普通 `main.dart` 不执行本实验。它仍是合成验证 App，不是最终用户产品或正式发布包。
 
+真机准备时先读[现有实现与入口缺口](mobile-core-validation.md#63-现有实现与真机入口缺口)和[单批操作单](mobile-core-validation.md#64-单批操作单与验收停止线)。本节控制器仍只支持模拟器；App 内属性观测没有锁屏期间实际读写阶段，不能把真机属性读取等同于实际文件保护验收。
+
 `file_boundary_main.dart` 通过 `M0_APP_BOUNDARY_RUN` 接受 32 位小写十六进制批次身份。核心 `fileBoundary` 只在既有私有根下排他建立 `m0c-<run>`，随机 DB key 仅存在内存，不接受真实账库 / 解锁材料。运行 A11 后复用第 7.9 节的 8192 行临时文件工作负载；每个连接显式选择唯一命名 VFS，注册 / 注销均不改进程默认 VFS，另以普通 Store 连接验证观察器未截获默认连接。连接的 key / PRAGMA 配置仍共用 Store 原实现，不建立第二套存储策略。
 
 每端依次运行薄 FFI / FRB × MEMORY / FILE 请求四组，独立核对进程 ID、完整编译选项、完整账务摘要、8 个修订 / 序号、7 个 outbox、2 个候选、1 个删除，以及 10000 / 8000 分余额。所有 VFS 文件必须成功扫描并关闭。留存真实非空 WAL / SHM 供平台读取属性，再由 `fileBoundaryCleanup` 校验归属和锁后删除本次目录。
