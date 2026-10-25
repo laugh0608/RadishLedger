@@ -5,7 +5,10 @@ import Foundation
 enum FileProtectionTests {
   static func main() throws {
     let run = String(repeating: "a", count: 32)
-    let storage = FileManager.default.temporaryDirectory.appendingPathComponent("m0-file-protection-" + UUID().uuidString)
+    guard let temporary = ProcessInfo.processInfo.environment["M0_FILE_PROTECTION_TEST_ROOT"] else {
+      fatalError("run through scripts/check-ios-file-protection.sh")
+    }
+    let storage = URL(fileURLWithPath: temporary).appendingPathComponent("m0-file-protection-" + UUID().uuidString)
     let root = storage.appendingPathComponent("m0c-" + run)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try! FileManager.default.removeItem(at: storage) }
@@ -29,6 +32,11 @@ enum FileProtectionTests {
     assert(observed["outcome"] as? String == "observed")
     assert(observed["accessDeniedObserved"] as? Bool == false) // 宿主可读不能宣称保护拒绝。
     assert(observed["accessRestored"] as? Bool == true && calls == 3)
+    assert(observed["controlWriteDeniedObserved"] as? Bool == false)
+    assert(observed["controlWriteRestored"] as? Bool == true)
+    let control = root.appendingPathComponent("lock-write-control")
+    let firstControl = try Data(contentsOf: control)
+    assert(firstControl == Data([0xa5])) // 三次真实 pwrite，固定字节交替；不是 open 成功替身。
     for name in names {
       let preserved = try Data(contentsOf: root.appendingPathComponent(name))
       assert(preserved == payload)
@@ -52,6 +60,9 @@ enum FileProtectionTests {
     func locked(_ files: [[String: Any]], after: Bool = false) -> [String: Any] {
       ["availableBefore": false, "availableAfter": after, "files": files]
     }
+    func deniedSample(_ code: Int32) -> [String: Any] {
+      ["files": denial(code), "writeControl": ["pwrite": ["result": -1, "errno": Int(code)]]]
+    }
     assert(M0FileProtectionObservation.denied(locked(denial(EACCES))))
     assert(M0FileProtectionObservation.denied(locked(denial(EPERM, stage: "read"))))
     for code in [ENOENT, EIO, ELOOP, ESTALE] {
@@ -65,7 +76,7 @@ enum FileProtectionTests {
 
     available = true
     let recovery = M0FileProtectionObservation(now: 0, available: { available }, sample: {
-      available ? probe.sample() : denial(EACCES)
+      available ? probe.sample() : deniedSample(EACCES)
     })
     assert(recovery.start() == nil)
     available = false
@@ -74,9 +85,11 @@ enum FileProtectionTests {
     let recovered = recovery.tick(now: 4)!
     assert(recovered["accessDeniedObserved"] as? Bool == true)
     assert(recovered["accessRestored"] as? Bool == true)
+    assert(recovered["controlWriteDeniedObserved"] as? Bool == true)
+    assert(recovered["controlWriteRestored"] as? Bool == true)
     assert(recovered["hardwareProtectionVerified"] as? Bool == false)
     let incomplete = M0FileProtectionObservation(now: 0, available: { available }, sample: {
-      available ? probe.sample() : denial(EPERM)
+      available ? probe.sample() : deniedSample(EPERM)
     })
     assert(incomplete.start() == nil)
     available = false
@@ -88,15 +101,62 @@ enum FileProtectionTests {
     assert(cancelled.cancel()["outcome"] as? String == "cancelled")
     assert(cancelled.tick(now: 1) == nil)
 
+    // 写方式 open 被拒绝但没有 pwrite 结果，不能记为实际 write 拒绝。
+    assert(!M0FileProtectionObservation.writeDenied(locked(denial(EACCES))))
+    for code in [ENOENT, EIO, EBADF] {
+      var observation = deniedSample(code)
+      observation["availableBefore"] = false
+      observation["availableAfter"] = false
+      assert(!M0FileProtectionObservation.writeDenied(observation))
+    }
+    var unstable = deniedSample(EACCES)
+    unstable["availableBefore"] = false
+    unstable["availableAfter"] = true
+    assert(!M0FileProtectionObservation.writeDenied(unstable))
+    let badWrite = M0FileProtectionObservation(now: 0, available: { true }, sample: {
+      var sample = probe.sample()
+      sample["writeControl"] = ["pwrite": ["result": 0, "errno": 0]] // 短写不能作基线。
+      return sample
+    })
+    assert(badWrite.start()?["outcome"] as? String == "baselineFailed")
+    let badSync = M0FileProtectionObservation(now: 0, available: { true }, sample: {
+      var sample = probe.sample()
+      sample["writeControl"] = ["pwrite": ["result": 1, "errno": 0],
+                                "fsync": ["result": -1, "errno": Int(EIO)],
+                                "readback": ["result": 1, "errno": 0, "matched": true]]
+      return sample
+    })
+    assert(badSync.start()?["outcome"] as? String == "baselineFailed")
+    let beforeCollision = try Data(contentsOf: control)
+    do {
+      _ = try M0FileProtectionProbe(storage: storage.path, run: run)
+      fatalError("existing control must not be reused or overwritten")
+    } catch { assert((error as NSError).code == Int(EEXIST)) }
+    let afterCollision = try Data(contentsOf: control)
+    assert(beforeCollision == afterCollision)
+    let savedControl = root.appendingPathComponent("retained-control")
+    let foreign = storage.appendingPathComponent("unrelated")
+    try payload.write(to: foreign)
+    try FileManager.default.moveItem(at: control, to: savedControl)
+    try FileManager.default.createSymbolicLink(at: control, withDestinationURL: foreign)
+    do {
+      _ = try M0FileProtectionProbe(storage: storage.path, run: run)
+      fatalError("control symlink must not be followed")
+    } catch { assert((error as NSError).code == Int(EEXIST)) }
+    let untouched = try Data(contentsOf: foreign)
+    assert(untouched == payload)
+    try FileManager.default.removeItem(at: control)
+    try FileManager.default.moveItem(at: savedControl, to: control)
+
     let db = root.appendingPathComponent("ledger.db")
     let saved = root.appendingPathComponent("retained.db")
     try FileManager.default.moveItem(at: db, to: saved)
     try payload.write(to: db)
-    let replaced = probe.sample()[0]["read"] as! [String: Any]
+    let replaced = (probe.sample()["files"] as! [[String: Any]])[0]["read"] as! [String: Any]
     assert(replaced["stage"] as? String == "identityMismatch")
     try FileManager.default.removeItem(at: db)
     try FileManager.default.createSymbolicLink(at: db, withDestinationURL: saved)
-    let linked = probe.sample()[0]["writeOpen"] as! [String: Any]
+    let linked = (probe.sample()["files"] as! [[String: Any]])[0]["writeOpen"] as! [String: Any]
     assert(linked["result"] as? Int == -1)
     let preserved = try Data(contentsOf: saved)
     assert(preserved == payload)
@@ -113,6 +173,14 @@ enum FileProtectionTests {
     } catch { }
     let serialized = try JSONSerialization.data(withJSONObject: observed)
     assert(!String(decoding: serialized, as: UTF8.self).contains("synthetic-file-protection-control"))
-    print("iOS file observation host checks passed: real IO preservation / identity; simulated state / denial / timeout / cancellation. No device protection claim.")
+    assert(probe.closeResources().values.allSatisfy { $0 == 0 })
+    let otherDescriptor = open(owner.path, O_RDONLY | O_CLOEXEC)
+    assert(otherDescriptor >= 0)
+    assert(probe.closeResources().values.allSatisfy { $0 == 0 })
+    assert(fcntl(otherDescriptor, F_GETFD) != -1)
+    assert(close(otherDescriptor) == 0)
+    let closedControl = probe.sample()["writeControl"] as! [String: Any]
+    assert((closedControl["pwrite"] as! [String: Any])["errno"] as? Int == Int(EBADF))
+    print("iOS file observation host checks passed: real control pwrite / fsync / readback; database preservation / identity; simulated denial / timeout / cancellation. No device protection claim.")
   }
 }

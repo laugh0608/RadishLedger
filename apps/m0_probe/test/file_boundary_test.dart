@@ -128,6 +128,10 @@ void main() {
           expect(report['ioEventCount'], greaterThan(0));
           expect(report['walBytesForPlatformAudit'], greaterThan(32));
           expect(nativeBufferCount(), 0);
+          // 原生观测会新增独立的单字节写对照；同一 owner 清理必须覆盖它。
+          final control = File('${root.path}/m0c-$run/lock-write-control');
+          await control.writeAsBytes([0xa5], flush: true);
+          expect(await control.readAsBytes(), [0xa5]);
         } finally {
           if (await Directory('${root.path}/m0c-$run').exists()) {
             final result = await callValidation(bridge, {

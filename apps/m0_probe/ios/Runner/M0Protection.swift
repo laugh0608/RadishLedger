@@ -12,6 +12,7 @@ final class M0Protection {
   private var epoch = 0
   private var observer: NSObjectProtocol?
   private var fileObservation: M0FileProtectionObservation?
+  private var fileProbe: M0FileProtectionProbe?
   private var fileTimer: Timer?
   private var fileResult: FlutterResult?
 
@@ -116,6 +117,7 @@ final class M0Protection {
       do {
         let arguments = call.arguments as? [String: Any]
         let probe = try M0FileProtectionProbe(storage: storage(), run: arguments?["run"] as? String ?? "")
+        fileProbe = probe
         let observation = M0FileProtectionObservation(
           now: M0FileProtectionObservation.continuousTime(),
           available: { UIApplication.shared.isProtectedDataAvailable }, sample: { probe.sample() })
@@ -235,6 +237,9 @@ final class M0Protection {
     fileTimer?.invalidate()
     fileTimer = nil
     fileObservation = nil
+    var report = report
+    report["resources"] = fileProbe?.closeResources()
+    fileProbe = nil
     let result = fileResult
     fileResult = nil
     result?(report)

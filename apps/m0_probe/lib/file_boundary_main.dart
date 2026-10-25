@@ -61,6 +61,8 @@ Future<void> main() async {
     status.value +=
         '\n锁屏观测：${observation['outcome']}\n'
         '读 / 写打开拒绝：${observation['accessDeniedObserved'] ?? '未执行'}\n'
-        '访问恢复：${observation['accessRestored'] ?? '未执行'}';
+        '访问恢复：${observation['accessRestored'] ?? '未执行'}\n'
+        '对照文件实际写拒绝：${observation['controlWriteDeniedObserved'] ?? '未执行'}\n'
+        '对照文件写入恢复：${observation['controlWriteRestored'] ?? '未执行'}';
   }
 }

@@ -568,14 +568,29 @@ python3 -B scripts/collect-bootstrap-evidence.py \
 
 在第 7.11 节专用入口额外设置 `--dart-define=M0_IOS_LOCK_OBSERVATION=true`，可在第一组 thin / MEMORY 的真实合成文件准备与属性核对后，进入 45 秒人工锁屏观测窗口。默认不开启，Android 拒绝该选项，Simulator 原生入口直接返回 `unsupportedSimulator`。此选项不授权安装、签名、锁屏设置变更或设备操作；实际批次仍先填操作单。
 
-[M0FileProtectionProbe](../../apps/m0_probe/ios/Runner/M0FileProtectionProbe.swift) 校验随机 run、精确 owner、同 UID 的普通 DB / WAL / SHM，并以不跟随链接的目录描述符固定归属。每次只重新打开三个文件、核对 inode / device、读取一个字节并关闭，再以 `O_WRONLY` 打开并关闭；不带 create / truncate，不写字节，不输出文件内容。写方式打开不等于实际 write、SQLite 写事务或已有 mmap / 文件描述符的锁屏行为。
+[M0FileProtectionProbe](../../apps/m0_probe/ios/Runner/M0FileProtectionProbe.swift) 校验随机 run、精确 owner、同 UID 的普通 DB / WAL / SHM，并以不跟随链接的目录描述符固定归属。每次只重新打开三个文件、核对 inode / device、读取一个字节并关闭，再以 `O_WRONLY` 打开并关闭；对这三个文件不带 create / truncate、不写字节、不输出文件内容。写方式打开不等于实际 write、SQLite 写事务或已有 mmap / 数据库文件描述符的锁屏行为。
 
-原生阶段依次为可访问基线、保护数据不可用时的一次访问、恢复可用后的一次访问。每次记录 `isProtectedDataAvailable` 前后状态、文件名、实际 IO 阶段、返回值、errno 和关闭错误；只有状态前后均不可用、三个文件的 read / writeOpen 均得到明确 `EACCES` / `EPERM` 且无关闭错误，才设置 `accessDeniedObserved=true`。文件缺失、链接、身份变化、EOF、普通 IO 错误与状态变化均不能当作保护拒绝。解锁恢复要求同一身份的三个文件全部恢复可读和写方式打开；`accessRestored` 只代表访问恢复。
+实际写入使用同一已归属目录中的独立 `lock-write-control`：`O_CREAT | O_EXCL | O_NOFOLLOW` 排他创建、0600、同 UID，iOS 必须实测继承的 `NSFileProtectionComplete`，属性缺失或较弱即失败，不现场修改属性制造通过。已有对照文件拒绝覆盖或复用，失败保留它供原 owner 清理。仅这个无账务内容的描述符保留到观测结束；各阶段真实调用 `pwrite(fd, ..., 1, 0)`，固定字节交替，成功后调用 `fsync` 并 `pread` 回读核对。返回各调用的实际结果 / errno，不输出字节值。这样即使 DB 的 open 已被拒绝，也可区分对照文件的实际 write 是否执行；对照不代表 DB / WAL / SHM 写入、SQLite 提交或耐掉电保证。Complete 与允许已打开文件继续访问的 CompleteUnlessOpen 不混用，语义见 [Apple 文件保护类型](https://developer.apple.com/documentation/foundation/fileprotectiontype)及 [CompleteUnlessOpen](https://developer.apple.com/documentation/foundation/fileprotectiontype/completeunlessopen)。
+
+原生阶段依次为可访问基线、保护数据不可用时的一次访问、恢复可用后的一次访问。每次记录 `isProtectedDataAvailable` 前后状态、文件名、实际 IO 阶段、返回值、errno 和关闭错误；只有状态前后均不可用、三个文件的 read / writeOpen 均得到明确 `EACCES` / `EPERM` 且无关闭错误，才设置 `accessDeniedObserved=true`。文件缺失、链接、身份变化、EOF、普通 IO 错误与状态变化均不能当作保护拒绝。解锁恢复要求同一身份的三个文件全部恢复可读和写方式打开；`accessRestored` 只代表这三个文件的访问恢复。独立 `controlWriteDeniedObserved` 只在状态前后均不可用且实际 pwrite 返回 -1 / EACCES 或 EPERM 时为 true；缺少调用、0 字节短写、EBADF、EIO、状态改变或单纯 open 拒绝均不能通过。`controlWriteRestored` 需真实写入 1 字节、fsync 成功、回读匹配且可用状态稳定；初始基线也要求该对照完整成功。
 
 采用包含系统休眠时间的 `mach_continuous_time` 截止时间和主线程 250 ms timer；不申请后台延长、不增加 entitlement、不持有跨阶段数据库文件描述符。到期检查先于新的 IO：进程恢复时已超过窗口且未执行锁屏调用，返回 `lockedIoNotExecuted`，不能断言确实发生过暂停；已有锁屏调用但未及时观察恢复，返回 `restorationNotObserved`。App 暂停期间无法保证准时回调，只能在获得下一次执行机会时结束。`protectedDataWillBecomeUnavailableNotification` 发生在实际不可用之前，不将通知本身当作拒绝证据；状态含义依据 [Apple 可用状态说明](https://developer.apple.com/documentation/uikit/uiapplication/isprotecteddataavailable)和[保护不可用通知](https://developer.apple.com/documentation/uikit/uiapplication/protecteddatawillbecomeunavailablenotification)。
 
-UI 可取消本次窗口，原生 timer / 引用在正常、取消、基线失败或超时返回时释放，随后沿用精确目录清理。若保护尚不可用导致清理失败，报告失败并保留已有归属登记；解锁后以同一 session 重开原入口核对和重试，不另建前缀清理。登记仍是临时目录文件，不增加掉电保证。
+UI 可取消本次窗口，原生 timer / 引用在正常、取消、基线失败或超时返回时释放，显式关闭对照与目录描述符并记录两个 close errno；Flutter 对资源关闭失败保留失败状态，随后沿用精确目录清理。原 Rust owner 清理同时覆盖新增对照，thin / FRB 宿主检查均验证该文件随本次目录清理。若保护尚不可用导致清理失败，报告失败并保留已有归属登记；解锁后以同一 session 重开原入口核对和重试，不另建前缀清理。登记仍是临时目录文件，不增加掉电保证。
 
-结果置于原文件报告的 `lockObservation`，含精确 run / bridge；`outcome=observed` 仅表示两阶段均执行，不意味着拒绝与恢复成功。外层 `passed` 仍只判断原四组文件实验与清理，不能代替锁屏判据。所有结果保留 `hardwareProtectionVerified=false`、`acceptance=not-assessed`。原实验随机 DB key 在核心调用后释放，因此本切片不验证解锁后的 SQL / A11 事实恢复；真实 write 拒绝、恢复后原事实保全、跨 PID 与真机 release 日志仍需单独补齐。
+结果置于原文件报告的 `lockObservation`，含精确 run / bridge；`outcome=observed` 仅表示两阶段均执行，不意味着拒绝与恢复成功。外层 `passed` 判断原四组文件实验、观测资源关闭和清理，不能代替锁屏判据。所有结果保留 `hardwareProtectionVerified=false`、`acceptance=not-assessed`。原实验随机 DB key 在核心调用后释放，因此本切片不验证解锁后的 SQL / A11 事实恢复；对照的真实设备 write 拒绝、恢复后原事实保全、跨 PID 与真机 release 日志仍需单独补齐。A11 接入方案见第 7.16 节。
 
-macOS 可运行 `sh scripts/check-ios-file-protection.sh`：现有 Swift 工具链编译真实原生采样器，以临时合成文件验证内容未改写、身份替换与链接拒绝，并用注入状态 / 错误验证基线、拒绝分类、恢复、取消及跨截止时间不补记调用。临时文件与编译缓存在退出时精确清理。此入口不连接设备，不模拟硬件保护；原生目标类型检查与 Flutter 宿主检查也不代替完整 App 构建或移动 UI / 真机执行。
+macOS 可运行 `sh scripts/check-ios-file-protection.sh`：现有 Swift 工具链编译真实原生采样器，以临时合成文件验证 DB / WAL / SHM 内容未改写、身份替换与链接拒绝，对照真实 pwrite / fsync / 回读、已有对照保留及描述符关闭；再用注入状态 / 错误验证拒绝分类、短写 / 同步失败基线拒绝、恢复、取消及跨截止时间不补记调用。临时文件与编译缓存在退出时精确清理。此入口不连接设备，不模拟硬件保护；原生目标类型检查与 Flutter 宿主检查也不代替完整 App 构建或移动 UI / 真机执行。
+
+
+### 7.16 解锁后 A11 前后复核的接入方案（未实现）
+
+第 7.11 节的临时文件实验在调用结束后丢弃随机 DB key，不能在外部保留或公开 key 来补恢复。后续切片复用现有人工 bootstrap 页、`BootstrapService` 与 Rust `Inspect`，使用原独立封装 / 日常保护重新解锁，不新增密码格式、key 缓存、旁路 SQL 或系统保护策略。以下为接入与验证要求，尚不是已具备的 App 流程。
+
+1. **同库基线。** 在当前 selection / bridge 下显式解锁，要求 ready / fixtureComplete，并核对完整 contentDigest、vault / device 身份、8 个修订、7 个 outbox、2 个候选和 1 个删除。随后只保留非秘密基线与本次观测身份；在启动原生观察前清空输入框、已展示恢复材料和可控 secret buffer，不让待执行闭包保留口令 / 恢复文本。
+2. **真实文件范围。** 原生观察绑定同一 bootstrap run，先核对 owner、根 / DB 属性及实际存在的 sidecar。正常关闭后的 WAL / SHM 可能不存在，必须分别记为未覆盖；不创建空 sidecar 或沿用另一随机库的文件证据。第 7.15 节当前要求三个文件齐备，不能直接作为该接入已经可用的证明。独立写对照仅是附属合成文件，观察结束不自动清理原 bootstrap 账库。
+3. **重新取得解锁能力。** 窗口返回且设备恢复可用后，由用户再次输入独立材料或重新完成系统认证，调用原 Inspect。不能复用锁屏前已解包 key，不能把 native `accessRestored` 当作 SQL 成功。原生观察跨后台等待与 UI 的 `_epoch` 取消语义分别处理：后台仍清除敏感输入，晚结果只能归属原 run / bridge，不能覆盖新选择的界面或报告。
+4. **比较和停止。** 重新核对相同 run / bridge / vault / device、完整 contentDigest 与 A11 身份 / 计数；任何差异保留现场并失败，不重新 seed、replay、重建或覆盖原库使摘要一致。实际 IO 未执行、仅属性通过、用户取消、解锁失败和摘要不一致分别报告；重新解锁成功不自动补记锁屏拒绝。
+5. **恢复与证据。** 取消只停止本次等待，原账库与已有恢复路径保留；原有确认清理流程负责最终删除。第一切片可只保留本进程非秘密基线，进程退出后标为基线缺失，不能宣称跨 PID 恢复已比较。诊断继续固定字段投影和有界输出，不能塞入完整 audit / 解锁材料。
+
+接入验证先在宿主对 thin / FRB 的真实核心执行前后 Inspect、错材料保全、完整摘要 / 身份比较、取消后重新解锁以及清理重试；状态机与平台拒绝用替身时须明确标注。再验证后台期间输入清除、晚结果隔离、无 sidecar、缺失基线和新 UI。只有相应目标上的实际操作才可补移动 / 真机矩阵，不将本方案或宿主重开对象当作执行证据。

@@ -1,11 +1,12 @@
 import Darwin
 import Foundation
 
-/// 只检查已归属的合成 DB / WAL / SHM。写方式 open 不截断、不写字节；不代表 SQL 写入测试。
+/// DB / WAL / SHM 只读及写方式 open；实际 pwrite 只作用于排他创建的独立合成对照。
 final class M0FileProtectionProbe {
   private static let names = ["ledger.db", "ledger.db-wal", "ledger.db-shm"]
   private var directory: Int32 = -1
   private var identities: [String: (dev_t, ino_t)] = [:]
+  private var writeControl: M0FileWriteControl?
 
   init(storage: String, run: String) throws {
     guard run.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else {
@@ -35,6 +36,7 @@ final class M0FileProtectionProbe {
         }
         identities[name] = (info.st_dev, info.st_ino)
       }
+      writeControl = try M0FileWriteControl(directory: directory, path: storage + "/m0c-" + run)
     } catch {
       close(directory)
       directory = -1
@@ -42,7 +44,14 @@ final class M0FileProtectionProbe {
     }
   }
 
-  deinit { if directory >= 0 { close(directory) } }
+  deinit { _ = closeResources() }
+
+  func closeResources() -> [String: Int] {
+    let controlError = writeControl?.closeDescriptor() ?? 0
+    let directoryError = directory >= 0 && close(directory) != 0 ? Int(errno) : 0
+    directory = -1
+    return ["writeControlCloseErrno": controlError, "directoryCloseErrno": directoryError]
+  }
 
   private func attempt(_ name: String, writeOpen: Bool) -> [String: Any] {
     let fd = openat(directory, name, (writeOpen ? O_WRONLY : O_RDONLY) | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
@@ -70,8 +79,71 @@ final class M0FileProtectionProbe {
     return result
   }
 
-  func sample() -> [[String: Any]] {
-    Self.names.map { ["name": $0, "read": attempt($0, writeOpen: false), "writeOpen": attempt($0, writeOpen: true)] }
+  func sample() -> [String: Any] {
+    let files = Self.names.map { ["name": $0, "read": attempt($0, writeOpen: false), "writeOpen": attempt($0, writeOpen: true)] }
+    return ["files": files, "writeControl": writeControl!.sample()]
+  }
+}
+
+/// 保留本次合成对照的描述符，使锁屏阶段即使 open 被拒绝，也能实际调用 pwrite。
+private final class M0FileWriteControl {
+  private var descriptor: Int32 = -1
+  private var value: UInt8 = 0x5a
+  private var protection = "unavailableOnHost"
+
+  init(directory: Int32, path: String) throws {
+    let name = "lock-write-control"
+    descriptor = openat(directory, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+    guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    do {
+      let attributes = try FileManager.default.attributesOfItem(atPath: path + "/" + name)
+      let observed = (attributes[.protectionKey] as? FileProtectionType)?.rawValue
+        ?? (attributes[.protectionKey] as? String)
+      protection = observed ?? "unavailableOnHost"
+      #if os(iOS)
+      guard protection == FileProtectionType.complete.rawValue else {
+        throw NSError(domain: "M0FileWriteControl", code: 1)
+      }
+      #endif
+      var info = stat()
+      guard fstat(descriptor, &info) == 0, info.st_uid == geteuid(),
+            info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), info.st_mode & 0o777 == 0o600 else {
+        throw NSError(domain: "M0FileWriteControl", code: 2)
+      }
+    } catch {
+      close(descriptor)
+      descriptor = -1
+      throw error
+    }
+  }
+
+  deinit { _ = closeDescriptor() }
+
+  func closeDescriptor() -> Int {
+    let code = descriptor >= 0 && close(descriptor) != 0 ? Int(errno) : 0
+    descriptor = -1
+    return code
+  }
+
+  func sample() -> [String: Any] {
+    value = value == 0x5a ? 0xa5 : 0x5a
+    // 仅向此排他创建、无账务内容的对照文件写入一个固定字节；绝不写账库页。
+    let written = pwrite(descriptor, &value, 1, 0)
+    let code = written < 0 ? Int(errno) : 0
+    var result: [String: Any] = [
+      "name": "lock-write-control", "fileProtection": protection,
+      "retainedDescriptor": true,
+      "pwrite": ["result": written, "errno": code],
+    ]
+    if written == 1 {
+      let synced = fsync(descriptor)
+      result["fsync"] = ["result": Int(synced), "errno": synced == 0 ? 0 : Int(errno)]
+      var returned: UInt8 = 0
+      let count = pread(descriptor, &returned, 1, 0)
+      result["readback"] = ["result": count, "errno": count < 0 ? Int(errno) : 0,
+                            "matched": count == 1 && returned == value]
+    }
+    return result
   }
 }
 
@@ -85,15 +157,15 @@ final class M0FileProtectionObservation {
 
   private let deadline: TimeInterval
   private let available: () -> Bool
-  private let sample: () -> [[String: Any]]
+  private let sample: () -> [String: Any]
   private var report: [String: Any] = [
     "schema": 1, "hardwareProtectionVerified": false, "acceptance": "not-assessed",
-    "writeScope": "openOnlyNoBytesWritten", "lockedAttempted": false,
+    "writeScope": "ownedControlOnly", "databaseWriteScope": "openOnlyNoBytesWritten", "lockedAttempted": false,
   ]
   private var attempted = false
   private var finished = false
 
-  init(now: TimeInterval, available: @escaping () -> Bool, sample: @escaping () -> [[String: Any]]) {
+  init(now: TimeInterval, available: @escaping () -> Bool, sample: @escaping () -> [String: Any]) {
     deadline = now + 45
     self.available = available
     self.sample = sample
@@ -101,8 +173,10 @@ final class M0FileProtectionObservation {
 
   private func capture() -> [String: Any] {
     let before = available()
-    let files = sample()
-    return ["availableBefore": before, "availableAfter": available(), "files": files]
+    var observation = sample()
+    observation["availableBefore"] = before
+    observation["availableAfter"] = available()
+    return observation
   }
 
   private static func successful(_ observation: [String: Any]) -> Bool {
@@ -134,11 +208,31 @@ final class M0FileProtectionObservation {
     }
   }
 
+  static func writeDenied(_ observation: [String: Any]) -> Bool {
+    guard observation["availableBefore"] as? Bool == false,
+          observation["availableAfter"] as? Bool == false,
+          let control = observation["writeControl"] as? [String: Any],
+          let io = control["pwrite"] as? [String: Any], let code = io["errno"] as? Int else { return false }
+    return io["result"] as? Int == -1 && (code == Int(EACCES) || code == Int(EPERM))
+  }
+
+  private static func writeSucceeded(_ observation: [String: Any]) -> Bool {
+    guard observation["availableBefore"] as? Bool == true,
+          observation["availableAfter"] as? Bool == true,
+          let control = observation["writeControl"] as? [String: Any],
+          let write = control["pwrite"] as? [String: Any],
+          let sync = control["fsync"] as? [String: Any],
+          let readback = control["readback"] as? [String: Any] else { return false }
+    return write["result"] as? Int == 1 && write["errno"] as? Int == 0 &&
+      sync["result"] as? Int == 0 && sync["errno"] as? Int == 0 &&
+      readback["result"] as? Int == 1 && readback["errno"] as? Int == 0 && readback["matched"] as? Bool == true
+  }
+
   func start() -> [String: Any]? {
     guard available() else { return finish("baselineUnavailable") }
     let baseline = capture()
     report["baseline"] = baseline
-    return Self.successful(baseline) ? nil : finish("baselineFailed")
+    return Self.successful(baseline) && Self.writeSucceeded(baseline) ? nil : finish("baselineFailed")
   }
 
   func tick(now: TimeInterval) -> [String: Any]? {
@@ -150,11 +244,13 @@ final class M0FileProtectionObservation {
       report["locked"] = locked
       report["lockedAttempted"] = true
       report["accessDeniedObserved"] = Self.denied(locked)
+      report["controlWriteDeniedObserved"] = Self.writeDenied(locked)
       attempted = true
     } else if attempted && available() {
       let restored = capture()
       report["restored"] = restored
       report["accessRestored"] = Self.successful(restored)
+      report["controlWriteRestored"] = Self.writeSucceeded(restored)
       return finish("observed")
     }
     return nil

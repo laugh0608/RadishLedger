@@ -275,11 +275,23 @@ Future<Map<String, dynamic>> runAppFileBoundary(
         if (observeIosLock && (report['cases'] as List).length == 1) {
           onLockObservation?.call(true);
           try {
+            final observation = await _platform('observeFileProtection', {
+              'run': run,
+            });
             report['lockObservation'] = {
               'bridge': bridge.name,
               'run': run,
-              ...await _platform('observeFileProtection', {'run': run}),
+              ...observation,
             };
+            if (observation['outcome'] != 'unsupportedSimulator') {
+              final resources = observation['resources'];
+              _require(
+                resources is Map &&
+                    resources['writeControlCloseErrno'] == 0 &&
+                    resources['directoryCloseErrno'] == 0,
+                '锁屏观测资源关闭未证实',
+              );
+            }
           } finally {
             onLockObservation?.call(false);
           }
