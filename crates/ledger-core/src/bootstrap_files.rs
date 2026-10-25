@@ -355,6 +355,10 @@ impl Files {
         Ok(generations)
     }
     pub fn cleanup(self) -> Result<()> {
+        self.cleanup_with(|path| fs::remove_file(path))
+    }
+
+    fn cleanup_with(self, mut remove: impl FnMut(&Path) -> std::io::Result<()>) -> Result<()> {
         // 仅显式清理已核对 owner 的本次平面实验目录，不递归跟随任何链接。
         let paths = fs::read_dir(&self.path)
             .map_err(io_error)?
@@ -363,12 +367,19 @@ impl Files {
         for path in &paths {
             regular(path)?;
         }
-        fs::remove_file(self.path.join("owner")).map_err(io_error)?;
         for path in paths {
-            if path.file_name() != Some(std::ffi::OsStr::new("owner")) {
-                fs::remove_file(path).map_err(io_error)?;
+            if !matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("owner" | "lock")
+            ) {
+                remove(&path).map_err(io_error)?;
             }
         }
+        // 载荷删除失败时保留原 owner 和锁文件，原身份可再次取得锁后继续精确清理。
+        // 最终标记 / 目录移除或目录同步失败仍须报错，不能把残留当成清理成功。
+        // 先撤销归属再移除锁，避免其他调用在 owner 尚存时新建另一把锁进入。
+        remove(&self.path.join("owner")).map_err(io_error)?;
+        remove(&self.path.join("lock")).map_err(io_error)?;
         fs::remove_dir(&self.path).map_err(io_error)?;
         sync(
             self.path
@@ -381,6 +392,35 @@ impl Files {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn payload_cleanup_failure_preserves_ownership_and_allows_exact_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let run = crate::random_id().unwrap();
+        let files = Files::acquire(root.path(), &run, true).unwrap();
+        files.publish("payload.json", b"synthetic", false).unwrap();
+        let path = files.path.clone();
+        let error = files
+            .cleanup_with(|entry| {
+                if entry.file_name() == Some(std::ffi::OsStr::new("payload.json")) {
+                    return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+                }
+                fs::remove_file(entry)
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "bootstrap_io");
+        assert_eq!(
+            read(&path.join("owner"), 128).unwrap(),
+            format!("{OWNER}{run}\n").as_bytes()
+        );
+        assert!(path.join("lock").is_file());
+        assert_eq!(read(&path.join("payload.json"), 128).unwrap(), b"synthetic");
+        Files::acquire(root.path(), &run, false)
+            .unwrap()
+            .cleanup()
+            .unwrap();
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn exclusive_ownership_and_failed_publication_preserve_files() {

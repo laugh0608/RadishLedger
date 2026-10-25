@@ -392,6 +392,45 @@ mod tests {
     use crate::bootstrap_files::Files;
 
     #[test]
+    fn configuration_error_closes_connection_before_unregistering_named_vfs() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("ledger.db");
+        let key = DbKey::random().unwrap();
+        drop(Store::create(&path, &key).unwrap());
+        let before = configuration(&Connection::open_in_memory().unwrap());
+        let name = format!("radishledger-config-error-{}", crate::random_id().unwrap());
+        let lookup = std::ffi::CString::new(name.clone()).unwrap();
+        let result = (|| -> Result<()> {
+            let observer = Registration::named(&name);
+            let connection = Connection::open_with_flags_and_vfs(
+                &path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+                observer.name(),
+            )
+            .map_err(db_error)?;
+            let wrong_key = DbKey::random()?;
+            let _store = Store::configure(connection, &wrong_key, false)?;
+            Ok(())
+        })();
+        assert_eq!(result.unwrap_err().code, "storage_error");
+        // SAFETY: 名称由本测试创建；只检查注册表，不解引用返回指针。
+        assert!(unsafe { ffi::sqlite3_vfs_find(lookup.as_ptr()) }.is_null());
+        assert_eq!(
+            configuration(&Connection::open_in_memory().unwrap()),
+            before
+        );
+        assert_eq!(
+            Store::open(&path, &key)
+                .unwrap()
+                .snapshot(&[])
+                .unwrap()
+                .projection
+                .net_assets_minor,
+            "0"
+        );
+    }
+
+    #[test]
     fn named_app_observer_keeps_default_vfs_and_exact_cleanup() {
         let root = tempfile::tempdir().unwrap();
         for file_control in [false, true] {

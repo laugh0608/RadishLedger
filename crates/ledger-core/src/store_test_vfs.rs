@@ -114,6 +114,7 @@ pub struct FileObservation {
     pub disk_contains_marker: bool,
     pub scan_code: i32,
     pub closed: bool,
+    pub close_code: Option<i32>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -231,8 +232,9 @@ impl Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        // 防止注销后仍有回调访问 context；失败路径由子进程退出回收。
-        assert!(self.report().files.iter().all(|f| f.closed));
+        // xClose 即使报错也已释放 shim 的文件内存，不能再按“仍存活”触发二次 panic。
+        // closed 保留成功判据；close_code 单独证明回调已结束，失败仍会阻断验证。
+        assert!(self.report().files.iter().all(|f| f.close_code.is_some()));
         // SAFETY: 本实例保持 Box 地址稳定，全部文件已关闭，回收前恢复原默认 VFS。
         unsafe {
             assert_eq!(ffi::sqlite3_vfs_unregister(&mut *self.vfs), ffi::SQLITE_OK);
@@ -341,6 +343,7 @@ unsafe extern "C" fn open(
             disk_contains_marker: false,
             scan_code: ffi::SQLITE_OK,
             closed: false,
+            close_code: None,
         });
         file.cast::<File>().write(File {
             base: ffi::sqlite3_file { pMethods: &METHODS },
@@ -476,6 +479,7 @@ unsafe extern "C" fn close(file: *mut ffi::sqlite3_file) -> c_int {
         observed.disk_contains_marker = found;
         observed.scan_code = scan_code;
         observed.closed = code == ffi::SQLITE_OK;
+        observed.close_code = Some(code);
         code
     }
 }
@@ -638,5 +642,100 @@ pub fn sqlite_version() -> String {
         CStr::from_ptr(ffi::sqlite3_libversion())
             .to_string_lossy()
             .into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 包住真实空文件，只将关闭返回值改为 IOERR_CLOSE；资源仍由原 xClose 释放。
+    #[repr(C)]
+    struct FailedClose {
+        base: ffi::sqlite3_file,
+        real: *mut ffi::sqlite3_file,
+    }
+
+    unsafe extern "C" fn empty_size(_: *mut ffi::sqlite3_file, size: *mut i64) -> c_int {
+        // SAFETY: 测试只包装刚打开的空文件；SQLite 提供有效输出指针。
+        unsafe { size.write(0) };
+        ffi::SQLITE_OK
+    }
+
+    unsafe extern "C" fn failed_close(file: *mut ffi::sqlite3_file) -> c_int {
+        // SAFETY: 真实文件由测试转移给本回调，原 VFS 关闭后释放一次。
+        unsafe {
+            let real = (*file.cast::<FailedClose>()).real;
+            let code = required((*(*real).pMethods).xClose)(real);
+            ffi::sqlite3_free(real.cast());
+            if code == ffi::SQLITE_OK {
+                ffi::SQLITE_IOERR_CLOSE
+            } else {
+                code
+            }
+        }
+    }
+
+    #[test]
+    fn close_error_remains_failed_but_allows_unwind_and_unregister() {
+        let root = tempfile::tempdir().unwrap();
+        let path = CString::new(root.path().join("empty.db").to_str().unwrap()).unwrap();
+        let name = format!("radishledger-close-error-{}", crate::random_id().unwrap());
+        let lookup = CString::new(name.clone()).unwrap();
+        let failed = std::panic::catch_unwind(|| {
+            let mut observer = Registration::named(&name);
+            let mut methods = METHODS;
+            methods.xClose = Some(failed_close);
+            methods.xFileSize = Some(empty_size);
+            // SAFETY: 按两个结构的实际大小分配，方法表存活至同步 close 返回。
+            unsafe {
+                let file = ffi::sqlite3_malloc64(size_of::<File>() as u64).cast::<File>();
+                assert!(!file.is_null());
+                let mut flags = 0;
+                assert_eq!(
+                    open(
+                        &mut *observer.vfs,
+                        path.as_ptr(),
+                        file.cast(),
+                        ffi::SQLITE_OPEN_MAIN_DB
+                            | ffi::SQLITE_OPEN_READWRITE
+                            | ffi::SQLITE_OPEN_CREATE,
+                        &mut flags
+                    ),
+                    ffi::SQLITE_OK
+                );
+                let proxy =
+                    ffi::sqlite3_malloc64(size_of::<FailedClose>() as u64).cast::<FailedClose>();
+                assert!(!proxy.is_null());
+                proxy.write(FailedClose {
+                    base: ffi::sqlite3_file { pMethods: &methods },
+                    real: (*file).real,
+                });
+                (*file).real = proxy.cast();
+                let code = close(file.cast());
+                ffi::sqlite3_free(file.cast());
+                assert_eq!(code, ffi::SQLITE_IOERR_CLOSE);
+            }
+            let report = observer.report();
+            assert_eq!(report.files.len(), 1);
+            assert_eq!(report.files[0].close_code, Some(ffi::SQLITE_IOERR_CLOSE));
+            // 模拟验收失败后 unwind；旧 Drop 在这里再次 panic 并终止进程。
+            assert!(report.files[0].closed, "expected close failure");
+        });
+        let panic = failed.expect_err("关闭错误必须阻断验收");
+        let message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+        assert_eq!(message, Some("expected close failure"));
+        // SAFETY: 查询已注销的名称，不解引用返回指针。
+        assert!(unsafe { ffi::sqlite3_vfs_find(lookup.as_ptr()) }.is_null());
+        let connection = rusqlite::Connection::open(root.path().join("next.db")).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT 1", [], |r| r.get::<_, i32>(0))
+                .unwrap(),
+            1
+        );
     }
 }
