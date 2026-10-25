@@ -4419,7 +4419,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-tokio 1.53.2 — https://crates.io/crates/tokio/1.53.2
+tokio 1.53.3 — https://crates.io/crates/tokio/1.53.3
 
 MIT License
 

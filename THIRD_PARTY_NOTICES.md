@@ -11,6 +11,7 @@
 | SQLCipher / SQLite | `4.14.0 community` / `3.51.3`，由 libsqlite3-sys 的固定 source bundle 引入；[SQLCipher](https://github.com/sqlcipher/sqlcipher) | SQLCipher BSD-3-Clause，SQLite public domain；内含 SQLCipher 原始许可 |
 | OpenSSL | `3.6.3`，openssl-src `300.6.1+3.6.3`；[OpenSSL](https://github.com/openssl/openssl) | Apache-2.0；Android / Linux 的静态密码底层，Apple 使用系统 CommonCrypto |
 | flutter_rust_bridge / generator | `2.13.0`；[FRB](https://github.com/fzyzcjy/flutter_rust_bridge) | MIT，Copyright 2021 fzyzcjy；Rust 与 Dart runtime 共用上游同版许可，生成代码保留标记 |
+| Tokio（FRB 传递依赖） | `1.53.3`；[Tokio](https://github.com/tokio-rs/tokio)、[crate](https://crates.io/crates/tokio/1.53.3) | MIT；异步运行时，按 RUSTSEC-2026-0386 升级；许可正文未变，全文由 native notices 保留 |
 | serde / serde_json | `1.0.228` / `1.0.150`；[serde](https://github.com/serde-rs/serde)、[serde_json](https://github.com/serde-rs/json) | MIT OR Apache-2.0；结构化输入 / 输出，不形成第二份金额真相 |
 | getrandom / zeroize / tempfile | `0.3.4` / `1.8.2` / `3.27.0`；[getrandom](https://github.com/rust-random/getrandom)、[zeroize](https://github.com/RustCrypto/utils)、[tempfile](https://github.com/Stebalien/tempfile) | MIT OR Apache-2.0；合成身份、内存钥和隔离临时目录 |
 | chacha20poly1305 | `0.11.0`；[RustCrypto AEAD](https://github.com/RustCrypto/AEADs) | MIT OR Apache-2.0；XChaCha20-Poly1305 认证封装，仅实验格式 |
