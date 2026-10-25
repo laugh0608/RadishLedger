@@ -95,6 +95,10 @@ M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `loc
 
 `bootstrap_experiment_test.dart` 经两种真实 bridge / 核心验证人工实验管理：精确项缺失后的 A11 独立恢复、重建、全部候选清理登记、失败 / 取消重试、核心目录删除后的继续清理与无关对象保留；平台系统保护为内存替身。`bootstrap_widget_test.dart` 覆盖确认、后台取消等待、清理失败后重开页及清理成功后切换 bridge，宿主页面重建不算设备重启。正常测试发现入口包含这两份测试；操作和登记边界见[人工实验流程](../docs/development/mobile-core-prototype.md#713-人工实验页的精确失效清理与候选切换)。
 
+[collect-bootstrap-evidence.py](collect-bootstrap-evidence.py) 只离线重组人工页显式输出的本批合成分片，不启动 adb / simctl、不安装或连接设备。输入 / 输出限本仓库 `local-evidence/m0-c`，已保存的普通 UTF-8 输入上限 2 MiB、报告上限 96 KiB；缺片、冲突、身份不符或输出已存在均拒绝，错误不回显输入内容。它不执行 B / C 验收，也不把任意日志清洗为可公开材料。字段来源、批次开关、精确命令和局限见[有界非秘密报告](../docs/development/mobile-core-prototype.md#714-人工实验的有界非秘密报告)。
+
+`bootstrap_evidence_test.dart` 测试报告字段排除、记录边界、默认禁止输出、停止等待 / 晚成功、失败重试及 Dart → Python 实际往返，后者使用 PATH 中已有 Python 标准库。`scripts/tests/test_bootstrap_evidence.py` 的重组 / 路径 / 文件边界回归由仓库检查自动发现；两组均不读取真实设备日志。共用分片函数维持原 App 文件报告的格式，并由宿主测试核对。
+
 Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程中的测试 VFS 在实际 WAL 提交、DELETE 提交和 checkpoint 的写入 / 同步位置注入故障，SIGKILL 后由未注入的普通入口恢复并重试；另观察 TEMP 表、排序 / 索引、物化查询、语句回滚、VACUUM、super-journal 和 SHM。MEMORY 策略与 FILE 正向对照分别断言，匿名临时文件在关闭前扫描。可通过 `M0_PAGER_EVIDENCE_DIR` 保存忽略目录内的有界 JSON 证据；子进程入口标记 ignored，由两个父测试实际调度，不能作为未运行或单独通过的业务测试计数。完整判据、清理和适用边界见[DB pager 与临时文件](../docs/development/mobile-core-prototype.md#79-db-pager-故障与临时文件边界)。
 
 

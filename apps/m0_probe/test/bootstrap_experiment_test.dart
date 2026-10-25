@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:radishledger_probe/src/bootstrap.dart';
+import 'package:radishledger_probe/src/bootstrap_evidence.dart';
 import 'package:radishledger_probe/src/bootstrap_selection.dart';
 import 'package:radishledger_probe/src/probe.dart';
 
@@ -153,6 +154,19 @@ void main() {
             'securityLevelCode': '1',
             'hardwareVerified': false,
           });
+          final evidence = BootstrapEvidence();
+          evidence
+              .begin(BootstrapAction.establishRecovery, run, bridge)
+              .success(established.report);
+          final summary = jsonDecode(
+            evidence.snapshot().text,
+          )['observations'][0]['summary'];
+          expect(summary['contentDigest'], baseline['contentDigest']);
+          expect(summary['vault'], baseline['vault']);
+          expect(summary['operationCount'], 7);
+          expect(summary['deletedCount'], 1);
+          expect(summary['candidateCount'], 2);
+          expect(summary.containsKey('audit'), isFalse);
           established.clear();
           final active = await service.activeProtection();
           await expectLater(

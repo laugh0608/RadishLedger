@@ -141,6 +141,7 @@ API 24 仍只是 Android 编译候选；当前系统保护 adapter 在 API 30 �
 | [iOS M0Protection](../../apps/m0_probe/ios/Runner/M0Protection.swift)、[M0FileBoundary](../../apps/m0_probe/ios/Runner/M0FileBoundary.swift) | Keychain 精确 service / account；storage 创建时请求 Complete；读取根、子目录及实际文件属性 | 需分别实测首次创建与已有目录重开、新 DB / WAL / SHM 属性，以及锁屏期间实际读写拒绝、解锁后原事实恢复。现有代码没有锁屏读写实验，不能只凭属性值通过 C02 / C09 |
 | [file_boundary_main.dart](../../apps/m0_probe/lib/file_boundary_main.dart)、[file_boundary.dart](../../apps/m0_probe/lib/src/file_boundary.dart) | App 内运行双 bridge × MEMORY / FILE、独立 A11 计数、属性验证与精确目录清理；真机属性缺失 / 较弱时拒绝，硬件结论始终未验证 | 当前实验自动结束并清理，没有等待锁屏的操作阶段；iOS 报告读取仍由模拟器控制器完成。需确定真机可用的有界非秘密报告获取方式与新 PID 证明；临时目录 journal 不作为设备重启后的持久归属保证 |
 | [Android 构建配置](../../apps/m0_probe/android/app/build.gradle.kts)、[iOS 工程](../../apps/m0_probe/ios/Runner.xcodeproj/project.pbxproj) | Android release 使用项目隔离测试签名；iOS 已有测试 bundle 标识和 native 构建链 | Android 核验现有包签名是否冲突；iOS 明确 team / profile 后再审阅最终签名包 entitlement 与 provisioning。native 构建成功不表示签名、安装或容器权限已验证 |
+| [人工非秘密报告](mobile-core-prototype.md#714-人工实验的有界非秘密报告) | 固定字段投影、最近 64 条观测、省略计数、失败与晚成功区分；有效批次下显式输出不可变快照；本地收集器检查完整分片与外层证据边界 | 宿主已验证 Dart / Python 往返，仍未取得真机 release 日志与跨 PID 证据；不记录完整账务 / 操作载荷，不鉴别报告来源，不能把重组成功当作验收 |
 
 入口补齐按独立恢复、精确清理、非秘密证据三项形成完整切片；不提前建设通用远程控制、归档或新密码策略。设备条件尚未明确时可进行上述代码核对与方案准备，但不将待实现入口列成可执行命令。没有设备的新实现即使宿主测试通过，仍标为真机未验证。
 

@@ -530,3 +530,35 @@ python3 scripts/check-mobile-app-files.py --platform ios --device <existing-ios-
 该登记位于 App 私有根而非临时目录；发布采用文件 flush / rename，但没有新增目录同步或掉电保证。遗留 `.pending` 不自动覆盖、丢弃或当作已确认计划；需按精确身份核对现场。它只支持本机人工合成实验的归属恢复，不是生产数据删除协议、备份归档或跨设备恢复格式。
 
 宿主验证入口为 `flutter test --no-pub test/bootstrap_experiment_test.dart test/bootstrap_widget_test.dart test/bootstrap_platform_test.dart`（在 `apps/m0_probe`）。两 bridge 使用实际 Rust / SQLCipher 检查 A11 完整事实和身份、错材料保全、精确项缺失后的独立恢复、重建与清理重试；系统认证与密钥存储为内存替身。widget 测试覆盖确认取消、后台撤销等待、核心清理失败后重开页面及清理后切换 bridge。宿主对象 / 页面重建不称为设备新 PID 或设备重启；实际 UI 视觉、系统认证、两端 release 安装与文件保护仍需对应目标证据。
+
+
+### 7.14 人工实验的有界非秘密报告
+
+人工页的“查看本次合成诊断”只查看当前页面实例保留的观测。默认不写文件、不输出诊断分片；打开诊断前清除输入框和已展示的恢复材料。只有构建时设置有效的 `--dart-define=M0C_EVIDENCE_SESSION=<32位小写十六进制批次>`，弹窗才允许显式“输出本次合成报告”。缺失 / 非法批次仍可查看，但原值不进入报告，核心操作不受影响。该参数不启用 FIFO、调试权限、设备连接、分享或网络上传。
+
+[bootstrap_evidence.dart](../../apps/m0_probe/lib/src/bootstrap_evidence.dart) 是报告的字段投影来源，报告类型的构造器私有，不能将任意 Map 作为输出快照：
+
+| 字段范围 | 保留与限制 |
+| --- | --- |
+| 报告身份 | schema 1、批次、每次打开弹窗新生成的 reportId、实际 App PID / OS 与 Flutter build mode；Git、包指纹、签名和设备型号仍需在单批操作单外部记录 |
+| 能力 | 仅 supported / deviceSecure 布尔、API 整数、已知 environment 与受限平台错误码；缺少 environment 就是未知，不能从 Android OS 名推定真机 |
+| 操作结果 | 固定动作名、run / bridge、进程内递增序号和总耗时；inProgress / succeeded / failed / unknown / cancelledBeforeAction 分开，waitStopped 单独记录。停止等待后收到成功保留 succeeded + waitStopped=true，不宣称核心未提交 |
+| 核心摘要 | 格式校验后的合成 vault / device / generation、完整内容摘要、ready / fixtureComplete / cleaned 等布尔、修订 / outbox / 候选 / 删除计数与原始安全等级代码；不包含完整 audit、流水、金额、说明或操作载荷 |
+| 失败 | 固定错误代码集合与受限整数 / 已知平台异常类名；未知错误分类记 unrecognized_error，非结构化异常记 unknown，不输出原异常字符串、路径、平台 message 或 details |
+| 证据边界 | hardwareVerified 恒为 false，acceptance 恒为 not-assessed；耗时包含整次 UI 调用，不代替 KDF 专项测量。每实例最多保留最近 64 条操作，omittedObservations 显式记录省略量；重开页面 / 进程不恢复旧报告，不保证崩溃前观测已保存 |
+
+报告在弹窗打开时成为不可变快照。输出失败明确提示，可重试同一快照；重新打开弹窗生成新 reportId，不能把两份快照混成一份。每份 UTF-8 报告上限 96 KiB，[共用分片入口](../../apps/m0_probe/lib/src/probe_report.dart)沿用第 7.11 节的 700 字符 base64 分片和有界间隔。人工页标记为 `RLM0_BOOTSTRAP:<session>:<reportId>:<index>:<count>:<data>`；原 `RLM0_APP_BOUNDARY` 格式不变。传输前校验全部分片，不为超限报告静默截断。
+
+在已确认设备 / 安装 / 日志范围后，仅捕获指定 App PID 和批次的合成标记到本地证据目录，不采集整机日志。当前没有新增真机连接或日志抓取控制器；Android / iOS release 日志是否可取、是否丢片及跨 PID 身份仍需实际目标验证。缺少设备时不能把下面的离线重组命令当作设备采集已完成：
+
+```sh
+# 仓库根；输入必须是此前明确范围内保存的本批合成标记文件。
+python3 -B scripts/collect-bootstrap-evidence.py \
+  --input local-evidence/m0-c/<batch>/bootstrap-filtered.log \
+  --output local-evidence/m0-c/<batch>/bootstrap-report.json \
+  --session <session> --report-id <report-id>
+```
+
+[collect-bootstrap-evidence.py](../../scripts/collect-bootstrap-evidence.py) 只接受本仓库 M0-C 忽略证据目录内已保存的普通 UTF-8 文件（上限 2 MiB），不启动任何设备命令。乱序与相同分片重试可以重组；目标标记畸形、缺片、冲突、超限、坏 base64 / JSON、重复 JSON 键、身份 / 版本或固定证据边界不符均失败，不覆盖既有输出。错误不回显原始输入；IO 错误保留 errno。输出成功只说明传输与外层报告边界满足要求，不验证 App 来源、不认证内容、不清洗任意输入为公开材料，也不根据 succeeded / 摘要 / 计数判断 B / C 验收。原始报告和过滤日志仍留在本地忽略目录，不随源码提交。
+
+`bootstrap_evidence_test.dart` 验证字段排除、未知失败、停止等待与晚成功、记录上限、默认禁止输出、传输失败重试、原文件报告格式，以及 Dart 实际输出到 Python 收集器的往返；`bootstrap_experiment_test.dart` 另以两 bridge 的真实核心结果核对摘要投影。`scripts/tests/test_bootstrap_evidence.py` 验证缺片 / 冲突 / 畸形 / 大小 / 身份 / 路径 / 非普通文件 / 输出不覆盖。上述均为宿主证据；报告不是完整审计归档、设备签名证明或真机结论。

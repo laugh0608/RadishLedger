@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'bootstrap.dart';
 import 'native.dart';
 import 'probe.dart';
+import 'probe_report.dart';
 import 'validation.dart';
 
 void _require(bool condition, String reason) {
@@ -327,21 +328,16 @@ Future<Map<String, dynamic>> runAppFileBoundary(String session) async {
 /// Android release 不开放 run-as 或导出组件；仅此专用入口输出有界合成诊断。
 Future<void> publishAppBoundaryReport(Map<String, dynamic> report) async {
   final bytes = utf8.encode(jsonEncode(report));
-  _require(bytes.length <= 96 * 1024, '合成报告超出有界传输上限');
+  final chunks = probeReportChunks(bytes);
   final session = report['session'] as String;
   if (Platform.isIOS) {
     await File(
       '${Directory.systemTemp.path}/m0-app-boundary-$session.json',
     ).writeAsBytes(bytes, flush: true);
   }
-  final encoded = base64Encode(bytes);
-  const size = 700;
-  final count = (encoded.length + size - 1) ~/ size;
-  for (var i = 0; i < count; i++) {
-    final end = min((i + 1) * size, encoded.length);
-    debugPrintSynchronously(
-      'RLM0_APP_BOUNDARY:$session:$i:$count:${encoded.substring(i * size, end)}',
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 3));
-  }
+  await emitProbeReport(
+    'RLM0_APP_BOUNDARY:$session',
+    chunks,
+    debugPrintSynchronously,
+  );
 }

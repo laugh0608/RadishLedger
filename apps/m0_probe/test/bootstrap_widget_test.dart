@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -189,6 +190,29 @@ void main() {
       expect(find.byKey(const ValueKey('m0c-issued')), findsNothing);
       expect(output.every((b) => b == 0), isTrue);
       expect(tester.widget<FilledButton>(unlock).onPressed, isNotNull);
+      await tester.tap(find.byKey(const ValueKey('m0c-evidence')));
+      await tester.pumpAndSettle();
+      final text = tester
+          .widget<SelectableText>(
+            find.byKey(const ValueKey('m0c-evidence-json')),
+          )
+          .data!;
+      final observations = jsonDecode(text)['observations'] as List;
+      final operation = observations.singleWhere(
+        (record) => record['action'] == 'unlockPassword',
+      );
+      expect(operation['waitStopped'], isTrue);
+      expect(operation['outcome'], 'succeeded');
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const ValueKey('m0c-publish-evidence')),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.text('关闭'));
+      await tester.pumpAndSettle();
     },
   );
 
@@ -222,6 +246,44 @@ void main() {
     expect(find.byKey(const ValueKey('m0c-error')), findsNothing);
     expect(platform.cancelled, greaterThan(0));
   });
+
+  testWidgets(
+    'diagnostic view hides issued material and never includes input or extra result fields',
+    (tester) async {
+      final platform = TestProtection();
+      final service = ControlledService(platform);
+      await mount(tester, service);
+      final password = find.byKey(const ValueKey('m0c-password'));
+      const input = 'synthetic-input-not-for-evidence';
+      await tester.enterText(password, input);
+      final unlock = find.byKey(const ValueKey('m0c-unlock-password'));
+      await tester.ensureVisible(unlock);
+      await tester.tap(unlock);
+      final issued = List.filled(80, 'S').join();
+      service.pending.complete(
+        BootstrapResult({
+          'ok': true,
+          'report': {'ready': true, 'secret': input},
+        }, Uint8List.fromList(utf8.encode(issued))),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('m0c-issued')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('m0c-evidence')));
+      await tester.pumpAndSettle();
+      final text = tester
+          .widget<SelectableText>(
+            find.byKey(const ValueKey('m0c-evidence-json')),
+          )
+          .data!;
+      expect(text, isNot(contains(input)));
+      expect(text, isNot(contains(issued)));
+      expect(jsonDecode(text)['observations'][0]['summary'], {'ready': true});
+      await tester.tap(find.text('关闭'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('m0c-issued')), findsNothing);
+      expect(tester.widget<TextField>(password).controller!.text, isEmpty);
+    },
+  );
 
   testWidgets(
     'cleanup cancel preserves data; failed cleanup survives page restart and permits bridge switch only after success',
