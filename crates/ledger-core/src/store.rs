@@ -46,6 +46,18 @@ fn db_error(error: rusqlite::Error) -> CoreError {
     result
 }
 
+fn read_cipher_version(connection: &Connection) -> Result<String> {
+    // SQLCipher 扩展不在 SQLite pragma_list 中；rusqlite 0.41 的名称校验会拒绝它。
+    // 使用固定 SQL 直接读取，缺失、错误或空结果仍拒绝，不回退到普通 SQLite。
+    let version: String = connection
+        .query_row("PRAGMA cipher_version", [], |row| row.get(0))
+        .map_err(db_error)?;
+    if version.is_empty() {
+        return Err(CoreError::new("cipher_unavailable", "实际构建未启用加密库"));
+    }
+    Ok(version)
+}
+
 pub struct Store {
     connection: Connection,
 }
@@ -166,12 +178,7 @@ impl Store {
         if status != rusqlite::ffi::SQLITE_OK {
             return Err(CoreError::new("key_failed", "本机密钥不可用"));
         }
-        let cipher: String = connection
-            .pragma_query_value(None, "cipher_version", |row| row.get(0))
-            .map_err(db_error)?;
-        if cipher.is_empty() {
-            return Err(CoreError::new("cipher_unavailable", "实际构建未启用加密库"));
-        }
+        read_cipher_version(&connection)?;
         connection
             .execute_batch(
                 "PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY;",
@@ -312,9 +319,7 @@ impl Store {
     }
 
     pub fn cipher_version(&self) -> Result<String> {
-        self.connection
-            .pragma_query_value(None, "cipher_version", |row| row.get(0))
-            .map_err(db_error)
+        read_cipher_version(&self.connection)
     }
 
     pub(crate) fn verify_atomic_rejection(&mut self, write: &Write) -> Result<()> {

@@ -3,6 +3,34 @@ use super::*;
 
 const MARKER: &str = "RadishLedger synthetic plaintext boundary marker 2026-10-19";
 
+#[test]
+fn sqlcipher_build_uses_expected_native_provider() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::create(
+        &directory.path().join("provider.db"),
+        &DbKey::random().unwrap(),
+    )
+    .unwrap();
+    let provider: String = store
+        .connection
+        .query_row("PRAGMA cipher_provider", [], |row| row.get(0))
+        .unwrap();
+    let provider_version: String = store
+        .connection
+        .query_row("PRAGMA cipher_provider_version", [], |row| row.get(0))
+        .unwrap();
+    assert!(store.cipher_version().unwrap().starts_with("4.19.0"));
+    assert_eq!(rusqlite::version(), "3.53.4");
+    #[cfg(target_vendor = "apple")]
+    assert_eq!(provider, "commoncrypto");
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        assert_eq!(provider, "openssl");
+        assert!(provider_version.starts_with("OpenSSL 3.6.3 "));
+    }
+    eprintln!("SQLCipher 4.19.0 / SQLite 3.53.4: {provider} {provider_version}");
+}
+
 fn contains_marker(path: &Path, minimum_size: usize) -> bool {
     let bytes = std::fs::read(path).unwrap();
     assert!(bytes.len() > minimum_size, "必须实际生成非空文件");

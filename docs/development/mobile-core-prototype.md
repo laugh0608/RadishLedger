@@ -52,7 +52,7 @@ FRB runtime / generator 均为 `2.13.0`，Rust 输入只有 `crate::api`；生�
 | Android | arm64；API `24` 构建候选、compile SDK `36`、Build-Tools `36.0.0`（AGP 默认）、NDK `28.2.13676358`；JDK `17` |
 | Gradle / AGP | Gradle `9.1.0` bin 发行包及官方 SHA-256；AGP `9.0.1`，沿用 Flutter 模板的兼容开关 |
 | iOS | arm64 真机与 arm64 Simulator；App deployment target `15.0`；每批记录 `xcrun` 实际选择的 Xcode / SDK，历史构建版本不代表当前环境 |
-| 存储 | rusqlite `0.40.2`、libsqlite3-sys `0.38.2`，内含 SQLCipher `4.14.0 community` / SQLite `3.51.3` |
+| 存储 | rusqlite `0.41.0`、libsqlite3-sys `0.39.1`、sqlcipher-src `419.0.6`，内含 SQLCipher `4.19.0 community` / SQLite `3.53.4` |
 | 密码底层 | Apple 使用 CommonCrypto；Android / Linux 验证宿主静态构建 OpenSSL `3.6.3`，不依赖开发机动态 libcrypto |
 | Dart code assets | hooks `1.0.2`、code_assets `1.0.0`、ffi `2.2.0`；`pubspec.lock` 固定传递依赖 |
 
@@ -61,6 +61,32 @@ FRB runtime / generator 均为 `2.13.0`，Rust 输入只有 `crate::api`；生�
 两项兼容约束留在正式来源：`libc = 0.2.189` 是 FRB 所含 backtrace 在 iOS 的兼容候选，`0.2.190` 的 dyld 声明限制已实测阻断 iOS；Rust release 暂不 strip，避免 Apple 27 SDK 下 [Rust / LLVM LINKEDIT 对齐问题](https://github.com/rust-lang/rust/issues/157750)。解除约束需重新通过宿主和移动目标的真实加载，不能只看编译成功。
 
 模板来源、第三方许可与归属见 [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md)。所有依赖升级、最低系统冻结和 bridge 采用结论另按实际证据评审，本篇不替代 ADR。
+
+### 3.1 原生依赖修补候选与验证范围
+
+原生源码包可能改变数据库版本、构建选项、密码提供方和许可材料，不能仅按 Cargo 包级公告判断修补是否完成。2026-10-25 评审的 SQLCipher 链已获项目所有者确认并接入，OpenSSL 另案；实际验证状态以[当前进度](../status/current.md)为准。
+
+| 项目 | 已核对的候选 | 影响与采用条件 |
+| --- | --- | --- |
+| SQLCipher 绑定链 | rusqlite `0.41.0` → libsqlite3-sys `0.39.1` → sqlcipher-src `419.0.6+sqlcipher-4.19.0-sqlite-3.53.4-libtomcrypt-1.18.2` | SQLCipher `4.19.0` / SQLite `3.53.4`；新增独立源码包，不能当作原包内仅替换一个 C 文件。发布包分别声明 Rust 1.89.0 / 1.88.0 / 1.81，既有 1.96.0 满足 |
+| 密码提供方 | Apple CommonCrypto 与 Android / Linux vendored OpenSSL | 保持提供方及现有 feature 选择，不启用 libtomcrypt、系统动态 libcrypto、SQLCipher 5 beta 或 OpenSSL 4；源包包含 libtomcrypt 不等于目标已编译它 |
+| OpenSSL | 官方 `3.6.5` 有安全修复；crates.io 的 openssl-src 300 系列最新为 `300.6.1+3.6.3` | openssl-sys `0.9.117` 要求 openssl-src `^300.2.0`，不能直接选择已发布的 `400.0.2+4.0.3`。独立构建 3.6.5、维护 fork / patch 或迁移 4.x 都改变供应 / 兼容边界，需另评审，不能修改缓存绕过 |
+
+来源为 [SQLCipher 4.19.0 公告](https://www.zetetic.net/blog/2026/09/08/sqlcipher-4.19.0-release/)、[rusqlite 0.41.0 发布](https://github.com/rusqlite/rusqlite/releases/tag/v0.41.0)、[sqlcipher-src](https://github.com/LucaCappelletti94/sqlcipher-src)、[OpenSSL 3.6 发行记录](https://openssl-library.org/news/openssl-3.6-notes/)及 crates.io 发布索引 / 包。rusqlite 发布说明中的 4.17.0 条目不是实际源包版本的充分证据；需核对锁定链、源码常量与运行报告。源包 SHA-256 匹配 registry 不等于已经独立复现源码生成或验证所有上游签名。
+
+新 sqlcipher-src 由独立维护者发布，声明 `MIT AND BSD-3-Clause AND blessing AND WTFPL`；包装代码 MIT、SQLCipher BSD-3-Clause、SQLite public domain，内含 libtomcrypt 许可提供 public domain / WTFPL 二选一。已按现有保守许可并集保留随包材料，并明确 Android / iOS 不编译 libtomcrypt。notices 生成器已改为从 sqlcipher-src 收集嵌套许可及 sqlite3.h 的完整首段声明，缺失、空文件或格式漂移明确失败；对应回归随仓库检查运行。新增源码供应者与许可材料已按根协作规则确认，不改变项目本身许可证。
+
+实施范围：精确调整两端 rusqlite 声明、锁定上述绑定链，核对完整依赖图；更新许可生成入口及必要契约回归；仅适配实际受影响的 API。保持密钥、KDF、schema、同步 / 备份格式与 bridge 契约不变。rusqlite 0.41 的 pragma helper 查询 SQLite pragma_list，不能识别 SQLCipher 的 cipher_version；Store 与观测路径统一使用固定 `PRAGMA cipher_version` 查询，缺失 / 空值 / 执行错误继续拒绝，无回退。本批依赖图的最低 SQLite feature 从 `min_sqlite_version_3_34_1` 升为 `min_sqlite_version_3_45_3`；上游 build.rs 移除 `SQLITE_ENABLE_MEMORY_MANAGEMENT`，其余显式 `-D` flag 集合未变。保存宿主实际 compile options，并完成 pager / 临时文件回归；旧宿主报告只存 TEMP_STORE 子集，不能宣称全部运行配置逐项等价。编译通过不代替数据库兼容或移动设备验证。
+
+该批验证至少包括：
+
+1. 用升级前已锁定核心建立含候选、删除、修订与 outbox 的合成旧库，分别保留正常关闭与中断后待恢复状态；由新核心打开、校验独立预期、完成恢复和原意图重放。单版本恢复用例不代替旧库兼容，若未验证回退则明确不承诺回退读写。
+2. 复用密码 / 错钥拒绝、文件密文与明文对照、WAL / DELETE / checkpoint、pager 故障、TEMP_STORE 与清理重试检查；读取实际 SQLCipher / SQLite、密码提供方和编译选项，记录与旧基线的差异。
+3. 运行 Rust 与 Flutter 宿主检查、双桥接压力 / 并发 / 错误 / 恢复、两端 arm64 native 构建及许可 / 治理检查。宿主与 native 构建作为本地候选证据；移动端实际运行、真机文件保护和系统认证仍按既有矩阵补验，不外推通过。
+
+跨版本用例及旧 worker 保存要求见[检查说明](../../scripts/README.md#移动构建生成与证据)。该用例在默认检查中明确 ignored，只有显式提供旧 worker 才执行；不把同版本恢复计作旧库兼容。另有实际版本 / 密码提供方回归，要求 Apple 为 CommonCrypto、非 Apple 为锁定的 OpenSSL 3.6.3；平台未执行时不能宣称其运行通过。
+
+候选源码与日志只在忽略的评审目录和 Cargo 缓存保留，不复制进正式源码或提交第三方大包；未通过来源、许可、编译或恢复验证时停止采用，保留真实原因。
 
 ## 4. 复现入口
 

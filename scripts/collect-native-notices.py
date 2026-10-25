@@ -37,6 +37,37 @@ def normalize(path):
     return "\n".join(line.rstrip() for line in path.read_text().splitlines()).strip() + "\n"
 
 
+def package_notices(package, frb_root, apache_file):
+    base = Path(package["manifest_path"]).parent
+    name = package["name"]
+    files = [p for p in sorted(base.iterdir()) if p.is_file()
+             and p.name.upper().startswith(("LICENSE", "COPYING", "NOTICE"))]
+    if name in {"flutter_rust_bridge", "flutter_rust_bridge_macros"}:
+        files = [frb_root / "LICENSE"]
+    if name == "dart-sys":
+        # crate 声明 MIT OR Apache-2.0；选用 Apache-2.0，并保留内含 Dart SDK 的 BSD。
+        files = [apache_file, base / "dart-sdk/LICENSE"]
+    if name == "sqlcipher-src":
+        files = [base / "LICENSE", base / "sqlcipher/LICENSE-sqlcipher",
+                 base / "sqlcipher/LICENSE-libtomcrypt"]
+    if name == "openssl-src":
+        files.append(base / "openssl/LICENSE.txt")
+    if not files:
+        raise SystemExit(f"缺少 {name} {package['version']} 的许可材料，不能生成空 notice")
+    notices = [normalize(path) for path in files]
+    if name == "sqlcipher-src":
+        # 发布包没有独立 SQLite LICENSE；保留 sqlite3.h 的完整首段版权声明，不另造正文。
+        header = normalize(base / "sqlcipher/sqlite3.h")
+        comment, separator, _ = header.partition("*/")
+        if (not header.startswith("/*") or not separator or len(comment) > 8192
+                or "The author disclaims copyright to this source code." not in comment):
+            raise SystemExit("sqlcipher-src 的 SQLite 版权声明缺失或格式已变，请复核上游来源")
+        notices.append(comment + "*/\n")
+    if any(not content.strip() for content in notices):
+        raise SystemExit(f"许可文件为空：{name}")
+    return notices
+
+
 def render():
     packages = {}
     for target in TARGETS:
@@ -54,27 +85,10 @@ def render():
     apache_file = Path(apache["manifest_path"]).parent / "LICENSE-APACHE"
     groups = {}
     for package in sorted(packages.values(), key=lambda p: (p["name"], p["version"])):
-        base = Path(package["manifest_path"]).parent
-        files = [p for p in sorted(base.iterdir()) if p.is_file()
-                 and p.name.upper().startswith(("LICENSE", "COPYING", "NOTICE"))]
         name = package["name"]
-        if name in {"flutter_rust_bridge", "flutter_rust_bridge_macros"}:
-            files = [frb_root / "LICENSE"]
-        if name == "dart-sys":
-            # crate 声明 MIT OR Apache-2.0；选用 Apache-2.0，并保留内含 Dart SDK 的 BSD。
-            files = [apache_file, base / "dart-sdk/LICENSE"]
-        if name == "libsqlite3-sys":
-            files.append(base / "sqlcipher/LICENSE")
-        if name == "openssl-src":
-            files.append(base / "openssl/LICENSE.txt")
-        if not files:
-            raise SystemExit(f"缺少 {name} {package['version']} 的许可材料，不能生成空 notice")
         attribution = f"{name} {package['version']}"
         source = f"https://crates.io/crates/{name}/{package['version']}"
-        for path in files:
-            content = normalize(path)
-            if not content.strip():
-                raise SystemExit(f"许可文件为空：{name}")
+        for content in package_notices(package, frb_root, apache_file):
             groups.setdefault(content, set()).add(f"{attribution} — {source}")
     result = [
         "RadishLedger M0 native dependency notices",
@@ -86,6 +100,7 @@ def render():
         "dart-sys uses its declared Apache-2.0 alternative; its embedded Dart SDK BSD notice is retained.",
         "FRB Rust crates use the same upstream 2.13.0 MIT notice supplied in the Dart package.",
         "SQLCipher and OpenSSL notices include their bundled upstream licenses.",
+        "sqlcipher-src includes SQLCipher, SQLite's header notice and libtomcrypt's dual license; libtomcrypt is not selected by our native builds.",
         "",
     ]
     for content, owners in groups.items():

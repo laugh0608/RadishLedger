@@ -16,9 +16,7 @@ pub(super) fn configuration(connection: &Connection) -> Value {
         .unwrap()
         .collect::<std::result::Result<_, _>>()
         .unwrap();
-    let cipher: String = connection
-        .pragma_query_value(None, "cipher_version", |r| r.get(0))
-        .unwrap();
+    let cipher = read_cipher_version(connection).unwrap();
     let parent = unsafe { ffi::sqlite3_vfs_find(std::ptr::null()) };
     assert!(!parent.is_null());
     let name = unsafe { std::ffi::CStr::from_ptr((*parent).zName).to_str().unwrap() };

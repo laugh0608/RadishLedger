@@ -7,8 +7,10 @@
 | Flutter SDK、Android / iOS 模板 | `3.44.0`，revision `559ffa3f75e7402d65a8def9c28389a9b2e6fe42`；[Flutter](https://github.com/flutter/flutter) | BSD-3-Clause；保留[模板许可全文](third-party/flutter-template-license.txt) |
 | 默认 App 图标 / launch PNG | SDK 与 `flutter_template_images 5.0.0`；[模板图像包](https://pub.dev/packages/flutter_template_images/versions/5.0.0) | BSD-3-Clause；保留[图像包许可](third-party/flutter-template-images-license.txt)，全部 PNG 匹配上述正式来源，不来自私人参考 |
 | Rust runtime / 标准库 | `1.96.0`；[Rust](https://github.com/rust-lang/rust) | MIT OR Apache-2.0 及标准库所含材料；保留并打包[官方标准库许可集](apps/m0_probe/assets/rust-library-notices.html)，编译器本身不随 App 分发 |
-| rusqlite / libsqlite3-sys | `0.40.2` / `0.38.2`；[rusqlite](https://github.com/rusqlite/rusqlite) | MIT；用于加密 SQLite 绑定 |
-| SQLCipher / SQLite | `4.14.0 community` / `3.51.3`，由 libsqlite3-sys 的固定 source bundle 引入；[SQLCipher](https://github.com/sqlcipher/sqlcipher) | SQLCipher BSD-3-Clause，SQLite public domain；内含 SQLCipher 原始许可 |
+| rusqlite / libsqlite3-sys | `0.41.0` / `0.39.1`；[rusqlite](https://github.com/rusqlite/rusqlite) | MIT；用于加密 SQLite 绑定 |
+| sqlcipher-src | `419.0.6+sqlcipher-4.19.0-sqlite-3.53.4-libtomcrypt-1.18.2`；[源码封装](https://github.com/LucaCappelletti94/sqlcipher-src) | 包声明 MIT AND BSD-3-Clause AND blessing AND WTFPL；包装代码 MIT，Copyright 2026 Luca Cappelletti；内含材料分别保留原许可 |
+| SQLCipher / SQLite | `4.19.0 community` / `3.53.4`，由固定 sqlcipher-src 引入；[SQLCipher](https://github.com/sqlcipher/sqlcipher) | SQLCipher BSD-3-Clause，SQLite public domain；收集内含 LICENSE-sqlcipher 和 sqlite3.h 首段声明 |
+| libtomcrypt 源码材料 | `1.18.2`，内含于 sqlcipher-src；[LibTomCrypt](https://github.com/libtom/libtomcrypt) | public domain / WTFPL 双许可全文保留在保守来源清单；当前 Android / Apple native 构建未选择或编译该提供方 |
 | OpenSSL | `3.6.3`，openssl-src `300.6.1+3.6.3`；[OpenSSL](https://github.com/openssl/openssl) | Apache-2.0；Android / Linux 的静态密码底层，Apple 使用系统 CommonCrypto |
 | flutter_rust_bridge / generator | `2.13.0`；[FRB](https://github.com/fzyzcjy/flutter_rust_bridge) | MIT，Copyright 2021 fzyzcjy；Rust 与 Dart runtime 共用上游同版许可，生成代码保留标记 |
 | Tokio（FRB 传递依赖） | `1.53.3`；[Tokio](https://github.com/tokio-rs/tokio)、[crate](https://crates.io/crates/tokio/1.53.3) | MIT；异步运行时，按 RUSTSEC-2026-0386 升级；许可正文未变，全文由 native notices 保留 |
@@ -24,7 +26,7 @@
 | Temurin JDK | `17.0.20.1+1`；[Adoptium](https://github.com/adoptium/temurin17-binaries) | GPL-2.0 with Classpath Exception；仅本地构建工具，未提交或随 App 分发 |
 | Gradle / AGP / cargo-expand | `9.1.0` / `9.0.1` / `1.0.118`；各官方发行与 registry 包 | 构建 / 生成工具，仅在缓存中使用，未作为 App 资产引入 |
 
-Rust 传递包、SQLCipher 与 OpenSSL 的许可全文由 [collect-native-notices.py](scripts/collect-native-notices.py) 从锁定缓存收集到 [native-notices.txt](apps/m0_probe/assets/native-notices.txt)，并作为 Flutter asset 随实验包保留。该清单含两端 arm64 与验证宿主的 build dependencies，是保守并集；不能当作最终二进制扫描。完全相同的许可正文分组保留各包名、版本与来源。allo-isolate 依包内 Apache-2.0 LICENSE 登记；dart-sys 采用声明的 Apache-2.0 选项，额外保留其内含 Dart SDK 的 BSD notice。
+Rust 传递包、SQLCipher 与 OpenSSL 的许可全文由 [collect-native-notices.py](scripts/collect-native-notices.py) 从锁定缓存收集到 [native-notices.txt](apps/m0_probe/assets/native-notices.txt)，并作为 Flutter asset 随实验包保留。该清单含两端 arm64 与验证宿主的 build dependencies，是保守并集；不能当作最终二进制扫描。完全相同的许可正文分组保留各包名、版本与来源。allo-isolate 依包内 Apache-2.0 LICENSE 登记；dart-sys 采用声明的 Apache-2.0 选项，额外保留其内含 Dart SDK 的 BSD notice。sqlcipher-src 的根 MIT 不代替内含 SQLCipher / SQLite / libtomcrypt 材料；生成器显式收集嵌套许可和 SQLite 首段声明，缺失或为空即失败。
 
 生成器需要本机已取得锁定包、Flutter pub 配置和固定 Rust 工具链，不访问网络或安装工具；依赖变化后重新生成并运行 `--check`。只规范许可的文本行尾，不删除原归属。Flutter 的自动 LICENSE asset 与本项目 native notices 各覆盖对应来源，公开发行前复核实际打包内容及新增资产。
 

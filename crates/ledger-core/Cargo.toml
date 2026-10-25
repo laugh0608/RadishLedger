@@ -20,7 +20,7 @@ sha2.workspace = true
 libc = "=0.2.189"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled-sqlcipher"] }
+rusqlite = { version = "=0.41.0", default-features = false, features = ["bundled-sqlcipher"] }
 
 [target.'cfg(not(target_vendor = "apple"))'.dependencies]
-rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = { version = "=0.41.0", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }

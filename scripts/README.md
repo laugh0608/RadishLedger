@@ -59,6 +59,18 @@ Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/led
 
 [collect-native-notices.py](collect-native-notices.py) 从本机锁定缓存收集两端 arm64 与验证宿主的 native 许可，并保留固定 Rust 标准库的官方许可集；`--check` 只读比较。它不联网，缓存缺失明确失败；重新生成需复核 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)。普通 CI 没有宣称完整供应链扫描。
 
+sqlcipher-src 的包装许可、嵌套 SQLCipher / libtomcrypt 许可与 SQLite header 首段声明分别收集；缺失、空文件或声明格式漂移均拒绝生成。[许可回归](tests/test_native_notices.py)使用临时合成包验证完整收集和拒绝路径，由 `check-repo` 的测试发现入口执行，不接触真实缓存。
+
+SQLCipher 升级另需跨版本检查：在依赖修改前，从已知旧锁定版本构建 `m0-bootstrap-worker`，单独复制到本批忽略证据目录，并记录 Git / Cargo.lock / binary 指纹；不能把升级后重建的 worker 当作旧基线。完成升级后，显式执行：
+
+```bash
+M0_PREVIOUS_BOOTSTRAP_WORKER=/absolute/path/to/saved/baseline-worker \
+  cargo test --release --locked -p radishledger-core --test bootstrap_process \
+  previous_sqlcipher_preserves_closed_and_interrupted_vaults -- --ignored --nocapture
+```
+
+该用例核对旧 worker 为 SQLCipher 4.14.0、新 worker 为 4.19.0，验证正常关闭与强杀后待恢复 WAL；旧版仅读取后者副本，原文件由新版首次打开。A11 独立预期、错材料不改写、完整事实 / 身份、原意图重放与清理均断言。随机秘密仅经内存和管道传递，合成目录由测试清理；不接收用户账库。默认 ignored 是对外部旧二进制前置条件的明确要求，`check-core` 不将其计为通过；单独执行缺少旧 worker 时失败。此结果不承诺新写库回退兼容，也不代替移动设备运行。
+
 M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `local-evidence/m0-c/`；由各集成 driver 或设备控制器保存，构建产物和缓存保持忽略。同一 Flutter 工作目录的构建、测试与模式切换按实验说明串行执行。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
 
 错误逐项报告并返回非零；检查器没有历史预算或默认成功模式。`--only` 用于定向本地检查，PR workflow 必须使用完整入口。

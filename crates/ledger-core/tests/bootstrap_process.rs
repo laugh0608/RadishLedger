@@ -17,11 +17,30 @@ fn start_request(
     fault: Option<Value>,
     secret: &[u8],
 ) -> Child {
+    start_request_with_worker(
+        Path::new(env!("CARGO_BIN_EXE_m0-bootstrap-worker")),
+        directory,
+        run,
+        action,
+        pause,
+        fault,
+        secret,
+    )
+}
+fn start_request_with_worker(
+    worker: &Path,
+    directory: &Path,
+    run: &str,
+    action: Value,
+    pause: Option<&str>,
+    fault: Option<Value>,
+    secret: &[u8],
+) -> Child {
     let metadata = serde_json::to_vec(
         &json!({"abi":1,"directory":directory,"run":run,"action":action,"pause_at":pause,"file_fault":fault}),
     )
     .unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_m0-bootstrap-worker"))
+    let mut child = Command::new(worker)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -160,6 +179,163 @@ fn kill_at(directory: &Path, run: &str, mut child: Child, point: &str) {
     }
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
+}
+
+#[test]
+#[ignore = "需显式提供升级前 SQLCipher 4.14.0 的独立 worker，日常检查不冒充跨版本验证"]
+fn previous_sqlcipher_preserves_closed_and_interrupted_vaults() {
+    let previous_worker = std::path::PathBuf::from(
+        std::env::var_os("M0_PREVIOUS_BOOTSTRAP_WORKER")
+            .expect("必须提供升级前构建并单独保存的 worker"),
+    );
+    assert!(previous_worker.is_absolute() && previous_worker.is_file());
+    assert_ne!(
+        previous_worker.canonicalize().unwrap(),
+        Path::new(env!("CARGO_BIN_EXE_m0-bootstrap-worker"))
+            .canonicalize()
+            .unwrap()
+    );
+    let previous = |directory: &Path, run: &str, action: Value, secret: &[u8]| {
+        finish(start_request_with_worker(
+            &previous_worker,
+            directory,
+            run,
+            action,
+            None,
+            None,
+            secret,
+        ))
+    };
+    for interrupted in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let reference = tempfile::tempdir().unwrap();
+        let run = radishledger_core::random_id().unwrap();
+        let (_, recovery) = ok(previous(
+            directory.path(),
+            &run,
+            json!({"kind":"newRecovery"}),
+            &[],
+        ));
+        let password = Zeroizing::new(crypto::hex(crypto::random::<32>().unwrap().as_ref()));
+        let mut input = Zeroizing::new(password.as_bytes().to_vec());
+        input.extend_from_slice(&recovery);
+        let (created, _) = ok(previous(
+            directory.path(),
+            &run,
+            json!({"kind":"create"}),
+            &input,
+        ));
+        assert!(
+            created["cipherVersion"]
+                .as_str()
+                .unwrap()
+                .starts_with("4.14.0")
+        );
+        ok(previous(
+            directory.path(),
+            &run,
+            json!({"kind":"confirm"}),
+            &recovery,
+        ));
+        let path = directory.path().join(format!("m0c-{run}"));
+        let baseline = if interrupted {
+            let child = start_request_with_worker(
+                &previous_worker,
+                directory.path(),
+                &run,
+                json!({"kind":"seed","unlock":"recovery"}),
+                Some("fixtureSaved"),
+                None,
+                &recovery,
+            );
+            kill_at(directory.path(), &run, child, "fixtureSaved");
+            assert!(std::fs::metadata(path.join("ledger.db-wal")).unwrap().len() > 32);
+            let original = hashes(&path);
+            // 只让旧版读取副本取得独立完整事实；原待恢复 DB/WAL 留给新版首次打开。
+            let copy = reference.path().join(format!("m0c-{run}"));
+            std::fs::create_dir(&copy).unwrap();
+            for entry in std::fs::read_dir(&path).unwrap() {
+                let entry = entry.unwrap();
+                assert!(entry.file_type().unwrap().is_file());
+                std::fs::copy(entry.path(), copy.join(entry.file_name())).unwrap();
+            }
+            let (report, _) = ok(previous(
+                reference.path(),
+                &run,
+                json!({"kind":"inspect","unlock":"recovery"}),
+                &recovery,
+            ));
+            assert_eq!(hashes(&path), original);
+            ok(previous(
+                reference.path(),
+                &run,
+                json!({"kind":"cleanup"}),
+                &[],
+            ));
+            report
+        } else {
+            let (report, _) = ok(previous(
+                directory.path(),
+                &run,
+                json!({"kind":"seed","unlock":"recovery"}),
+                &recovery,
+            ));
+            assert!(
+                !path.join("ledger.db-wal").exists()
+                    || std::fs::metadata(path.join("ledger.db-wal")).unwrap().len() == 0
+            );
+            report
+        };
+        assert_nonempty(&baseline);
+        assert!(
+            baseline["cipherVersion"]
+                .as_str()
+                .unwrap()
+                .starts_with("4.14.0")
+        );
+        let original = hashes(&path);
+        let wrong_recovery =
+            crypto::recovery_text(crypto::random::<32>().unwrap().as_ref()).unwrap();
+        for (unlock, secret) in [
+            ("password", b"wrong synthetic password".as_slice()),
+            ("recovery", wrong_recovery.as_bytes()),
+        ] {
+            let rejected = call(
+                directory.path(),
+                &run,
+                json!({"kind":"inspect","unlock":unlock}),
+                secret,
+            );
+            assert_eq!(rejected.0["error"]["code"], "authentication_failed");
+            assert_eq!(hashes(&path), original);
+        }
+        for (kind, unlock, secret) in [
+            ("inspect", "recovery", recovery.as_slice()),
+            ("inspect", "password", password.as_bytes()),
+            ("replay", "recovery", recovery.as_slice()),
+            ("inspect", "recovery", recovery.as_slice()),
+        ] {
+            let (after, _) = ok(call(
+                directory.path(),
+                &run,
+                json!({"kind":kind,"unlock":unlock}),
+                secret,
+            ));
+            assert_preserved(&baseline, &after);
+            assert!(
+                after["cipherVersion"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("4.19.0")
+            );
+        }
+        ok(call(directory.path(), &run, json!({"kind":"cleanup"}), &[]));
+        assert_eq!(directory.path().read_dir().unwrap().count(), 0);
+        assert_eq!(reference.path().read_dir().unwrap().count(), 0);
+        eprintln!(
+            "SQLCipher 4.14.0 -> 4.19.0: interrupted={interrupted}; A11 facts, wrong-material preservation, replay and cleanup passed"
+        );
+    }
 }
 
 #[test]

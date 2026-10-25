@@ -555,10 +555,7 @@ fn pager_worker() {
     if matches!(request.scenario, Scenario::Checkpoint) {
         store.commit(&request.write).unwrap();
     }
-    let cipher: String = store
-        .connection
-        .pragma_query_value(None, "cipher_version", |r| r.get(0))
-        .unwrap();
+    let cipher = store.cipher_version().unwrap();
     let compile_options: Vec<String> = store
         .connection
         .prepare("PRAGMA compile_options")
