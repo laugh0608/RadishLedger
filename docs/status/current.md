@@ -1,14 +1,14 @@
 # 当前状态
 
-更新日期：2026-10-25（Asia/Shanghai，M0 OpenSSL 4.0.3 候选迁移受阻）。
+更新日期：2026-10-25（Asia/Shanghai，M0 OpenSSL ARM 修复隔离验证通过，待确认正式接入）。
 
 ## 当前结论
 
 项目处于 M0 移动核心与加密恢复验证，尚未满足 M0-B / M0-C 正式退出条件。已有 Flutter 合成验证 App、同一 Rust 领域 / SQLCipher 核心，以及薄 C ABI / Dart FFI 与 flutter_rust_bridge 两种候选；没有正式用户账簿、同步服务、备份迁移或公开发行。实验 schema、ABI、依赖与工具链候选尚未冻结为生产契约。
 
-专项审查与异常路径修复已提交为 `7c5a63b`，ctutils 0.4.4 与 Tokio 1.53.3 修补分别提交为 `7008933`、`0a690d1`，桥接和恢复回归通过。RUSTSEC-2026-0385 / 0386 的受影响锁定版本均已移除。前批 `29d8edd` 已将存储链升级至 rusqlite 0.41.0 / libsqlite3-sys 0.39.1 / sqlcipher-src 419.0.6，实际 SQLCipher 4.19.0 / SQLite 3.53.4；旧版非空库的正常关闭与强杀后 WAL 恢复、两桥接及两端 native 构建通过。Apple CommonCrypto 与 Android vendored OpenSSL 保持不变。本轮已获准实施 OpenSSL 4.0.3 及 openssl-sys 最小本地补丁，工作树候选已构建。Linux 旧库兼容 / 故障恢复及宿主回归通过，但 Android 实际加载触发 SIGILL，未满足采用门槛。项目所有者随后明确要求先提交工作区候选并继续下一步；该保存提交不代表目标运行通过。最近可运行的 OpenSSL 基线仍为 3.6.3，不能宣布修补完成。
+专项审查与异常路径修复已提交为 `7c5a63b`，ctutils 0.4.4 与 Tokio 1.53.3 修补分别提交为 `7008933`、`0a690d1`，桥接和恢复回归通过。RUSTSEC-2026-0385 / 0386 的受影响锁定版本均已移除。前批 `29d8edd` 已将存储链升级至 rusqlite 0.41.0 / libsqlite3-sys 0.39.1 / sqlcipher-src 419.0.6，实际 SQLCipher 4.19.0 / SQLite 3.53.4；旧版非空库的正常关闭与强杀后 WAL 恢复、两桥接及两端 native 构建通过。Apple CommonCrypto 与 Android vendored OpenSSL 保持不变。本轮已获准实施 OpenSSL 4.0.3 及 openssl-sys 最小本地补丁，工作树候选已构建。Linux 旧库兼容 / 故障恢复及宿主回归通过，但 Android 实际加载触发 SIGILL，未满足采用门槛。项目所有者随后明确要求先提交工作区候选并继续下一步；该保存提交不代表目标运行通过。候选已保存为 `72d13b0`。后续仅在隔离诊断源码中补上 SVE2 的 SVE 前置条件，原失败模拟器的 provider / 原生 / 双桥接 / 恢复 / UI / 压力验证通过；主工作区尚未应用该源码补丁，不能宣布正式迁移完成。
 
-10 月 19 日已有模拟器文件与恢复证据继续保留；SQLCipher 前批新增宿主跨版本、桥接和恢复运行证据，以及两端 arm64 native 构建 / 提供方符号核对。本轮新增 Linux OpenSSL 3.6.3→4.0.3 运行对照、独立算法向量与 Android 实际失败证据；Android pager / 两桥接恢复和后续 iOS 回归未完成。Android 系统认证、两端真机 release / 硬件保护 / 生命周期、iOS 实际文件保护、真实 IO 故障与掉电仍有缺口，不能进入 M1。真机条件和补验顺序已整理，机型、系统、签名及安装 / 清理范围尚未确认。
+10 月 19 日已有模拟器文件与恢复证据继续保留；SQLCipher 前批新增宿主跨版本、桥接和恢复运行证据，以及两端 arm64 native 构建 / 提供方符号核对。本轮新增 Linux OpenSSL 3.6.3→4.0.3 运行对照、独立算法向量与 Android 实际失败证据；后续 ARM 诊断批次补齐 Android pager / 两桥接恢复 / UI / 压力及 iOS native 构建，但不代替正式接入后的复验。Android 系统认证、两端真机 release / 硬件保护 / 生命周期、iOS 实际文件保护、真实 IO 故障与掉电仍有缺口，不能进入 M1。真机条件和补验顺序已整理，机型、系统、签名及安装 / 清理范围尚未确认。
 
 ## 已完成与证据入口
 
@@ -27,6 +27,7 @@
 | 最近工程批次验证 | SQLCipher 升级后 26 项 Rust 宿主测试及 fmt / 严格 clippy / C header 通过；另显式执行 1 项 release 跨版本测试、覆盖 2 种旧库状态。Flutter 19 项宿主测试、格式与严格分析通过；仓库治理结果见本批 devlog | 完整移动 App / 真机、最低系统、机器码恒定时间、远端 CI 或发布门禁 |
 | SQLCipher 升级 | 4.14.0 创建的 A11 非空库由 4.19.0 打开；正常关闭及强杀后待恢复 WAL 均保留完整事实 / 身份，错材料不改写、恢复与原意图重放通过。Android / iOS arm64 release 库构建与原密码提供方符号核对通过 | 新写库向旧版回退兼容、设备上升级 / 恢复、上游源码生成已独立复现 |
 | OpenSSL 候选迁移 | 最小 sys 补丁、来源 / 许可校验；Linux 4.0.3 实际 provider、旧库两种状态 / 恢复、26 项 Rust 与独立向量通过；Apple 宿主 26 项 Rust、Flutter 19 项通过。Android 旧库可加载，新库在 ARM SVE 探测 SIGILL，实际 App 同样失败 | 候选可采用、Android 运行 / 恢复通过、iOS 本批目标回归、真机兼容、当前新链 OSV 审查或迁移已完成 |
+| OpenSSL ARM 诊断 | 一处 SVE 前置条件补丁在隔离源码中通过：原设备实际 provider / 算法 / 失败传播、81 组 pager、16 组恢复、48 组文件故障、双桥接 UI 与各 6200 次压力；iOS native 仍为 CommonCrypto。四组合源码诊断保留有效 SVE2 路径 | 正式依赖已应用、真实 SVE2 硬件或真机认证 / 保护、长期性能 / 泄漏结论、正式接入复验完成 |
 
 10 月 19 日两端实际 SQLCipher 4.14.0 / SQLite 3.51.3、默认 unix VFS v3 已核对。Android `TEMP_STORE=3` 强制内存，FILE 请求也不提供磁盘临时文件正向对照；iOS `TEMP_STORE=2` 的 FILE 对照确实产生临时文件并检出合成标记。正常 App 的命名 VFS 不替换默认 VFS，原 MEMORY 策略不因对照实验改变。
 
@@ -36,7 +37,7 @@
 
 ### 接下来的事项
 
-1. **继续 Android / OpenSSL ARM 能力探测阻塞诊断，形成最小修复。** 同一 API35 arm64 / 16 KiB 模拟器报告 SVE=0、SVE2=1，PR_SVE_GET_VL 为 EINVAL；旧 OpenSSL 3.6.3 库加载成功，4.0.3 在 OPENSSL_cpuid_setup 的 cntb 指令崩溃。仅改 sys 依赖约束不能解决。项目所有者已要求提交候选并继续下一步，当前推进最小 ARM 能力探测 / 模拟器兼容诊断；涉及新的 OpenSSL 源码供应方式或系统镜像修改时先给出精确方案；不直接扩大供应链、更新系统镜像、关闭硬件能力或换目标绕过失败。通过后才继续 Android provider / pager / 双桥接 / UI、资源比较、iOS 与公告检查并提交。详情与已取得证据见[OpenSSL 专题](../development/mobile-core-prototype.md#32-openssl-修补方案评审与验证计划)。
+1. **确认已验证 ARM 补丁的正式源码接入范围。** [两行补丁](../../third-party/openssl-armcap-sve.patch)在原失败模拟器通过隔离验证：只在 SVE 存在时接受 SVE2，保留正常硬件加速；主工作区未应用。推荐沿用当前构建链，保存完整 openssl-src 发布包（2492 文件，约 33.16 MB）及哈希 / 许可，再应用一处语义修改。原包 31 个文件另有文本卫生差异，需明确仅对来源验证成功的原始第三方材料采用精确例外。此新来源 / 治理范围尚待确认，不自行引入构建 wrapper、改缓存或关闭硬件加速。确认后落实构建资产依赖与来源检查，再从正式工作区补 Linux 旧库、Android / Apple、公告及资源比较并提交。方案和已取得证据见[OpenSSL 专题](../development/mobile-core-prototype.md#arm-能力修复的隔离验证与正式接入方案)。
 2. **确认两端真机验证条件，并保持 Android 认证缺口显式可见。** 依据[准备与补验清单](../development/mobile-core-validation.md#6-真机批次准备与补验清单)确认机型、系统、认证、签名、安装 / 数据范围与精确清理方式；本轮仅使用既有 Android 模拟器，未连接真机，不能声明真机已就绪。最近一次 Android 模拟器能力为 `deviceSecure=false`、代码 11，条件未变时不重复 unsupported 流程。API 24 仅为编译候选，当前系统认证实现要求 API 30+；支持范围待验证冻结。现有控制器只允许模拟器，真机执行入口不能通过删除限制来冒充就绪。
 3. **具备条件后执行两端真机 release 闭环（B01–B06、C01 / C04 / C06–C12）。** 优先补 Android 创建 / 日常解锁、取消 / 拒绝 / 暂不可取、精确项失效后的独立恢复、重建及跨 PID 解锁；同步验证 iOS sandbox / entitlement 与实际文件保护。再取得设备重启、后台 / 任务预览、KDF 时间 / 峰值内存和较长压力证据。保持 A11 候选、删除及未同步事实保真，按实际能力报告硬件等级。
 4. **按真实新增路径补剩余文件与持久化边界（B07 / B09、C02 / C05 / C08）。** 新增查询、导出或归档时补相应缓存 / 临时文件审计，不为测试提前建设未批准功能。真实 IO 故障、掉电 / 文件系统丢写与系统备份传输另定可恢复的实验范围；不能复用 VFS 注入、字符串扫描或备份排除标记宣布通过。
@@ -56,9 +57,9 @@
 
 日常开发继续在 `dev`；`origin` 为 [laugh0608/RadishLedger](https://github.com/laugh0608/RadishLedger)，默认分支 master。分支晋级、PR 与 Rulesets 以[仓库治理](../governance/repository-governance.md)为准，不在本次收尾改变远端状态。
 
-本轮延续 OpenSSL 评审的 3 份文档改动，在 `dev`、HEAD `29d8edd` 上实施；相对本地 `origin/dev` 领先 4 个提交，未 fetch。候选涉及根 Cargo 声明 / lockfile、openssl-sys 最小副本及完整性检查、native notices、验证用例 / 证据目录选项和专题文档，按项目所有者的新指令保存为候选提交，Android 失败边界继续显式保留。未改变 SQLCipher / 其他依赖、Pub lockfile、生产密码 / schema / bridge 或 AGENTS / CLAUDE；无 push、PR、tag、Release、上传或发布。
+本轮延续 OpenSSL 评审的 3 份文档改动，在 `dev`、HEAD `29d8edd` 上实施；开始时相对本地 `origin/dev` 领先 4 个提交，未 fetch。候选涉及根 Cargo 声明 / lockfile、openssl-sys 最小副本及完整性检查、native notices、验证用例 / 证据目录选项和专题文档，按项目所有者的新指令保存为 `72d13b0`，当前领先本地 origin/dev 5 个提交。后续补丁提案、诊断程序和文档结果单独保存为诊断提交；主 Cargo 声明 / lockfile 保持 72d13b0 内容。未改变 SQLCipher / 其他依赖、Pub lockfile、生产密码 / schema / bridge 或 AGENTS / CLAUDE；无 push、PR、tag、Release、上传或发布。
 
-证据保存在忽略的 `local-evidence/m0-c/2026-10-25-openssl/`；旧评审和 SQLCipher 批次证据仍保留。仅新下载锁定 openssl-src 归档，使用已有工具链 / 镜像 / Android AVD。模拟器初始无本项目 App，本次安装的测试 App 已卸载并确认包不存在，本次 emulator-5568 与 ADB 已停止，运行容器均自动移除；缓存、基线二进制与失败日志保留。停止前没有通过修改 OpenSSL 源码、环境能力覆盖或模拟器配置规避失败。
+证据保存在忽略的 `local-evidence/m0-c/2026-10-25-openssl/`；旧评审和 SQLCipher 批次证据仍保留。仅新下载锁定 openssl-src 归档，使用已有工具链 / 镜像 / Android AVD。模拟器初始无本项目 App，本次安装的测试 App 已卸载并确认包不存在，本次 emulator-5568 与 ADB 已停止，运行容器均自动移除；缓存、基线二进制与失败日志保留。后续隔离诊断只在另一个本地证据批次修改 OpenSSL 一处条件；未改主工作区源码供应、能力覆盖或模拟器配置。后续模拟器 / ADB 也已清理，签名路径临时链接已移除。
 
 ## 当前停止线
 

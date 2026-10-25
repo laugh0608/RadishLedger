@@ -147,6 +147,27 @@ Android / Linux 的运行入口、模拟器实例 / 数据与清理范围已在�
 
 本批证据保存在忽略的 `local-evidence/m0-c/2026-10-25-openssl/`，包含旧基线、来源哈希、日志、加载对照和清理记录。候选按新指令保存提交，未推送；实际下一步以[当前进度](../status/current.md)为准。
 
+
+#### ARM 能力修复的隔离验证与正式接入方案
+
+候选保存提交为 `72d13b0`。随后在忽略目录从该提交导出源码，并复制已核验的 openssl-src 发布包，仅修改 `openssl/crypto/armcap.c` 一处条件：[两行候选补丁](../../third-party/openssl-armcap-sve.patch)要求先有 ARMV8_SVE，再接受 HWCAP2_SVE2。[来源与前后哈希](../../third-party/openssl-armcap-sve.json)明确其为诊断候选，**主工作区 Cargo 构建尚未应用此补丁**；不能拿隔离结果宣称已提交候选已修复。
+
+[Linux HWCAP 规范](https://docs.kernel.org/arch/arm64/elf_hwcaps.html)将 SVE2 定义为以 SVE 为前提的能力；[SVE 系统接口说明](https://docs.kernel.org/arch/arm64/sve.html)要求检查 HWCAP_SVE。该修改保留正常能力选择，只拒绝 SVE 缺失而 SVE2 单独出现的矛盾组合，不改算法、KDF、静态链接、provider 或全局环境变量。
+
+在原 Pixel_9_Pro / API35 / arm64 / 16 KiB 模拟器上完成以下诊断验证：
+
+- [能力诊断程序](../../scripts/tests/openssl_armcap_probe.c)分别编译实际上游 / 候选 armcap.c，以合成 auxv、固定期望表和探测调用计数运行 00 / 01 / 10 / 11 四种组合。上游仅在 01 矛盾组合违反期望，候选四组全部满足期望；有效 SVE2 仍执行探测，NEON / AES / PMULL / SHA1 / SHA256 位保持。该单元诊断不等于真实 SVE2 硬件运行。
+- 不设置能力覆盖的真实 OpenSSL 4.0.3 provider、公开 AES / HMAC / PBKDF2 向量、正常 RAND 与 SQLCipher 创建、缺失算法提供方的失败传播全部通过。
+- 原生 pager 81 组故障 / 3 组对照、临时文件与 MEMORY 策略两组检查通过并清理。普通 Flutter App 的两 bridge 共 16 组恢复、48 组文件故障通过，A11 完整事实 / 身份保留，ownedRuns 为空。
+- 双桥接实际 UI 的错误口令、取消晚结果、原库重试通过；结果截图复核输入为空、无截断，系统认证缺口仍显式显示。两 bridge 各 6200 次有界压力调用、并发、panic / ABI / native 错误及取消通过，thin liveBuffers=0；记录 RSS 采样但没有据此宣称长时泄漏或与旧版性能等价。
+- iOS arm64 / iPhoneOS native 构建通过，CommonCrypto 符号仍存在，无 OpenSSL 依赖；未执行 iOS 模拟器或真机回归。未修改模拟器配置、CPU 覆盖或系统保护。
+
+现有 openssl-src Build 只从包内源码复制构建，没有可传入补丁 / 替代源码的正式参数。正式接入建议保持现有构建链，增加精确锁定的本地 openssl-src 源包副本、根 patch 和逐文件来源核对，再应用上述一处语义改动；不引入新的 wrapper crate、下载器、编译器拦截或修改 Cargo 缓存。代价为 **2492 个文件、约 33.16 MB 原始源码**（最大单文件约 1.37 MB），以及后续上游修复的跟踪 / 撤除责任。原包另有 31 个文件带末尾空白、CR 或缺少末尾 LF，若保留原始字节，需要明确的、仅在来源哈希验证后生效的第三方文本例外；不能泛化关闭仓库卫生检查。
+
+这是较先前 sys 81 文件副本更大的来源 / 治理范围，尚未批准正式接入。确认后需先落实原包与补丁完整性、许可 / notices、构建资产失效依赖，再以正式工作区重跑 Android 原生 / App / 恢复 / UI / 压力、Linux 旧库和 Apple 回归，补公告与必要资源比较后提交。也可暂缓本地源码维护、等待上游正式修复；当前没有验证可直接替代的发行版，不以换版本或更新模拟器绕过决策。
+
+诊断证据位于 `local-evidence/m0-c/2026-10-25-openssl-armcap/`。测试 App 已由 Flutter driver 卸载，包不存在；本批模拟器与 ADB 已停止。隔离构建临时复用的本地 debug 签名路径链接已移除，没有复制密钥。候选补丁、来源清单和诊断程序可独立审阅，未将 33 MB 源包加入主工作区 Git。
+
 ## 4. 复现入口
 
 ```bash

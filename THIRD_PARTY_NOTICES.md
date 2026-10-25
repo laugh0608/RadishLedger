@@ -12,6 +12,7 @@
 | SQLCipher / SQLite | `4.19.0 community` / `3.53.4`，由固定 sqlcipher-src 引入；[SQLCipher](https://github.com/sqlcipher/sqlcipher) | SQLCipher BSD-3-Clause，SQLite public domain；收集内含 LICENSE-sqlcipher 和 sqlite3.h 首段声明 |
 | libtomcrypt 源码材料 | `1.18.2`，内含于 sqlcipher-src；[LibTomCrypt](https://github.com/libtom/libtomcrypt) | public domain / WTFPL 双许可全文保留在保守来源清单；当前 Android / Apple native 构建未选择或编译该提供方 |
 | OpenSSL | 候选 `4.0.3`，openssl-src `400.0.2+4.0.3`（候选，目标验证受阻）；[OpenSSL](https://github.com/openssl/openssl) | Apache-2.0；Android / Linux 的静态密码底层，Apple 使用系统 CommonCrypto |
+| OpenSSL ARM 修复提案 | [补丁](third-party/openssl-armcap-sve.patch)、[来源与哈希](third-party/openssl-armcap-sve.json)；基于 OpenSSL 4.0.3 的 crypto/armcap.c | Apache-2.0，Copyright 2011–2026 The OpenSSL Project Authors；许可全文在 native notices 的 Apache-2.0 组。仅隔离验证，尚未应用到主工作区构建；能力诊断程序为项目原创 |
 | openssl-sys 最小源码补丁 | `0.9.117`；[来源 / 差异](third-party/openssl-sys-patch.md)、[原包哈希清单](third-party/openssl-sys-upstream.json) | MIT；完整保留上游 81 文件，仅改 openssl-src 约束及 JSON 末尾 LF；候选受阻，未改绑定实现 |
 | 密码验证公开向量 | [NIST SP800-38A F.2.5](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf)、[RFC4231 §4.2](https://www.rfc-editor.org/rfc/rfc4231.html)、[RFC7914 §11](https://www.rfc-editor.org/rfc/rfc7914.html) | NIST 美国政府出版物；RFC 分别 © ISOC 2005 / IETF Trust 2016，按各文档版权声明。仅使用公开输入 / 期望数值，未移植算法代码或说明正文；验证程序为项目原创，不随 App 打包 |
 | flutter_rust_bridge / generator | `2.13.0`；[FRB](https://github.com/fzyzcjy/flutter_rust_bridge) | MIT，Copyright 2021 fzyzcjy；Rust 与 Dart runtime 共用上游同版许可，生成代码保留标记 |

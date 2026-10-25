@@ -1,0 +1,13 @@
+{
+  "status": "reviewed-diagnostic-candidate-not-applied-to-workspace-build",
+  "package": "openssl-src",
+  "version": "400.0.2+4.0.3",
+  "archiveSha256": "d2093956673b8dbda85c87fa4fb78e70698ce6c5978a2837d1613f661d3bef76",
+  "upstreamUrl": "https://github.com/openssl/openssl/blob/openssl-4.0.3/crypto/armcap.c",
+  "file": "openssl/crypto/armcap.c",
+  "upstreamFileSha256": "b4b3291b98addb988a843eedc4d7a8d7a7333640bf148d4a0ee83b17b5cd6cf1",
+  "patchedFileSha256": "b11c6a054e7d18f50e08238c13f7044bf1e5f03e27d628c5af52814d8b44ca3f",
+  "patch": "third-party/openssl-armcap-sve.patch",
+  "patchSha256": "9e1723287148b2b0d0b0073a11f710fdee1aa395f0e277381b63044b5a6a1908",
+  "license": "Apache-2.0"
+}
