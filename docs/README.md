@@ -13,6 +13,7 @@
 | Flutter、Rust、Go 如何分工 | [技术架构](architecture.md) |
 | 两端最小接入、加密与系统密钥如何验证 | [移动端核心验证矩阵](development/mobile-core-validation.md) |
 | 合成移动核心实验如何调用、构建和复现 | [移动核心实验](development/mobile-core-prototype.md)、[第三方来源](../THIRD_PARTY_NOTICES.md) |
+| 人工恢复、精确清理、诊断和锁屏实验如何执行 | [人工实验管理](development/mobile-core-prototype.md#713-人工实验页的精确失效清理与候选切换)、[非秘密报告](development/mobile-core-prototype.md#714-人工实验的有界非秘密报告)、[iOS 文件观测](development/mobile-core-prototype.md#715-ios-有界锁屏访问观测)、[设备操作单](development/mobile-core-validation.md#64-单批操作单与验收停止线) |
 | 多端如何连接、提交、解决冲突 | [同步协议与连接边界](sync-protocol.md) |
 | 保护什么、谁持有密钥、如何恢复 | [威胁模型与加密](privacy-threat-model.md) |
 | 如何交付自部署和官方服务 | [自部署与托管](self-hosting.md) |
