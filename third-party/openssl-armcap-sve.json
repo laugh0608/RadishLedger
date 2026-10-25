@@ -1,5 +1,5 @@
 {
-  "status": "reviewed-diagnostic-candidate-not-applied-to-workspace-build",
+  "status": "applied-to-workspace-source",
   "package": "openssl-src",
   "version": "400.0.2+4.0.3",
   "archiveSha256": "d2093956673b8dbda85c87fa4fb78e70698ce6c5978a2837d1613f661d3bef76",

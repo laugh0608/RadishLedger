@@ -82,6 +82,56 @@ class RepositoryChecksTest(unittest.TestCase):
         self.assertTrue(any("does not select" in e
                             for e in CHECKS.check_openssl_patch(self.root, files, documents)))
 
+    def test_openssl_text_exception_requires_original_file_and_pinned_manifest(self):
+        name = "third-party/openssl-src/.cargo_vcs_info.json"
+        original = (self.root / name).read_bytes()
+        self.assertFalse(CHECKS.check_text(self.root, [name])[0])
+        (self.root / name).write_bytes(original + b" ")
+        self.assertTrue(CHECKS.check_text(self.root, [name])[0])
+        (self.root / name).write_bytes(original)
+        manifest = self.root / CHECKS.OPENSSL_SOURCE_MANIFEST
+        manifest.write_bytes(manifest.read_bytes() + b" ")
+        self.assertTrue(any("no text exceptions" in e
+                            for e in CHECKS.check_text(self.root, [name])[0]))
+
+    def test_openssl_source_rejects_code_mode_inventory_and_attribute_drift(self):
+        name = "third-party/openssl-src/openssl/crypto/armcap.c"
+        path = self.root / name
+        original = path.read_bytes()
+        path.write_bytes(original + b"// unauthorized synthetic change\n")
+        files = CHECKS.repository_files(self.root)
+        self.assertTrue(any("unapproved upstream source change" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+        path.write_bytes(original)
+        path.chmod(0o755)
+        self.assertTrue(any("executable mode differs" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+        path.chmod(0o644)
+        self.write("third-party/openssl-src/extra.c", "// synthetic\n")
+        self.assertTrue(any("source inventory differs" in e
+                            for e in CHECKS.check_openssl_source(self.root, CHECKS.repository_files(self.root))))
+        (self.root / "third-party/openssl-src/extra.c").unlink()
+        with (self.root / ".gitattributes").open("a") as stream:
+            stream.write("*.c -whitespace\n")
+        self.assertTrue(any("whitespace exceptions differ" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+
+    def test_openssl_source_rejects_missing_patch_and_unselected_source(self):
+        patch = self.root / "third-party/openssl-armcap-sve.patch"
+        patch.write_bytes(patch.read_bytes() + b"\n")
+        files = CHECKS.repository_files(self.root)
+        self.assertTrue(any("ARM patch changed" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+        name = "third-party/openssl-armcap-sve.json"
+        self.write(name, (self.root / name).read_text().replace(
+            '"applied-to-workspace-source"', '"not-applied"'))
+        self.assertTrue(any("ARM patch metadata differs" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+        self.write("Cargo.toml", (self.root / "Cargo.toml").read_text().replace(
+            'path = "third-party/openssl-src"', 'path = "third-party/unreviewed"'))
+        self.assertTrue(any("does not select" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+
     def test_untracked_included_ignored_excluded_tracked_never_hidden(self):
         self.write("bad.md", "synthetic\r\n")
         self.write("local-data/private.txt", "ignored synthetic\r\n")

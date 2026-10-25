@@ -49,6 +49,9 @@ JSON_YAML_FILES = {
 WORKFLOW_SOURCE = ".github/workflow-sources/pr-check.json"
 WORKFLOW_FILE = ".github/workflows/pr-check.yml"
 MAX_FILE_BYTES = 5 * 1024 * 1024
+OPENSSL_SOURCE_PREFIX = "third-party/openssl-src/"
+OPENSSL_SOURCE_MANIFEST = "third-party/openssl-src-upstream.json"
+OPENSSL_SOURCE_MANIFEST_SHA256 = "cf19919264f45b1ffab02f34087f21db1967e7b107c2a1becd7b919841fbe60a"
 AGGREGATE_RUN = """python3 - <<'PY'
 import json, os, sys
 results = json.loads(os.environ['NEEDS_JSON'])
@@ -163,6 +166,17 @@ def ignored_tracked_files(root):
 
 def check_text(root, files):
     errors, texts, documents = [], {}, {}
+    # 例外由固定来源清单及各原始文件哈希共同授权，不能仅按目录跳过。
+    exemptions = set()
+    if any(name.startswith(OPENSSL_SOURCE_PREFIX) for name in files):
+        try:
+            manifest = openssl_source_manifest(root)
+            for name in manifest["textExceptions"]:
+                path = root / OPENSSL_SOURCE_PREFIX / name
+                if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == manifest["files"][name]:
+                    exemptions.add(OPENSSL_SOURCE_PREFIX + name)
+        except (OSError, ValueError) as error:
+            errors.append(f"openssl-src: no text exceptions: {error}")
     for name in files:
         path = root / name
         if path.stat().st_size > MAX_FILE_BYTES:
@@ -183,15 +197,15 @@ def check_text(root, files):
                 errors.append(f"{name}: text is not UTF-8")
             continue
         texts[name] = text
-        if raw.startswith(b"\xef\xbb\xbf"):
+        if raw.startswith(b"\xef\xbb\xbf") and name not in exemptions:
             errors.append(f"{name}: UTF-8 BOM")
-        if b"\r" in raw:
+        if b"\r" in raw and name not in exemptions:
             errors.append(f"{name}: CR / CRLF, expected LF")
-        if raw and not raw.endswith(b"\n"):
+        if raw and not raw.endswith(b"\n") and name not in exemptions:
             errors.append(f"{name}: missing final newline")
         for number, line in enumerate(text.splitlines(), 1):
             trailing = re.search(r"[ \t]+$", line)
-            if trailing and not (
+            if trailing and name not in exemptions and not (
                 path.suffix == ".md" and trailing.group() == "  "
                 and line[:trailing.start()].strip()
             ):
@@ -340,16 +354,69 @@ def check_openssl_patch(root, files, documents):
         workspace = tomllib.loads((root / "Cargo.toml").read_text())
         if workspace.get("patch", {}).get("crates-io", {}).get("openssl-sys") != {"path": prefix.rstrip("/")}:
             errors.append("openssl-sys: workspace does not select the reviewed local patch")
-        if workspace.get("workspace", {}).get("exclude") != [prefix.rstrip("/")]:
+        if workspace.get("workspace", {}).get("exclude") != [prefix.rstrip("/"), OPENSSL_SOURCE_PREFIX.rstrip("/")]:
             errors.append("openssl-sys: local dependency must not become a workspace member")
     except (OSError, tomllib.TOMLDecodeError) as error:
         errors.append(f"openssl-sys: cannot inspect workspace: {error}")
     return errors
 
 
+def openssl_source_manifest(root):
+    raw = (root / OPENSSL_SOURCE_MANIFEST).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != OPENSSL_SOURCE_MANIFEST_SHA256:
+        raise ValueError("upstream manifest checksum differs from the reviewed source")
+    return json.loads(raw, object_pairs_hook=unique_object)
+
+
+def check_openssl_source(root, files):
+    """源码、文件模式和补丁均与已审阅来源绑定；不执行或下载上游内容。"""
+    try:
+        manifest = openssl_source_manifest(root)
+    except (OSError, ValueError) as error:
+        return [f"openssl-src: {error}"]
+    errors = []
+    actual = {name.removeprefix(OPENSSL_SOURCE_PREFIX) for name in files
+              if name.startswith(OPENSSL_SOURCE_PREFIX)}
+    if actual != set(manifest["files"]):
+        errors.append("openssl-src: source inventory differs from upstream")
+    patch = manifest["patch"]
+    for name in sorted(actual & set(manifest["files"])):
+        path = root / OPENSSL_SOURCE_PREFIX / name
+        expected = (patch["patchedFileSha256"] if name == patch["file"]
+                    else manifest["files"][name])
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            errors.append(f"openssl-src: unapproved upstream source change: {name}")
+        if bool(path.stat().st_mode & 0o111) != (name in manifest["executableFiles"]):
+            errors.append(f"openssl-src: upstream executable mode differs: {name}")
+    try:
+        if hashlib.sha256((root / patch["patch"]).read_bytes()).hexdigest() != patch["patchSha256"]:
+            errors.append("openssl-src: reviewed ARM patch changed")
+        description = json.loads((root / "third-party/openssl-armcap-sve.json").read_bytes(),
+                                 object_pairs_hook=unique_object)
+        if (any(description.get(key) != value for key, value in patch.items())
+                or description.get("archiveSha256") != manifest["archiveSha256"]
+                or description.get("status") != "applied-to-workspace-source"):
+            errors.append("openssl-src: ARM patch metadata differs from reviewed source")
+        expected_attributes = {f"/{OPENSSL_SOURCE_PREFIX}{name} -whitespace"
+                               for name in manifest["gitWhitespaceExceptions"]}
+        attributes = {line for line in (root / ".gitattributes").read_text().splitlines()
+                      if line.strip() and not line.lstrip().startswith("#")
+                      and any(word == "-whitespace" or word.startswith("whitespace=")
+                              for word in line.split()[1:])}
+        if attributes != expected_attributes:
+            errors.append("openssl-src: Git whitespace exceptions differ from reviewed source")
+        selection = tomllib.loads((root / "Cargo.toml").read_text()).get("patch", {}).get("crates-io", {})
+        if selection.get("openssl-src") != {"path": OPENSSL_SOURCE_PREFIX.rstrip("/")}:
+            errors.append("openssl-src: workspace does not select the reviewed local patch")
+    except (OSError, ValueError) as error:
+        errors.append(f"openssl-src: cannot inspect source selection: {error}")
+    return errors
+
+
 def check_governance(root, files, documents):
     errors = []
     errors.extend(check_openssl_patch(root, files, documents))
+    errors.extend(check_openssl_source(root, files))
 
     def require(condition, message):
         if not condition:
@@ -542,8 +609,9 @@ def check_governance(root, files, documents):
     covered = lambda name: (
         name == "Cargo.toml" or name.startswith("crates/ledger-core/")
         or name.startswith("crates/ledger-mobile/") or name.startswith("apps/m0_probe/")
-        # 完整来源另由 check_openssl_patch 校验；Linux core-quality 实际编译此依赖。
+        # 两份完整来源另由专用哈希检查校验；Linux core-quality 实际编译这些依赖。
         or name.startswith("third-party/openssl-sys/")
+        or name.startswith(OPENSSL_SOURCE_PREFIX)
     ) and Path(name).suffix != ".go"
     uncovered = [name for name in sources if not covered(name)]
     require(
@@ -623,9 +691,10 @@ def main():
             if args.base_ref:
                 errors.extend(commit_errors(root, args.base_ref, args.head_ref or "HEAD"))
             if not errors:
+                # 拒绝用例复制完整第三方源码到独立仓库；保留有界但足够的运行时间。
                 result = subprocess.run(
                     [sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_*.py"],
-                    cwd=root, timeout=60,
+                    cwd=root, timeout=180,
                 )
                 if result.returncode:
                     errors.append("repository checker regression tests failed")

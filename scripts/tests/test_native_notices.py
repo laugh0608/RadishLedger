@@ -58,6 +58,19 @@ class NativeNoticesTest(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "SQLite 版权声明缺失"):
                     self.collect()
 
+    def test_openssl_build_tool_license_is_required_and_preserved(self):
+        self.package["name"] = "openssl-src"
+        nested = self.base / "openssl/external/perl/Text-Template-1.56/LICENSE"
+        nested.parent.mkdir(parents=True)
+        (self.base / "openssl/LICENSE.txt").write_text("synthetic OpenSSL Apache\n")
+        with self.assertRaises(FileNotFoundError):
+            self.collect()
+        nested.write_text(" \n")
+        with self.assertRaisesRegex(SystemExit, "许可文件为空"):
+            self.collect()
+        nested.write_text("synthetic Text::Template dual license\n")
+        self.assertIn("synthetic Text::Template dual license\n", self.collect())
+
 
 if __name__ == "__main__":
     unittest.main()

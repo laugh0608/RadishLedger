@@ -70,5 +70,17 @@ Future<void> main(List<String> args) async {
         output.dependencies.add(entity.uri);
       }
     }
+    // 本地上游源码不是 workspace 成员，但仍是 native code asset 的真实输入。
+    // 跟踪完整目录，避免仅改 C / 汇编 / build 源码时复用旧产物。
+    for (final path in [
+      'third-party/openssl-sys/',
+      'third-party/openssl-src/',
+    ]) {
+      for (final entity in Directory.fromUri(
+        root.resolve(path),
+      ).listSync(recursive: true).whereType<File>()) {
+        output.dependencies.add(entity.uri);
+      }
+    }
   });
 }

@@ -53,7 +53,7 @@ FRB runtime / generator 均为 `2.13.0`，Rust 输入只有 `crate::api`；生�
 | Gradle / AGP | Gradle `9.1.0` bin 发行包及官方 SHA-256；AGP `9.0.1`，沿用 Flutter 模板的兼容开关 |
 | iOS | arm64 真机与 arm64 Simulator；App deployment target `15.0`；每批记录 `xcrun` 实际选择的 Xcode / SDK，历史构建版本不代表当前环境 |
 | 存储 | rusqlite `0.41.0`、libsqlite3-sys `0.39.1`、sqlcipher-src `419.0.6`，内含 SQLCipher `4.19.0 community` / SQLite `3.53.4` |
-| 密码底层 | Apple 使用 CommonCrypto；Android / Linux 使用静态 OpenSSL；已提交基线 `3.6.3`，受阻的 `4.0.3` 候选与阻塞见第 3.2 节，不依赖开发机动态 libcrypto |
+| 密码底层 | Apple 使用 CommonCrypto；Android / Linux 使用静态 OpenSSL；当前 `4.0.3` 加 SVE 前置条件补丁，来源和目标验证见第 3.2 节，不依赖开发机动态 libcrypto |
 | Dart code assets | hooks `1.0.2`、code_assets `1.0.0`、ffi `2.2.0`；`pubspec.lock` 固定传递依赖 |
 
 实验采用 Dart build hook 构建 Rust release code asset。构建入口 [build-mobile-core.py](../../scripts/build-mobile-core.py) 根据真实目标选择 Rust triple，传递 NDK clang / ar / ranlib 或 Apple SDK 与 deployment 参数；不支持的目标明确拒绝，缺库不能生成空资产或使用另一平台库代替。Flutter 当前传给 hook 的 iOS native 最低版本可能低于 App 的 deployment target，最终 App 安装下限仍为 `15.0`，不据此承诺较旧系统可用。
@@ -90,7 +90,7 @@ SQLCipher 候选源码与日志只在忽略的评审目录和 Cargo 缓存保留
 
 ### 3.2 OpenSSL 修补方案评审与验证计划
 
-2026-10-25 评审后，项目所有者已批准 **OpenSSL 4.0.3 的受控迁移**及仅调整构建依赖约束的 openssl-sys 最小本地补丁。候选已进入工作树并完成部分验证，但 Android 实际加载触发 SIGILL，尚未通过采用门槛。项目所有者随后要求提交候选并继续诊断，最近可运行的基线仍为 3.6.3；3.6.5 只作明确期限内的应急选择。保留 Apple CommonCrypto、Android / Linux 静态 OpenSSL，不调整 SQLCipher 4.19.0 / SQLite 3.53.4、业务加密、KDF、schema、bridge 或支持矩阵。
+2026-10-25 评审后，项目所有者已批准 **OpenSSL 4.0.3 的受控迁移**及仅调整构建依赖约束的 openssl-sys 最小本地补丁。候选曾因 Android 初始化 SIGILL 停止采用并保存为 `72d13b0`。隔离修复证据保存为 `1d000cf` 后，项目所有者明确批准完整 openssl-src 与两行补丁正式接入、哈希约束的精确文本例外和正式工作区复验。当前源包与治理约束见[源码说明](../../third-party/openssl-src-patch.md)；历史失败保留在下文，正式接入结果另列。保留 Apple CommonCrypto、Android / Linux 静态 OpenSSL，不调整 SQLCipher 4.19.0 / SQLite 3.53.4、业务加密、KDF、schema、bridge 或支持矩阵。
 
 #### 已核对的约束
 
@@ -119,7 +119,7 @@ SQLCipher 候选源码与日志只在忽略的评审目录和 Cargo 缓存保留
 
 1. 固定 SQLCipher 链及其他包；仅为非 Apple 目标引入 OpenSSL 4.0.3 / openssl-src `400.0.2+4.0.3`。保持现有静态构建、算法 / provider 配置与已启用 feature，不混入 legacy 裁剪、FIPS、TLS、动态库或新密码提供方。
 2. 优先采用正式发布、明确支持 400 系列的 openssl-sys；若实施时仍无该版本，使用已批准的**仓库内可审计的 openssl-sys 0.9.117 最小补丁**：保留完整发布源码与许可，仅将 openssl-src 构建依赖约束精确指向 400.0.2，记录原包哈希、补丁 diff 与撤除条件。禁止将 400 包伪装成 300 版本、修改 Cargo 缓存或关闭版本检查。工作树已包含完整 81 文件副本；来源、两个 manifest 的精确版本差异、JSON 末尾 LF 及撤除条件见[补丁说明](../../third-party/openssl-sys-patch.md)。治理检查反向还原差异并逐文件核对原包哈希。
-3. 上游可直接替代该补丁且全部验证通过后撤除。若发现需要修改 openssl-src / OpenSSL C 或汇编、改 SQLCipher 算法、广泛修改 FFI 绑定、升级无关包、改变系统范围或增加新 provider，则停止此切片并报告真实阻塞，不不断扩大补丁。
+3. 上游可直接替代该补丁且全部验证通过后撤除。后续已单独批准完整 openssl-src 副本和 ARM SVE 前置条件两行修改；除此之外若需修改 OpenSSL C / 汇编、SQLCipher 算法、FFI 绑定、无关包、系统范围或 provider，仍停止并重新评审。
 4. 不推荐默认使用独立 OpenSSL 安装目录接入：现有 vendored 路径通过 DEP_OPENSSL_INCLUDE 获取头文件，而普通 bundled-sqlcipher 外部路径会输出动态 crypto 链接。确需独立构建时，必须统一 openssl-sys 与 SQLCipher 的目标头文件 / 静态库、限定 OPENSSL_NO_VENDOR / OPENSSL_STATIC 等目标环境、修正来源清单，并拒绝意外系统 pkg-config / Homebrew 库。它不是设置 OPENSSL_DIR 即告完成的低成本办法。
 
 #### 验证顺序与通过条件
@@ -135,7 +135,7 @@ SQLCipher 候选源码与日志只在忽略的评审目录和 Cargo 缓存保留
 
 Android / Linux 的运行入口、模拟器实例 / 数据与清理范围已在本批实施授权中明确，不能为了补证据私自更换目标、升级系统镜像或修改 CPU 能力覆盖。
 
-#### 本次结果与继续条件
+#### 首次迁移结果与阻塞记录（72d13b0）
 
 - 来源与最小修改：openssl-src `400.0.2+4.0.3` 发布归档 SHA-256 匹配 registry，2492 个缓存源文件逐字匹配归档；openssl-sys `0.9.117` 的 81 文件来源清单通过。根锁定 135 个包中仅 openssl-src 版本及 openssl-sys 来源改变，133 个包条目和 Pub lockfile 不变。MIT / Apache-2.0 等实际许可已重新收集，notices 检查通过；本批未完成新的 OSV 查询，不能沿用旧查询声称新链无命中。
 - Linux 实际 OpenSSL：旧 3.6.3 / 新 4.0.3 worker 都用 SQLCipher 4.19.0；正常关闭和 SIGKILL 后待恢复 WAL 的旧 A11 库由新版成功打开，完整事实、身份、错材料不改写、独立恢复和原意图重放通过。新链 26 项核心 / 桥接 Rust 测试通过，包括 pager、临时文件与并发。现有离线容器是 Rust 1.96.1，旧 / 新使用相同镜像；这项辅助证据不等于主机 / Android 的 Rust 1.96.0 工具链验证。
@@ -143,14 +143,14 @@ Android / Linux 的运行入口、模拟器实例 / 数据与清理范围已在�
 - Apple 宿主回归：Rust 1.96.0 的 26 项测试、fmt、严格 clippy 与 C header 检查通过；Flutter 19 项宿主测试、格式和严格分析通过。Apple 仍为 CommonCrypto；本批因 Android 阻塞未继续 iOS native 构建或设备回归。
 - Android 阻塞：既有 Pixel_9_Pro / API35 / arm64 / 16 KiB 页模拟器上，原生 pager 测试和实际 Flutter App 均在加载库时 SIGILL。addr2line / 反汇编定位到 OPENSSL_cpuid_setup → _armv8_sve_get_vl_bytes 的 cntb 指令。独立 C 诊断读到 HWCAP 的 SVE=0、HWCAP2 的 SVE2=1，PR_SVE_GET_VL 返回 -1 / EINVAL；同设备加载已保存旧 3.6.3 库成功，新 4.0.3 库退出 132。证据支持“当前模拟器能力报告与执行能力不一致触发新初始化路径”，不能推断所有 Android 真机均失败，也不能认定是 SQLCipher 账务错误。
 
-最小 sys 版本补丁可以编译，但不足以通过目标运行门槛。项目所有者已要求保存候选提交并继续 ARM 能力探测 / 模拟器兼容诊断；若需要 OpenSSL C 源码修补、系统镜像 / 模拟器更新或其他版本选择，必须另行说明精确差异、维护责任和重新验证范围后确认。不得用 OPENSSL_armcap 覆盖、全局 no-asm、改提供方或跳过失败目标制造通过。Android 的 provider 查询、pager / 恢复、两桥接压力 / UI、资源比较，以及其后的 iOS / 公告检查和最终提交尚未完成。
+首次仅有 sys 版本补丁时不能通过目标运行门槛，因此当时停止采用、保存候选并继续诊断。此后另行批准的源码接入和复验见下文；仍禁止用 OPENSSL_armcap 覆盖、全局 no-asm、改提供方或跳过失败目标制造通过。
 
 本批证据保存在忽略的 `local-evidence/m0-c/2026-10-25-openssl/`，包含旧基线、来源哈希、日志、加载对照和清理记录。候选按新指令保存提交，未推送；实际下一步以[当前进度](../status/current.md)为准。
 
 
 #### ARM 能力修复的隔离验证与正式接入方案
 
-候选保存提交为 `72d13b0`。随后在忽略目录从该提交导出源码，并复制已核验的 openssl-src 发布包，仅修改 `openssl/crypto/armcap.c` 一处条件：[两行候选补丁](../../third-party/openssl-armcap-sve.patch)要求先有 ARMV8_SVE，再接受 HWCAP2_SVE2。[来源与前后哈希](../../third-party/openssl-armcap-sve.json)明确其为诊断候选，**主工作区 Cargo 构建尚未应用此补丁**；不能拿隔离结果宣称已提交候选已修复。
+候选保存提交为 `72d13b0`。随后在忽略目录从该提交导出源码，并复制已核验的 openssl-src 发布包，仅修改 `openssl/crypto/armcap.c` 一处条件：[两行候选补丁](../../third-party/openssl-armcap-sve.patch)要求先有 ARMV8_SVE，再接受 HWCAP2_SVE2。[来源与前后哈希](../../third-party/openssl-armcap-sve.json)现已更新为正式应用状态；此处记录的是 `1d000cf` 的隔离诊断过程，当时主工作区尚未应用，正式工作区结果另列。
 
 [Linux HWCAP 规范](https://docs.kernel.org/arch/arm64/elf_hwcaps.html)将 SVE2 定义为以 SVE 为前提的能力；[SVE 系统接口说明](https://docs.kernel.org/arch/arm64/sve.html)要求检查 HWCAP_SVE。该修改保留正常能力选择，只拒绝 SVE 缺失而 SVE2 单独出现的矛盾组合，不改算法、KDF、静态链接、provider 或全局环境变量。
 
@@ -162,11 +162,26 @@ Android / Linux 的运行入口、模拟器实例 / 数据与清理范围已在�
 - 双桥接实际 UI 的错误口令、取消晚结果、原库重试通过；结果截图复核输入为空、无截断，系统认证缺口仍显式显示。两 bridge 各 6200 次有界压力调用、并发、panic / ABI / native 错误及取消通过，thin liveBuffers=0；记录 RSS 采样但没有据此宣称长时泄漏或与旧版性能等价。
 - iOS arm64 / iPhoneOS native 构建通过，CommonCrypto 符号仍存在，无 OpenSSL 依赖；未执行 iOS 模拟器或真机回归。未修改模拟器配置、CPU 覆盖或系统保护。
 
-现有 openssl-src Build 只从包内源码复制构建，没有可传入补丁 / 替代源码的正式参数。正式接入建议保持现有构建链，增加精确锁定的本地 openssl-src 源包副本、根 patch 和逐文件来源核对，再应用上述一处语义改动；不引入新的 wrapper crate、下载器、编译器拦截或修改 Cargo 缓存。代价为 **2492 个文件、约 33.16 MB 原始源码**（最大单文件约 1.37 MB），以及后续上游修复的跟踪 / 撤除责任。原包另有 31 个文件带末尾空白、CR 或缺少末尾 LF，若保留原始字节，需要明确的、仅在来源哈希验证后生效的第三方文本例外；不能泛化关闭仓库卫生检查。
+现有 openssl-src Build 只从包内源码复制构建，没有可传入补丁 / 替代源码的正式参数。正式接入建议保持现有构建链，增加精确锁定的本地 openssl-src 源包副本、根 patch 和逐文件来源核对，再应用上述一处语义改动；不引入新的 wrapper crate、下载器、编译器拦截或修改 Cargo 缓存。代价为 **2492 个文件、约 33.16 MB 原始源码**（最大单文件约 1.37 MB），以及后续上游修复的跟踪 / 撤除责任。原包另有 31 个文件带末尾空白或缺少末尾 LF，若保留原始字节，需要明确的、仅在来源哈希验证后生效的第三方文本例外；不能泛化关闭仓库卫生检查。
 
-这是较先前 sys 81 文件副本更大的来源 / 治理范围，尚未批准正式接入。确认后需先落实原包与补丁完整性、许可 / notices、构建资产失效依赖，再以正式工作区重跑 Android 原生 / App / 恢复 / UI / 压力、Linux 旧库和 Apple 回归，补公告与必要资源比较后提交。也可暂缓本地源码维护、等待上游正式修复；当前没有验证可直接替代的发行版，不以换版本或更新模拟器绕过决策。
+这一较先前 sys 81 文件副本更大的来源 / 治理范围，已获项目所有者明确批准。正式接入保留完整包、逐文件哈希和原模式，应用既定补丁并补齐构建资产依赖。31 个文本例外与 77 个 Git 空白路径按固定清单核验；后者额外覆盖空白末行、空格后接 Tab 等 Git 规则，不是新增目录通配豁免。未引入另一套构建入口、改动缓存或更新模拟器。
 
-诊断证据位于 `local-evidence/m0-c/2026-10-25-openssl-armcap/`。测试 App 已由 Flutter driver 卸载，包不存在；本批模拟器与 ADB 已停止。隔离构建临时复用的本地 debug 签名路径链接已移除，没有复制密钥。候选补丁、来源清单和诊断程序可独立审阅，未将 33 MB 源包加入主工作区 Git。
+诊断证据位于 `local-evidence/m0-c/2026-10-25-openssl-armcap/`。测试 App 已由 Flutter driver 卸载，包不存在；本批模拟器与 ADB 已停止。隔离构建临时复用的本地 debug 签名路径链接已移除，没有复制密钥。该隔离批次当时未将 33 MB 源包加入主工作区；后续正式接入由独立授权和验证批次完成。
+
+#### 正式工作区接入结果
+
+项目所有者批准后，在 dev / 1d000cf 的干净工作区加入完整源包及精确来源清单。2492 个文件中只有 armcap.c 与原包不同，112 个可执行模式保留；两份本地 source 包不加入 workspace 成员。根 lockfile 仍为 135 个包，仅 openssl-src 的 registry 身份变为受校验的本地来源，其他 134 条与 Pub lockfile 不变。Flutter hook 的真实输出已登记两份源包输入，包括 armcap.c；native notices 补齐本地来源和 Text::Template 嵌套许可。来源漂移、例外扩大、模式 / patch 改动与嵌套许可缺失的拒绝回归已通过。
+
+正式批次 `local-evidence/m0-c/2026-10-25-openssl-adoption/` 取得以下证据：
+
+- macOS Rust 1.96.0：26 项测试、fmt、严格 clippy 和 C header；Flutter 19 项宿主测试、格式及严格分析通过。iOS arm64 / iPhoneOS 构建通过，CommonCrypto 符号保留，无 OpenSSL 调用依赖；此批未执行 iOS 设备回归。
+- Linux arm64：既有离线 Rust 1.96.1 镜像内 26 项测试通过；另显式执行旧 OpenSSL 3.6.3 worker 的正常关闭 / SIGKILL 待恢复 WAL 两状态升级，A11 完整事实 / 身份、错材料不改写、独立恢复与原意图重放通过。该辅助镜像不代替项目固定 1.96.0 工具链。
+- Android 原失败模拟器：实际 SQLCipher 4.19.0 / SQLite 3.53.4 / OpenSSL 4.0.3、独立 AES-CBC / HMAC / PBKDF2 向量、正常 RAND 与缺失提供方失败传播通过；四组合源码诊断保留有效 SVE2 路径。正式 APK 的 native 库为 7372912 字节，NEEDED 无 libcrypto / libssl，不使用能力覆盖。
+- Android 原生 pager 81 组故障、3 组对照和 2 组临时文件检查通过；普通 App 两桥接共 16 组恢复、48 组文件故障通过并清理。实际 UI 错误输入、取消晚结果及原库重试通过，截图复核输入为空、布局完整；各 6200 次压力、并发和取消通过，薄 ABI 活跃 buffer 为 0。
+- 有界资源记录：同一 Linux 镜像各五次公开向量加建库，旧 / 新耗时中位数为 92 / 90 ms；仅此工作负载未见明显回退。Android thin RSS 四次约 325–335 MB，FRB 约 378–382 MB，取消各 1 次核心调用、40 检查点且晚结果隐藏；不据此宣称长期泄漏排除或真机性能等价。
+- OSV 对当前 131 个 registry 包加 2 个本地包的上游名称 / 版本查询，共 133 项无命中；本地补丁完整性另由源文件与补丁哈希核验，OSV 不审计本地差异。40 个 Pub 包沿用前批记录，不冒充本次复查。
+
+Linux 首次因证据输出目录尚未建立而失败；创建指定目录后完整重跑通过。Android 独立 provider harness 首次默认使用无权限临时目录，改为自身 App 私有 UUID 目录后通过；没有放宽生产权限或测试断言。真实失败与最终结果均保留。测试 App、模拟器、ADB、容器及本批合成数据已清理。Android 系统认证仍为 deviceSecure=false / 代码 11，真实 SVE2 硬件、真机 release / 保护与掉电仍未验收；本次完成依赖接入，不宣称 M0 退出或数据库可降级。
 
 ## 4. 复现入口
 

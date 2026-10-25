@@ -49,7 +49,7 @@ workflow 的聚合必须 `always()` 等待 `Repo Hygiene` 与 `Core Quality`，�
 
 Action 使用 [actions/checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) 的[完整 commit](https://github.com/actions/checkout/commit/3d3c42e5aac5ba805825da76410c181273ba90b1)。选择记录用于复核引用，不宣称已在远端运行；升级时审阅来源、权限和实际 PR 行为。
 
-Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/ledger-mobile` 和 `apps/m0_probe`；另有明确排除 workspace 的 `third-party/openssl-sys` 完整上游副本，由原包哈希 / 最小差异检查覆盖并经 Linux core-quality 实际编译；未知语言工程或 Go 实现仍会阻断。检查器同时核对必需 manifests / lockfile / 工具链和根版本镜像，语言组件不能增加跳过条件或改成返回成功的脚本。新增实际模块或语言时同步更新 workflow、检查器契约、说明和回归；更复杂的恢复、协议、数据库、平台与安全验证按[开发规范](../docs/development/README.md)执行。
+Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/ledger-mobile` 和 `apps/m0_probe`；另有明确排除 workspace 的 `third-party/openssl-sys` 与 `third-party/openssl-src` 完整上游副本，由原包哈希 / 最小差异检查覆盖并经 Linux core-quality 实际编译；未知语言工程或 Go 实现仍会阻断。检查器同时核对必需 manifests / lockfile / 工具链和根版本镜像，语言组件不能增加跳过条件或改成返回成功的脚本。新增实际模块或语言时同步更新 workflow、检查器契约、说明和回归；更复杂的恢复、协议、数据库、平台与安全验证按[开发规范](../docs/development/README.md)执行。
 
 ## 移动构建、生成与证据
 
@@ -57,7 +57,7 @@ Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/led
 
 [generate-mobile-bridge.py](generate-mobile-bridge.py) 使用项目内固定 FRB / cargo-expand，从 `crate::api` 生成 Rust / Dart binding，检查工具版本并关闭自动依赖升级。它会写生成代码，只在 API 改动后显式执行。
 
-[collect-native-notices.py](collect-native-notices.py) 从本机锁定缓存收集两端 arm64 与验证宿主的 native 许可，并保留固定 Rust 标准库的官方许可集；`--check` 只读比较。它不联网，缓存缺失明确失败；重新生成需复核 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)。本地 openssl-sys 仅接受根 patch 指定的精确路径，并保留 MIT 及补丁标记；其他未知本地依赖不静默略过。普通 CI 没有宣称完整供应链扫描。
+[collect-native-notices.py](collect-native-notices.py) 从本机锁定缓存收集两端 arm64 与验证宿主的 native 许可，并保留固定 Rust 标准库的官方许可集；`--check` 只读比较。它不联网，缓存缺失明确失败；重新生成需复核 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)。本地 openssl-sys / openssl-src 仅接受根 patch 指定的精确路径，保留包装与嵌套许可及补丁标记（包括构建期 Text::Template）；其他未知本地依赖不静默略过。普通 CI 没有宣称完整供应链扫描。
 
 sqlcipher-src 的包装许可、嵌套 SQLCipher / libtomcrypt 许可与 SQLite header 首段声明分别收集；缺失、空文件或声明格式漂移均拒绝生成。[许可回归](tests/test_native_notices.py)使用临时合成包验证完整收集和拒绝路径，由 `check-repo` 的测试发现入口执行，不接触真实缓存。
 
@@ -73,9 +73,9 @@ M0_PREVIOUS_BOOTSTRAP_WORKER=/absolute/path/to/saved/baseline-worker \
 
 OpenSSL 升级另用 `M0_PREVIOUS_OPENSSL_WORKER` 和 `previous_openssl_preserves_closed_and_interrupted_vaults`，其他 cargo 参数与上例相同。旧 worker 必须是 SQLCipher 4.19.0 + OpenSSL 3.6.3，候选为 SQLCipher 4.19.0 + OpenSSL 4.0.3；测试保存前后的 provider 运行日志及二进制指纹，不能以 Apple CommonCrypto 冒充（该用例在 Apple 明确拒绝执行）。两个用例复用同一 A11 保真 / 恢复流程，但外部 worker 来源必须分别证明。
 
-[openssl_vectors.c](tests/openssl_vectors.c) 是独立公开密码向量和 RAND / SQLCipher 初始化失败传播验证，当前由迁移批次显式执行，不纳入普通 macOS CommonCrypto 检查。用目标 C 编译器加 `-std=c11 -Wall -Wextra -Werror -DSQLITE_HAS_CODEC`，显式传入同批 Cargo 输出的 OpenSSL / SQLCipher include、`libsqlcipher.a` 和 `libcrypto.a`，Linux 另加 `-ldl -pthread -lm`，Android 另加 `-ldl -lm -llog`；不得以系统 `-lcrypto` 代替。执行参数依次为 `vectors` 或 `provider-failure`、精确版本字符串、尚不存在的合成数据库路径。两个模式必须分别启动进程，版本 / 向量 / 预期失败不符返回非零，成功时只删除指定数据库。失败应先检查精确路径、保留诊断，再按归属清理，不全局覆盖 OpenSSL 配置。本次目标阻塞与实际完成范围见[OpenSSL 专题](../docs/development/mobile-core-prototype.md#32-openssl-修补方案评审与验证计划)。
+[openssl_vectors.c](tests/openssl_vectors.c) 是独立公开密码向量和 RAND / SQLCipher 初始化失败传播验证，当前由迁移批次显式执行，不纳入普通 macOS CommonCrypto 检查。用目标 C 编译器加 `-std=c11 -Wall -Wextra -Werror -DSQLITE_HAS_CODEC`，显式传入同批 Cargo 输出的 OpenSSL / SQLCipher include、`libsqlcipher.a` 和 `libcrypto.a`，Linux 另加 `-ldl -pthread -lm`，Android 另加 `-ldl -lm -llog`；不得以系统 `-lcrypto` 代替。执行参数依次为 `vectors` 或 `provider-failure`、精确版本字符串、尚不存在的合成数据库路径。两个模式必须分别启动进程，版本 / 向量 / 预期失败不符返回非零，成功时只删除指定数据库。失败应先检查精确路径、保留诊断，再按归属清理，不全局覆盖 OpenSSL 配置。实际完成范围及历史阻塞见[OpenSSL 专题](../docs/development/mobile-core-prototype.md#32-openssl-修补方案评审与验证计划)。
 
-[openssl_armcap_probe.c](tests/openssl_armcap_probe.c) 将实际 OpenSSL armcap.c 的 `getauxval` 改名为诊断替身（编译参数 `-Dgetauxval=probe_getauxval`），直接编译原始 / 候选源码，并显式传入同批生成的 OpenSSL include、源包 include 与 crypto 目录。按目标使用 `-Wall -Wextra -Werror`，分别以 `TEST_CAPS=00/01/10/11` 启动进程；无效输入退出 2。独立期望表要求无 SVE 时不能启用 SVE2，检查其他密码加速位及向量长度探测次数。上游 4.0.3 的 01 组合预期失败，候选四组预期通过。该替身仅属于单元诊断；普通 provider / pager / App 测试不得携带 TEST_CAPS 或 OPENSSL_armcap 能力覆盖。可审阅补丁及其前后指纹见[ARM 修复专题](../docs/development/mobile-core-prototype.md#arm-能力修复的隔离验证与正式接入方案)。该补丁目前不由主工作区构建自动应用。
+[openssl_armcap_probe.c](tests/openssl_armcap_probe.c) 将实际 OpenSSL armcap.c 的 `getauxval` 改名为诊断替身（编译参数 `-Dgetauxval=probe_getauxval`），直接编译原始 / 候选源码，并显式传入同批生成的 OpenSSL include、源包 include 与 crypto 目录。按目标使用 `-Wall -Wextra -Werror`，分别以 `TEST_CAPS=00/01/10/11` 启动进程；无效输入退出 2。独立期望表要求无 SVE 时不能启用 SVE2，检查其他密码加速位及向量长度探测次数。上游 4.0.3 的 01 组合预期失败，候选四组预期通过。该替身仅属于单元诊断；普通 provider / pager / App 测试不得携带 TEST_CAPS 或 OPENSSL_armcap 能力覆盖。可审阅补丁及其前后指纹见[ARM 修复专题](../docs/development/mobile-core-prototype.md#arm-能力修复的隔离验证与正式接入方案)。主工作区已选择含此补丁的完整源包，来源 / 精确文本例外与撤除条件见[源码说明](../third-party/openssl-src-patch.md)。
 
 M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `local-evidence/m0-c/`；由各集成 driver 或设备控制器保存，构建产物和缓存保持忽略。bootstrap UI driver 支持 `M0C_EVIDENCE_SUBDIR`，resilience driver 支持 `M0B_EVIDENCE_SUBDIR`；两者只接受单个英文字母 / 数字 / 下划线 / 连字符名称，以保留历史批次。同一 Flutter 工作目录的构建、测试与模式切换按实验说明串行执行。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
 

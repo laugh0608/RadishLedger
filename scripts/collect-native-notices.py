@@ -51,7 +51,8 @@ def package_notices(package, frb_root, apache_file):
         files = [base / "LICENSE", base / "sqlcipher/LICENSE-sqlcipher",
                  base / "sqlcipher/LICENSE-libtomcrypt"]
     if name == "openssl-src":
-        files.append(base / "openssl/LICENSE.txt")
+        files.extend([base / "openssl/LICENSE.txt",
+                      base / "openssl/external/perl/Text-Template-1.56/LICENSE"])
     if not files:
         raise SystemExit(f"缺少 {name} {package['version']} 的许可材料，不能生成空 notice")
     notices = [normalize(path) for path in files]
@@ -77,8 +78,8 @@ def render():
             if package["id"] not in used or package["id"] in document["workspace_members"]:
                 continue
             if not package["source"]:
-                expected = ROOT / "third-party/openssl-sys/Cargo.toml"
-                if package["name"] != "openssl-sys" or Path(package["manifest_path"]).resolve() != expected:
+                expected = ROOT / "third-party" / package["name"] / "Cargo.toml"
+                if package["name"] not in {"openssl-sys", "openssl-src"} or Path(package["manifest_path"]).resolve() != expected:
                     raise SystemExit("存在未经登记的本地 native 依赖，不能遗漏其许可")
             packages[package["id"]] = package
     config = json.loads((ROOT / "apps/m0_probe/.dart_tool/package_config.json").read_text())
@@ -107,6 +108,7 @@ def render():
         "dart-sys uses its declared Apache-2.0 alternative; its embedded Dart SDK BSD notice is retained.",
         "FRB Rust crates use the same upstream 2.13.0 MIT notice supplied in the Dart package.",
         "SQLCipher and OpenSSL notices include their bundled upstream licenses.",
+        "OpenSSL's bundled Text::Template 1.56 license is retained as build-tool source material; it is not a mobile runtime provider.",
         "sqlcipher-src includes SQLCipher, SQLite's header notice and libtomcrypt's dual license; libtomcrypt is not selected by our native builds.",
         "",
     ]
