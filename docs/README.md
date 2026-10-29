@@ -15,6 +15,7 @@
 | 合成移动核心实验如何调用、构建和复现 | [移动核心实验](development/mobile-core-prototype.md)、[第三方来源](../THIRD_PARTY_NOTICES.md) |
 | 人工恢复、精确清理、诊断和锁屏实验如何执行 | [人工实验管理](development/mobile-core-prototype.md#713-人工实验页的精确失效清理与候选切换)、[非秘密报告](development/mobile-core-prototype.md#714-人工实验的有界非秘密报告)、[iOS 文件观测](development/mobile-core-prototype.md#715-ios-有界锁屏访问观测)、[设备操作单](development/mobile-core-validation.md#64-单批操作单与验收停止线) |
 | 多端如何连接、提交、解决冲突 | [同步协议与连接边界](sync-protocol.md) |
+| M0-D 如何复核事务、分页、域隔离与恢复 | [同步事务共同案例](validation/sync-cases.md)、[待冻结契约](sync-protocol.md#91-规格实现与冻结门槛) |
 | 保护什么、谁持有密钥、如何恢复 | [威胁模型与加密](privacy-threat-model.md) |
 | 如何交付自部署和官方服务 | [自部署与托管](self-hosting.md) |
 | 如何导入、备份、恢复和换服务器 | [数据可迁移性](data-portability.md) |
@@ -33,6 +34,7 @@
 - 账务公式与事件语义以领域模型为准；传输顺序不改变业务日期或金额。
 - 共同账务案例的具体输入与人工预期只维护在验证 JSON；样例说明、页面与技术矩阵引用它，不复制另一套数值。样例结构版本不等于生产契约版本。
 - 同步与公开 envelope 以同步方案为准；密钥与加密认证边界以威胁模型为准，二者同时变更时相互复核。
+- 同步案例只维护合成调度与独立事务预期，金额仍引用共同账务 JSON；规格推演、真实 PostgreSQL、客户端状态机和端到端验证分别取证，不以文档或符号正文代替实现通过。
 - 部署目标和客户端支持范围需用真实目标证据冻结，不能以框架支持矩阵替代产品验收。
 - 根入口只保留定位、导航和启动约束；不要复制完整设计或当前批次。
 - Git / PR / CI 策略以治理专题为准；配置与检查器保持同一口径。根 LICENSE 与第三方许可决定授权，不由贡献表单或自动化扩展。
