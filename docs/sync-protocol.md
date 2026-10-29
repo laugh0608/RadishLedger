@@ -109,7 +109,7 @@ M0-D 首个验证候选采用 PostgreSQL 中每个稳定安全域 `(instance, ac
 
 代价是同域写入串行、长批次延长锁等待；持锁期间不执行网络调用或客户端密码工作。跨域能否并行还受账号配额等共享资源约束，必须实测，不能直接公布吞吐结论。其他等价的提交排序方案可以另行比较，但仅提高隔离级别并不能据此宣称预分配 sequence 已成为提交顺序，仍须通过同一晚提交 / 分页案例。
 
-这一选择由现有“同域提交必须有稳定先后”的要求推导，尚未完成真实数据库证明。PostgreSQL 说明普通 sequence 分配不随回滚撤销，Read Committed 的各语句可读到不同提交快照；因此不能用先取号后独立提交或排队前读出的 head 作为该方案的证据。[事务隔离说明](https://www.postgresql.org/docs/18/transaction-iso.html)。行锁持有到事务结束，savepoint 回滚可能释放其后取得的锁，这也是验证必须控制锁生命周期的原因。[显式锁说明](https://www.postgresql.org/docs/18/explicit-locking.html)。引用 18 版文档只解释候选机制，不冻结服务端版本或宣称该方案已经通过。
+这一选择由现有“同域提交必须有稳定先后”的要求推导；其真实数据库实验入口、证据边界与生产化缺口见 [D-DB 实验](validation/sync-cases.md#51-d-db-独立-postgresql-实验)，实验通过也不自动冻结方案。PostgreSQL 说明普通 sequence 分配不随回滚撤销，Read Committed 的各语句可读到不同提交快照；因此不能用先取号后独立提交或排队前读出的 head 作为该方案的证据。[事务隔离说明](https://www.postgresql.org/docs/18/transaction-iso.html)。行锁持有到事务结束，savepoint 回滚可能释放其后取得的锁，这也是验证必须控制锁生命周期的原因。[显式锁说明](https://www.postgresql.org/docs/18/explicit-locking.html)。引用 18 版文档只解释候选机制，不冻结服务端版本或宣称该方案已经通过。
 
 ### 3.3 稳定分页
 

@@ -111,3 +111,10 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 [check-mobile-app-files.py](check-mobile-app-files.py) 控制已安装专用入口的现有模拟器 App，不自行构建 / 安装或启动设备。正常 App 进程运行两 bridge × MEMORY / FILE，独立复核路径、UID、权限、Android release / SELinux / shell 拒绝及 iOS 备份排除；`--interrupt-once` 实际停止后要求新 PID 清理登记并重新完成。iOS Simulator 缺少文件保护属性记录未验证，不默认成功。专用入口、诊断传输和精确恢复步骤见 [App 文件复验](../docs/development/mobile-core-prototype.md#711-app-进程安全域与文件路径复验)。`check-mobile.sh` 的 `file_boundary_test.dart` 验证宿主真实双 bridge 以及弱保护、调试进程和越界路径拒绝；不代替移动证据。
 
 [check-ios-file-protection.sh](check-ios-file-protection.sh) 用现有 macOS / Xcode Swift 工具链编译实际 iOS 文件采样器；运行 `sh scripts/check-ios-file-protection.sh` 验证 DB / WAL / SHM 合成内容保留、身份 / 链接拒绝、同库缺失与零长度 sidecar 的独立覆盖、独立对照实际 pwrite / fsync / 回读、已有对照不覆盖与描述符关闭，以及注入状态下的超时、取消、短写 / 同步失败和错误分类。该独立定向检查不连接设备或模拟硬件保护，临时目录与编译缓存退出时清理；可选 App 入口、45 秒窗口及证据边界见[有界锁屏观测](../docs/development/mobile-core-prototype.md#715-ios-有界锁屏访问观测)。
+
+
+### M0-D 同步事务数据库实验
+
+[`check-sync-db.py`](check-sync-db.py) 是显式运行的 PostgreSQL 合成事务实验，使用 [`sync_db_probe.py`](sync_db_probe.py) 的独立 psql 连接和锁屏障，以及 [`sync-db-probe.sql`](sync-db-probe.sql) 的候选事务。运行 `python3 -B scripts/check-sync-db.py` 复用已缓存 PostgreSQL 17.10 镜像，不 pull、不安装驱动、不发布宿主端口；按 image ID 创建本批容器，2 CPU / 512 MiB，结束核对归属后删除容器及匿名数据卷。它不随 check-repo / check-core / check-mobile 自动启动，也不将未执行算通过。
+
+用例核对完整状态、真实锁等待、CAS / 幂等、事务中断 / PostgreSQL 强杀恢复、sequence 漏读反例、固定分页、冻结竞争及有界控制登记。连接中断不能冒充真实 HTTP 服务或双端同步；allowed 控制位、符号 jsonb、实验上限都不是生产契约。版本、源码指纹、屏障 / 进程与清理结果写入新的 `local-evidence/m0-d/<session>/report.json`。精确边界、运行 / 中断清理方式与尚未覆盖的案例见 [D-DB 复现说明](../docs/validation/sync-cases.md#51-d-db-独立-postgresql-实验)。
