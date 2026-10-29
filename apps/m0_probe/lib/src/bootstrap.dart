@@ -165,6 +165,45 @@ class SystemProtection {
     return Map<String, dynamic>.from(result);
   }
 
+  Future<Map<String, dynamic>> observeBootstrapFiles(
+    String run,
+    String observation,
+  ) async {
+    if (!Platform.isIOS) {
+      return {
+        'schema': 1,
+        'run': run,
+        'observation': observation,
+        'outcome': 'unsupportedPlatform',
+        'lockedAttempted': false,
+        'hardwareProtectionVerified': false,
+        'acceptance': 'not-assessed',
+        'coverage': {
+          for (final name in ['ledger.db', 'ledger.db-wal', 'ledger.db-shm'])
+            name: 'notObserved',
+        },
+      };
+    }
+    final value = await _call<Map>('observeBootstrapFileProtection', {
+      'run': run,
+      'observation': observation,
+    });
+    if (value == null) throw const BootstrapFailure('invalid_response');
+    return Map<String, dynamic>.from(value);
+  }
+
+  Future<void> cancelBootstrapObservation(
+    String run,
+    String observation,
+  ) async {
+    if (Platform.isIOS) {
+      await _call<void>('cancelBootstrapFileProtection', {
+        'run': run,
+        'observation': observation,
+      });
+    }
+  }
+
   Future<String> control({bool remove = false}) async {
     final root = await _call<String>(remove ? 'removeControl' : 'control');
     if (root == null || root.isEmpty) {

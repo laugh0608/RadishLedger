@@ -97,7 +97,9 @@ M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `loc
 
 [collect-bootstrap-evidence.py](collect-bootstrap-evidence.py) 只离线重组人工页显式输出的本批合成分片，不启动 adb / simctl、不安装或连接设备。输入 / 输出限本仓库 `local-evidence/m0-c`，已保存的普通 UTF-8 输入上限 2 MiB、报告上限 96 KiB；缺片、冲突、身份不符或输出已存在均拒绝，错误不回显输入内容。它不执行 B / C 验收，也不把任意日志清洗为可公开材料。字段来源、批次开关、精确命令和局限见[有界非秘密报告](../docs/development/mobile-core-prototype.md#714-人工实验的有界非秘密报告)。
 
-`bootstrap_evidence_test.dart` 测试报告字段排除、记录边界、默认禁止输出、停止等待 / 晚成功、失败重试及 Dart → Python 实际往返，后者使用 PATH 中已有 Python 标准库。`scripts/tests/test_bootstrap_evidence.py` 的重组 / 路径 / 文件边界回归由仓库检查自动发现；两组均不读取真实设备日志。共用分片函数维持原 App 文件报告的格式，并由宿主测试核对。
+`bootstrap_lock_review_test.dart` 经 thin / FRB 的真实 Rust / SQLCipher 验证同库非秘密基线、错材料保全、重新独立解锁 / 系统适配、取消后复核与清理重试；系统认证和文件观测是显式替身。`bootstrap_lock_review_widget_test.dart` 覆盖后台输入清除、窗口继续 / 取消、重新解锁失败、摘要不符、晚结果抑制、重开页缺失基线和窄屏两倍字号。两份测试纳入正常 Flutter 发现入口；[同库复核契约](../docs/development/mobile-core-prototype.md#716-解锁后-a11-前后复核)区分文件保护观测和账务比较，不能据宿主结果宣布真机验收。
+
+`bootstrap_evidence_test.dart` 测试报告字段排除、记录边界、默认禁止输出、停止等待 / 晚成功、失败重试、同库复核投影 / 96 KiB 上限及 Dart → Python 实际往返，后者使用 PATH 中已有 Python 标准库。`scripts/tests/test_bootstrap_evidence.py` 的重组 / 路径 / 文件边界回归由仓库检查自动发现；两组均不读取真实设备日志。共用分片函数维持原 App 文件报告的格式，并由宿主测试核对。
 
 Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程中的测试 VFS 在实际 WAL 提交、DELETE 提交和 checkpoint 的写入 / 同步位置注入故障，SIGKILL 后由未注入的普通入口恢复并重试；另观察 TEMP 表、排序 / 索引、物化查询、语句回滚、VACUUM、super-journal 和 SHM。MEMORY 策略与 FILE 正向对照分别断言，匿名临时文件在关闭前扫描。可通过 `M0_PAGER_EVIDENCE_DIR` 保存忽略目录内的有界 JSON 证据；子进程入口标记 ignored，由两个父测试实际调度，不能作为未运行或单独通过的业务测试计数。完整判据、清理和适用边界见[DB pager 与临时文件](../docs/development/mobile-core-prototype.md#79-db-pager-故障与临时文件边界)。
 
@@ -106,4 +108,4 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 
 [check-mobile-app-files.py](check-mobile-app-files.py) 控制已安装专用入口的现有模拟器 App，不自行构建 / 安装或启动设备。正常 App 进程运行两 bridge × MEMORY / FILE，独立复核路径、UID、权限、Android release / SELinux / shell 拒绝及 iOS 备份排除；`--interrupt-once` 实际停止后要求新 PID 清理登记并重新完成。iOS Simulator 缺少文件保护属性记录未验证，不默认成功。专用入口、诊断传输和精确恢复步骤见 [App 文件复验](../docs/development/mobile-core-prototype.md#711-app-进程安全域与文件路径复验)。`check-mobile.sh` 的 `file_boundary_test.dart` 验证宿主真实双 bridge 以及弱保护、调试进程和越界路径拒绝；不代替移动证据。
 
-[check-ios-file-protection.sh](check-ios-file-protection.sh) 用现有 macOS / Xcode Swift 工具链编译实际 iOS 文件采样器；运行 `sh scripts/check-ios-file-protection.sh` 验证 DB / WAL / SHM 合成内容保留、身份 / 链接拒绝、独立对照实际 pwrite / fsync / 回读、已有对照不覆盖与描述符关闭，以及注入状态下的超时、取消、短写 / 同步失败和错误分类。该独立定向检查不连接设备或模拟硬件保护，临时目录与编译缓存退出时清理；可选 App 入口、45 秒窗口及证据边界见[有界锁屏观测](../docs/development/mobile-core-prototype.md#715-ios-有界锁屏访问观测)。
+[check-ios-file-protection.sh](check-ios-file-protection.sh) 用现有 macOS / Xcode Swift 工具链编译实际 iOS 文件采样器；运行 `sh scripts/check-ios-file-protection.sh` 验证 DB / WAL / SHM 合成内容保留、身份 / 链接拒绝、同库缺失与零长度 sidecar 的独立覆盖、独立对照实际 pwrite / fsync / 回读、已有对照不覆盖与描述符关闭，以及注入状态下的超时、取消、短写 / 同步失败和错误分类。该独立定向检查不连接设备或模拟硬件保护，临时目录与编译缓存退出时清理；可选 App 入口、45 秒窗口及证据边界见[有界锁屏观测](../docs/development/mobile-core-prototype.md#715-ios-有界锁屏访问观测)。

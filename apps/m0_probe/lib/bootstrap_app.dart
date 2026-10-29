@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'src/bootstrap.dart';
 import 'src/bootstrap_evidence.dart';
 import 'src/bootstrap_selection.dart';
+import 'src/bootstrap_lock_review.dart';
+import 'src/bootstrap_lock_review_controls.dart';
 import 'src/probe.dart';
 
 class BootstrapApp extends StatelessWidget {
@@ -50,6 +52,7 @@ class _BootstrapPageState extends State<BootstrapPage>
   Map<String, dynamic>? _capability;
   final _evidence = BootstrapEvidence();
   BootstrapObservation? _activeObservation;
+  BootstrapLockReview? _lockReview;
 
   @override
   void initState() {
@@ -145,6 +148,9 @@ class _BootstrapPageState extends State<BootstrapPage>
     'selection_changed' => '本次实验归属已变化，已停止操作，请重新打开核对。',
     'invalid_selection' ||
     'selection_publish_incomplete' => '本次归属登记损坏或发布未完成，保留现场，请勿新建覆盖。',
+    'lock_baseline_invalid' => '基线不完整，请先完成并核对原合成账务。',
+    'lock_review_mismatch' || 'fixture_mismatch' => '完整事实或身份不符，保留现场；不会自动重写原库。',
+    'lock_resources_unconfirmed' => '观测资源关闭未证实，保留现场并停止验收。',
     'cleanup_failed' => '清理尚未完成，保留本次登记，请重试精确清理。',
     _ => '操作未完成（$code），原材料保留。',
   };
@@ -183,7 +189,9 @@ class _BootstrapPageState extends State<BootstrapPage>
           _clearIssued();
           _issuedRecovery = Uint8List.fromList(result.secret);
         }
-        _status = result.report['cleaned'] == true
+        _status = result.report['lockReview'] != null
+            ? '同库复核状态已更新，文件观测与账务比较分别记录'
+            : result.report['cleaned'] == true
             ? '本次合成实验已清理，可以选择另一接入候选'
             : result.report['actionCancelled'] == true
             ? '已取消实验操作，原材料保留'
@@ -197,7 +205,16 @@ class _BootstrapPageState extends State<BootstrapPage>
       });
       observation.success(result.report);
     } on BootstrapFailure catch (error) {
-      observation.failure(error);
+      observation.failure(
+        error,
+        report: {
+          if ([
+            BootstrapAction.lockObserve,
+            BootstrapAction.lockVerify,
+          ].contains(operation))
+            ...?_lockReview?.report,
+        },
+      );
       if (mounted && epoch == _epoch) {
         setState(() {
           _error = _message(error.code);
@@ -268,6 +285,7 @@ class _BootstrapPageState extends State<BootstrapPage>
         _cleanupPending = selection?.cleanupCandidates != null;
         if (selection == null) {
           _clearIssued();
+          _lockReview = null;
           _report = null;
           _service = BootstrapService(
             service.directory,
@@ -346,7 +364,56 @@ class _BootstrapPageState extends State<BootstrapPage>
     return service.cleanupSelection();
   }, refreshSelection: true);
 
-  Future<void> _lock() async {
+  Uint8List _reviewInput(String unlock) => switch (unlock) {
+    'password' => _passwordBytes(),
+    'recovery' => _recoveryBytes(),
+    _ => Uint8List(0),
+  };
+
+  Future<void> _prepareLockReview(
+    String unlock,
+  ) => _perform(BootstrapAction.lockBaseline, () async {
+    final service = _service!;
+    final epoch = _epoch;
+    final input = _reviewInput(unlock);
+    _password.clear();
+    _recovery.clear();
+    _clearIssued();
+    final review = await BootstrapLockReview.prepare(service, unlock, input);
+    if (!mounted || epoch != _epoch || !identical(service, _service)) {
+      throw const BootstrapFailure('interrupted');
+    }
+    _lockReview = review;
+    return BootstrapResult({'ok': true, 'report': review.report}, Uint8List(0));
+  });
+
+  Future<void> _observeLockReview() =>
+      _perform(BootstrapAction.lockObserve, () async {
+        _password.clear();
+        _recovery.clear();
+        _clearIssued();
+        // 与后台清除输入分离；此闭包及原生观测不携带解锁材料。
+        return _lockReview!.observe();
+      });
+
+  Future<void> _verifyLockReview(String unlock) =>
+      _perform(BootstrapAction.lockVerify, () async {
+        final review = _lockReview!;
+        final epoch = _epoch;
+        final input = _reviewInput(unlock);
+        _password.clear();
+        _recovery.clear();
+        _clearIssued();
+        return review.verify(
+          _service!,
+          unlock,
+          input,
+          isCurrent: () =>
+              mounted && epoch == _epoch && identical(review, _lockReview),
+        );
+      });
+
+  Future<void> _lock({bool cancelObservation = true}) async {
     FocusManager.instance.primaryFocus?.unfocus();
     _epoch += 1;
     _activeObservation?.stopWaiting();
@@ -366,6 +433,7 @@ class _BootstrapPageState extends State<BootstrapPage>
     }
     try {
       await service?.lock();
+      if (cancelObservation) await _lockReview?.cancelObservation();
       observation?.success({});
     } on BootstrapFailure catch (error) {
       observation?.failure(error);
@@ -483,7 +551,7 @@ class _BootstrapPageState extends State<BootstrapPage>
       if (state == AppLifecycleState.paused ||
           state == AppLifecycleState.hidden ||
           state == AppLifecycleState.detached) {
-        _lock();
+        _lock(cancelObservation: false);
       }
     }
   }
@@ -497,6 +565,9 @@ class _BootstrapPageState extends State<BootstrapPage>
     _recovery.clear();
     _password.dispose();
     _recovery.dispose();
+    _lockReview?.cancelObservation().catchError((Object _) {
+      debugPrint('M0C_FILE_CANCEL_NOT_CONFIRMED');
+    });
     _service?.lock().catchError((Object _) {
       debugPrint('M0C_CANCEL_NOT_CONFIRMED');
     });
@@ -508,6 +579,7 @@ class _BootstrapPageState extends State<BootstrapPage>
     if (_shield) return const Scaffold(body: Center(child: Text('已锁定')));
     final enabled = !_busy && _service != null;
     final vaultEnabled = enabled && !_cleanupPending;
+    final mutationEnabled = enabled && _lockReview == null;
     return Scaffold(
       appBar: AppBar(
         title: const Text('萝卜账簿 · 解锁实验'),
@@ -642,7 +714,7 @@ class _BootstrapPageState extends State<BootstrapPage>
                     child: const Text('独立恢复'),
                   ),
                   OutlinedButton(
-                    onPressed: enabled
+                    onPressed: mutationEnabled
                         ? () => _perform(
                             BootstrapAction.resume,
                             () => _service!.core({
@@ -654,7 +726,7 @@ class _BootstrapPageState extends State<BootstrapPage>
                     child: const Text('继续创建'),
                   ),
                   OutlinedButton(
-                    onPressed: enabled
+                    onPressed: mutationEnabled
                         ? () => _perform(
                             BootstrapAction.reissueRecovery,
                             () => _service!.core({
@@ -665,7 +737,7 @@ class _BootstrapPageState extends State<BootstrapPage>
                     child: const Text('重发待确认恢复材料'),
                   ),
                   OutlinedButton(
-                    onPressed: enabled
+                    onPressed: mutationEnabled
                         ? () => _perform(
                             BootstrapAction.confirmRecovery,
                             () => _service!.core({
@@ -676,7 +748,7 @@ class _BootstrapPageState extends State<BootstrapPage>
                     child: const Text('确认恢复材料'),
                   ),
                   OutlinedButton(
-                    onPressed: enabled
+                    onPressed: mutationEnabled
                         ? () => _perform(
                             BootstrapAction.seed,
                             () => _service!.core({
@@ -688,7 +760,7 @@ class _BootstrapPageState extends State<BootstrapPage>
                     child: const Text('写入合成账务'),
                   ),
                   OutlinedButton(
-                    onPressed: enabled
+                    onPressed: mutationEnabled
                         ? () => _perform(
                             BootstrapAction.establishPassword,
                             () => _service!.establishProtection(
@@ -710,7 +782,7 @@ class _BootstrapPageState extends State<BootstrapPage>
                   ),
                   OutlinedButton(
                     key: const ValueKey('m0c-rebuild-recovery'),
-                    onPressed: enabled
+                    onPressed: mutationEnabled
                         ? () => _perform(
                             BootstrapAction.establishRecovery,
                             () => _service!.establishProtection(
@@ -723,7 +795,7 @@ class _BootstrapPageState extends State<BootstrapPage>
                   ),
                   OutlinedButton(
                     key: const ValueKey('m0c-remove-protection'),
-                    onPressed: enabled ? _removeProtection : null,
+                    onPressed: mutationEnabled ? _removeProtection : null,
                     child: const Text('实验：使日常保护项缺失'),
                   ),
                 ],
@@ -756,6 +828,21 @@ class _BootstrapPageState extends State<BootstrapPage>
               ),
             if (_report?['fixtureComplete'] == true)
               const Text('完整事实与未同步队列已核对', key: ValueKey('m0c-success')),
+            if (_hasVault && !_cleanupPending)
+              ExpansionTile(
+                key: const ValueKey('m0c-review-expand'),
+                initiallyExpanded: _lockReview != null,
+                title: const Text('锁定前后同库复核'),
+                children: [
+                  BootstrapLockReviewControls(
+                    review: _lockReview,
+                    enabled: enabled,
+                    prepare: _prepareLockReview,
+                    observe: _observeLockReview,
+                    verify: _verifyLockReview,
+                  ),
+                ],
+              ),
           ],
         ),
       ),

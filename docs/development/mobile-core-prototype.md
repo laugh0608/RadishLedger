@@ -578,19 +578,23 @@ python3 -B scripts/collect-bootstrap-evidence.py \
 
 UI 可取消本次窗口，原生 timer / 引用在正常、取消、基线失败或超时返回时释放，显式关闭对照与目录描述符并记录两个 close errno；Flutter 对资源关闭失败保留失败状态，随后沿用精确目录清理。原 Rust owner 清理同时覆盖新增对照，thin / FRB 宿主检查均验证该文件随本次目录清理。若保护尚不可用导致清理失败，报告失败并保留已有归属登记；解锁后以同一 session 重开原入口核对和重试，不另建前缀清理。登记仍是临时目录文件，不增加掉电保证。
 
-结果置于原文件报告的 `lockObservation`，含精确 run / bridge；`outcome=observed` 仅表示两阶段均执行，不意味着拒绝与恢复成功。外层 `passed` 判断原四组文件实验、观测资源关闭和清理，不能代替锁屏判据。所有结果保留 `hardwareProtectionVerified=false`、`acceptance=not-assessed`。原实验随机 DB key 在核心调用后释放，因此本切片不验证解锁后的 SQL / A11 事实恢复；对照的真实设备 write 拒绝、恢复后原事实保全、跨 PID 与真机 release 日志仍需单独补齐。A11 接入方案见第 7.16 节。
+结果置于原文件报告的 `lockObservation`，含精确 run / bridge；`outcome=observed` 仅表示两阶段均执行，不意味着拒绝与恢复成功。外层 `passed` 判断原四组文件实验、观测资源关闭和清理，不能代替锁屏判据。所有结果保留 `hardwareProtectionVerified=false`、`acceptance=not-assessed`。原实验随机 DB key 在核心调用后释放，因此本切片不验证解锁后的 SQL / A11 事实恢复；对照的真实设备 write 拒绝、恢复后原事实保全、跨 PID 与真机 release 日志仍需单独补齐。同一 bootstrap 库的独立解锁与 A11 复核见第 7.16 节；两种入口分别记录。
 
 macOS 可运行 `sh scripts/check-ios-file-protection.sh`：现有 Swift 工具链编译真实原生采样器，以临时合成文件验证 DB / WAL / SHM 内容未改写、身份替换与链接拒绝，对照真实 pwrite / fsync / 回读、已有对照保留及描述符关闭；再用注入状态 / 错误验证拒绝分类、短写 / 同步失败基线拒绝、恢复、取消及跨截止时间不补记调用。临时文件与编译缓存在退出时精确清理。此入口不连接设备，不模拟硬件保护；原生目标类型检查与 Flutter 宿主检查也不代替完整 App 构建或移动 UI / 真机执行。
 
 
-### 7.16 解锁后 A11 前后复核的接入方案（未实现）
+### 7.16 解锁后 A11 前后复核
 
-第 7.11 节的临时文件实验在调用结束后丢弃随机 DB key，不能在外部保留或公开 key 来补恢复。后续切片复用现有人工 bootstrap 页、`BootstrapService` 与 Rust `Inspect`，使用原独立封装 / 日常保护重新解锁，不新增密码格式、key 缓存、旁路 SQL 或系统保护策略。以下为接入与验证要求，尚不是已具备的 App 流程。
+人工 bootstrap 页已接入同库复核，复用 `BootstrapService` 与 Rust `Inspect`，不新增密码格式、key 缓存、旁路 SQL 或系统保护策略。第 7.11 节的临时文件实验仍使用调用后丢弃的随机 DB key，不能拿它的另一账库替代本节原库证据。
 
-1. **同库基线。** 在当前 selection / bridge 下显式解锁，要求 ready / fixtureComplete，并核对完整 contentDigest、vault / device 身份、8 个修订、7 个 outbox、2 个候选和 1 个删除。随后只保留非秘密基线与本次观测身份；在启动原生观察前清空输入框、已展示恢复材料和可控 secret buffer，不让待执行闭包保留口令 / 恢复文本。
-2. **真实文件范围。** 原生观察绑定同一 bootstrap run，先核对 owner、根 / DB 属性及实际存在的 sidecar。正常关闭后的 WAL / SHM 可能不存在，必须分别记为未覆盖；不创建空 sidecar 或沿用另一随机库的文件证据。第 7.15 节当前要求三个文件齐备，不能直接作为该接入已经可用的证明。独立写对照仅是附属合成文件，观察结束不自动清理原 bootstrap 账库。
-3. **重新取得解锁能力。** 窗口返回且设备恢复可用后，由用户再次输入独立材料或重新完成系统认证，调用原 Inspect。不能复用锁屏前已解包 key，不能把 native `accessRestored` 当作 SQL 成功。原生观察跨后台等待与 UI 的 `_epoch` 取消语义分别处理：后台仍清除敏感输入，晚结果只能归属原 run / bridge，不能覆盖新选择的界面或报告。
-4. **比较和停止。** 重新核对相同 run / bridge / vault / device、完整 contentDigest 与 A11 身份 / 计数；任何差异保留现场并失败，不重新 seed、replay、重建或覆盖原库使摘要一致。实际 IO 未执行、仅属性通过、用户取消、解锁失败和摘要不一致分别报告；重新解锁成功不自动补记锁屏拒绝。
-5. **恢复与证据。** 取消只停止本次等待，原账库与已有恢复路径保留；原有确认清理流程负责最终删除。初次接入只保留本进程非秘密基线，进程退出后标为基线缺失，不能宣称跨 PID 恢复已比较。诊断继续固定字段投影和有界输出，不能塞入完整 audit / 解锁材料。
+操作入口位于人工页的「锁定前后同库复核」展开区：
 
-接入验证先在宿主对 thin / FRB 的真实核心执行前后 Inspect、错材料保全、完整摘要 / 身份比较、取消后重新解锁以及清理重试；状态机与平台拒绝用替身时须明确标注。再验证后台期间输入清除、晚结果隔离、无 sidecar、缺失基线和新 UI。只有相应目标上的实际操作才可补移动 / 真机矩阵，不将本方案或宿主重开对象当作执行证据。
+1. **显式建立基线。** 先完成创建、恢复材料确认及 A11 合成账务，再用口令、恢复材料或系统认证建立基线。要求 ready / fixtureComplete，保存同一 service 的 run / bridge 与非秘密 vault / device、完整 contentDigest；独立核对 8 个修订、7 个 outbox、2 个候选、1 个删除和净资产 18000。这里只保留身份、摘要与计数，不缓存完整 audit 或解锁能力。输入框、已展示恢复材料和可控字节随操作清除；Dart 字符串、平台 / FFI codec 的内部副本不承诺可擦除。
+2. **启动文件观测。** 单独点击「启动锁屏观测」，此时再次清空输入，调用不携带秘密。iOS `observeBootstrapFileProtection` 绑定原 run 与本次随机 observation 身份，仍使用 45 秒连续时钟窗口。核对 owner、目录 / 普通文件属主、权限、链接与 inode，以及 iOS Complete 属性。DB 必须存在；WAL / SHM 仅允许初始 ENOENT，分别记 `absentAtStart`，不补造空 sidecar；现存零长度文件的成功 EOF 仍是已观察。独立实际写对照采用 `lock-write-control-<observation>` 排他创建，只写合成字节，随本次账库的显式清理删除；不覆盖旧对照或自动清理原账库。独立文件入口仍要求三文件齐备。
+3. **后台与取消分开。** 后台照常清除输入、遮蔽页面并取消系统认证，但不取消原生文件观测。显式锁定 / 停止等待和页面销毁按 run / observation 精确请求取消；原生回传仍归属原 run / bridge。等待结束前不允许另起操作。UI epoch 失效后不展示旧解锁结果；原文件观测仍可记录在原复核对象及原操作诊断中，不能覆盖另一页面或选择。
+4. **重新解锁复核。** 窗口结束后，再次输入口令 / 恢复材料或重新完成系统认证，通过原 Inspect 比较相同 run / bridge / vault / device、完整摘要与 A11 计数。错误材料、取消或等待被中断保留原基线，可重新解锁重试；身份、完整摘要或 A11 不符时明确失败并保留现场。复核对象存在期间禁用 seed、resume、重发 / 确认恢复材料、保护重建和精确项失效等变更操作，不自动 replay、重建或覆盖来制造一致；仍可普通读取和显式清理。比较成功后可显式建立下一轮基线。
+5. **证据分别解释。** `lockBaseline` / `lockObserve` / `lockVerify` 纳入原有最近 64 条有界报告。固定 `lockReview` 投影只包含本次身份、前后摘要、计数、复核状态、文件窗口结果、覆盖范围、拒绝 / 恢复布尔值及资源关闭状态，排除 native 路径、原始采样、完整 audit 和秘密。`accessDeniedObserved` / `accessRestored` 仍要求三文件；`coveredFilesDenied` / `coveredFilesRestored` 仅覆盖实际存在文件，不能补记缺失 sidecar。`observed` 只代表两个阶段已执行，`matched` 只代表重新解锁后账务一致；取消、超时未执行、恢复未观测、文件基线失败和资源关闭未证实分别保留，均不自动判定硬件保护通过。
+
+Android 当前返回 `unsupportedPlatform`，iOS Simulator 返回 `unsupportedSimulator`；仍可进行重新解锁 / 账务复核，但两者不产生锁屏拒绝证据。所有报告维持 `hardwareVerified=false` / `acceptance=not-assessed`。基线仅存在当前页面进程内，重开页或新 PID 明确显示没有基线，不能宣称跨 PID 已比较；原 selection 与独立恢复流程继续可用。
+
+[宿主恢复测试](../../apps/m0_probe/test/bootstrap_lock_review_test.dart)通过 thin / FRB 真实 Rust / SQLCipher 核心验证前后 Inspect、错误材料保全、系统解锁适配、取消后重试与清理失败重试；认证 / 文件状态使用替身，不算系统保护实测。[页面测试](../../apps/m0_probe/test/bootstrap_lock_review_widget_test.dart)验证后台清除、晚结果隔离、取消、摘要不符、重开页缺失基线及窄屏两倍字号可滚动操作。Swift 定向检查验证真实合成文件的缺失 / 空 sidecar、链接拒绝、原内容保留和独立写对照，状态拒绝仍为注入。目标构建、移动 UI / 生命周期和真机证据分别记 current / devlog，不用宿主测试或包构建替代设备操作。

@@ -15,6 +15,8 @@ final class M0Protection {
   private var fileProbe: M0FileProtectionProbe?
   private var fileTimer: Timer?
   private var fileResult: FlutterResult?
+  private var fileRun: String?
+  private var fileObservationId: String?
 
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: "radishledger/m0c/protection", binaryMessenger: messenger)
@@ -100,24 +102,48 @@ final class M0Protection {
   }
 
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "cancelBootstrapFileProtection" {
+      let arguments = call.arguments as? [String: Any]
+      if let run = arguments?["run"] as? String, let id = arguments?["observation"] as? String,
+         run == fileRun, id == fileObservationId, let observation = fileObservation {
+        finishFileObservation(observation.cancel())
+      }
+      result(nil)
+      return
+    }
     if call.method == "cancelFileProtectionObservation" {
       if let observation = fileObservation { finishFileObservation(observation.cancel()) }
       result(nil)
       return
     }
-    if call.method == "observeFileProtection" {
+    if call.method == "observeFileProtection" || call.method == "observeBootstrapFileProtection" {
       guard fileObservation == nil else { result(failure("protection_busy")); return }
+      let arguments = call.arguments as? [String: Any]
+      let bootstrap = call.method == "observeBootstrapFileProtection"
+      let run = arguments?["run"] as? String ?? ""
+      let id = bootstrap ? arguments?["observation"] as? String : nil
+      guard run.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil,
+            !bootstrap || id?.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else {
+        result(failure("invalid_argument")); return
+      }
       #if targetEnvironment(simulator)
-      result(["schema": 1, "outcome": "unsupportedSimulator", "lockedAttempted": false,
-              "hardwareProtectionVerified": false, "acceptance": "not-assessed"])
+      var report: [String: Any] = ["schema": 1, "outcome": "unsupportedSimulator", "lockedAttempted": false,
+              "hardwareProtectionVerified": false, "acceptance": "not-assessed"]
+      if bootstrap {
+        report["run"] = run
+        report["observation"] = id
+        report["coverage"] = ["ledger.db": "notObserved", "ledger.db-wal": "notObserved", "ledger.db-shm": "notObserved"]
+      }
+      result(report)
       #else
       guard UIApplication.shared.isProtectedDataAvailable else {
         result(failure("temporarily_unavailable")); return
       }
       do {
-        let arguments = call.arguments as? [String: Any]
-        let probe = try M0FileProtectionProbe(storage: storage(), run: arguments?["run"] as? String ?? "")
+        let probe = try M0FileProtectionProbe(storage: storage(), run: run, observation: id)
         fileProbe = probe
+        fileRun = run
+        fileObservationId = id
         let observation = M0FileProtectionObservation(
           now: M0FileProtectionObservation.continuousTime(),
           available: { UIApplication.shared.isProtectedDataAvailable }, sample: { probe.sample() })
@@ -239,6 +265,13 @@ final class M0Protection {
     fileObservation = nil
     var report = report
     report["resources"] = fileProbe?.closeResources()
+    if let id = fileObservationId {
+      report["run"] = fileRun
+      report["observation"] = id
+      report["coverage"] = fileProbe?.coverage
+    }
+    fileRun = nil
+    fileObservationId = nil
     fileProbe = nil
     let result = fileResult
     fileResult = nil

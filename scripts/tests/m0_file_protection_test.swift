@@ -10,13 +10,18 @@ enum FileProtectionTests {
     }
     let storage = URL(fileURLWithPath: temporary).appendingPathComponent("m0-file-protection-" + UUID().uuidString)
     let root = storage.appendingPathComponent("m0c-" + run)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     defer { try! FileManager.default.removeItem(at: storage) }
     let owner = root.appendingPathComponent("owner")
     try Data(("RadishLedger M0-C synthetic vault v1\n" + run + "\n").utf8).write(to: owner)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: owner.path)
     let names = ["ledger.db", "ledger.db-wal", "ledger.db-shm"]
     let payload = Data("synthetic-file-protection-control".utf8)
-    for name in names { try payload.write(to: root.appendingPathComponent(name)) }
+    for name in names {
+      let file = root.appendingPathComponent(name)
+      try payload.write(to: file)
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
     let probe = try M0FileProtectionProbe(storage: storage.path, run: run)
     var available = true
     var calls = 0
@@ -166,6 +171,54 @@ enum FileProtectionTests {
     } catch { }
     try FileManager.default.removeItem(at: db)
     try FileManager.default.moveItem(at: saved, to: db)
+    // 同库关闭后 sidecar 可缺失：不制造空文件，也不能把部分覆盖记为全部恢复。
+    for name in ["ledger.db-wal", "ledger.db-shm"] { try FileManager.default.removeItem(at: root.appendingPathComponent(name)) }
+    let reviewId = String(repeating: "b", count: 32)
+    let partial = try M0FileProtectionProbe(storage: storage.path, run: run, observation: reviewId)
+    assert(partial.coverage == ["ledger.db": "observed", "ledger.db-wal": "absentAtStart", "ledger.db-shm": "absentAtStart"])
+    available = true
+    let partialObservation = M0FileProtectionObservation(now: 0, available: { available }, sample: { partial.sample() })
+    assert(partialObservation.start() == nil)
+    available = false
+    assert(partialObservation.tick(now: 1) == nil)
+    available = true
+    let partialReport = partialObservation.tick(now: 2)!
+    assert(partialReport["accessRestored"] as? Bool == false)
+    assert(partialReport["coveredFilesRestored"] as? Bool == true)
+    assert(partial.closeResources().values.allSatisfy { $0 == 0 })
+    for name in ["ledger.db-wal", "ledger.db-shm"] { assert(!FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path)) }
+    let sameDb = try Data(contentsOf: db)
+    assert(sameDb == payload)
+    do {
+      _ = try M0FileProtectionProbe(storage: storage.path, run: run)
+      fatalError("standalone entry still requires all sidecars")
+    } catch { }
+    // 正常关闭后现存零长度 WAL 可读到 EOF，仍是已观察，不能误记为缺失或读失败。
+    for name in ["ledger.db-wal", "ledger.db-shm"] {
+      let file = root.appendingPathComponent(name)
+      try Data().write(to: file)
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+    let emptySidecars = try M0FileProtectionProbe(storage: storage.path, run: run, observation: String(repeating: "d", count: 32))
+    let emptyObservation = M0FileProtectionObservation(now: 0, available: { true }, sample: { emptySidecars.sample() })
+    assert(emptyObservation.start() == nil)
+    assert(emptySidecars.coverage.values.allSatisfy { $0 == "observed" })
+    assert(emptySidecars.closeResources().values.allSatisfy { $0 == 0 })
+    for name in ["ledger.db-wal", "ledger.db-shm"] { try FileManager.default.removeItem(at: root.appendingPathComponent(name)) }
+    // 缺失允许仅限 ENOENT；链接和硬链接依旧拒绝。
+    let wal = root.appendingPathComponent("ledger.db-wal")
+    try FileManager.default.createSymbolicLink(at: wal, withDestinationURL: db)
+    do {
+      _ = try M0FileProtectionProbe(storage: storage.path, run: run, observation: String(repeating: "c", count: 32))
+      fatalError("optional sidecar symlink must reject")
+    } catch { }
+    try FileManager.default.removeItem(at: wal)
+    try FileManager.default.linkItem(at: db, to: wal)
+    do {
+      _ = try M0FileProtectionProbe(storage: storage.path, run: run, observation: String(repeating: "c", count: 32))
+      fatalError("hard-linked database must reject")
+    } catch { }
+    try FileManager.default.removeItem(at: wal)
     try Data("foreign-owner".utf8).write(to: owner)
     do {
       _ = try M0FileProtectionProbe(storage: storage.path, run: run)

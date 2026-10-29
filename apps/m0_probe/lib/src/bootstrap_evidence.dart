@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'bootstrap.dart';
+import 'bootstrap_lock_review.dart';
 import 'probe.dart';
 import 'probe_report.dart';
 
@@ -21,6 +22,9 @@ enum BootstrapAction {
   removeProtection,
   cleanup,
   lock,
+  lockBaseline,
+  lockObserve,
+  lockVerify,
 }
 
 bool _hex(Object? value, int length) =>
@@ -91,6 +95,12 @@ const _errors = {
   'cleanup_failed',
   'verification_failed',
   'platform_error',
+  'file_boundary_unavailable',
+  'lock_baseline_invalid',
+  'lock_review_mismatch',
+  'lock_resources_unconfirmed',
+  'lock_observation_incomplete',
+  'lock_observation_already_started',
 };
 
 Map<String, Object> _coreSummary(Map<String, dynamic> report) {
@@ -155,6 +165,50 @@ Map<String, Object> _coreSummary(Map<String, dynamic> report) {
       }.contains(protection['securityLevelCode'])) {
     result['securityLevelCode'] = protection['securityLevelCode'] as String;
   }
+  final review = report['lockReview'];
+  if (review is Map) {
+    final projected = <String, Object>{};
+    for (final key in ['reviewId', 'vault', 'device']) {
+      if (_hex(review[key], 32)) projected[key] = review[key] as String;
+    }
+    for (final key in ['baselineDigest', 'afterDigest']) {
+      if (_hex(review[key], 64)) projected[key] = review[key] as String;
+    }
+    for (final (key, allowed) in [
+      ('reviewState', lockReviewStates),
+      ('fileOutcome', lockFileOutcomes),
+      ('dbCoverage', lockFileCoverage),
+      ('walCoverage', lockFileCoverage),
+      ('shmCoverage', lockFileCoverage),
+    ]) {
+      if (allowed.contains(review[key])) projected[key] = review[key] as String;
+    }
+    for (final key in [
+      'lockedAttempted',
+      'accessDeniedObserved',
+      'accessRestored',
+      'coveredFilesDenied',
+      'coveredFilesRestored',
+      'controlWriteDeniedObserved',
+      'controlWriteRestored',
+      'resourcesClosed',
+    ]) {
+      if (review[key] is bool) projected[key] = review[key] as bool;
+    }
+    for (final key in [
+      'sequence',
+      'revisions',
+      'operationCount',
+      'candidateCount',
+      'deletedCount',
+    ]) {
+      final value = review[key];
+      if (value is int && value >= 0 && value <= 2147483647) {
+        projected[key] = value;
+      }
+    }
+    result['lockReview'] = projected;
+  }
   return result;
 }
 
@@ -180,7 +234,8 @@ class BootstrapObservation {
     _summary = summary;
   }
 
-  void failure(BootstrapFailure error) {
+  void failure(BootstrapFailure error, {Map<String, dynamic>? report}) {
+    if (report != null) _summary = _coreSummary(report);
     _finish('failed');
     _error = _errors.contains(error.code) ? error.code : 'unrecognized_error';
     _platform = _platformCode(error.platformCode);

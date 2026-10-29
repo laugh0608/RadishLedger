@@ -8,21 +8,27 @@ final class M0FileProtectionProbe {
   private var identities: [String: (dev_t, ino_t)] = [:]
   private var writeControl: M0FileWriteControl?
 
-  init(storage: String, run: String) throws {
+  init(storage: String, run: String, observation: String? = nil) throws {
     guard run.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else {
+      throw NSError(domain: "M0FileProtectionProbe", code: 1)
+    }
+    if let observation,
+       observation.range(of: "^[0-9a-f]{32}$", options: .regularExpression) == nil {
       throw NSError(domain: "M0FileProtectionProbe", code: 1)
     }
     directory = open(storage + "/m0c-" + run, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard directory >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
     do {
       var info = stat()
-      guard fstat(directory, &info) == 0, info.st_uid == geteuid() else {
+      guard fstat(directory, &info) == 0, info.st_uid == geteuid(),
+            info.st_mode & 0o777 == 0o700 else {
         throw NSError(domain: "M0FileProtectionProbe", code: 2)
       }
       let owner = openat(directory, "owner", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
       guard owner >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
       var bytes = [UInt8](repeating: 0, count: 128)
       let regular = fstat(owner, &info) == 0 && info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG)
+        && info.st_uid == geteuid() && info.st_nlink == 1 && info.st_mode & 0o777 == 0o600
       let count = regular ? read(owner, &bytes, bytes.count) : -1
       let closed = close(owner)
       let expected = Array(("RadishLedger M0-C synthetic vault v1\n" + run + "\n").utf8)
@@ -30,13 +36,26 @@ final class M0FileProtectionProbe {
         throw NSError(domain: "M0FileProtectionProbe", code: 3)
       }
       for name in Self.names {
-        guard fstatat(directory, name, &info, AT_SYMLINK_NOFOLLOW) == 0,
-              info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), info.st_uid == geteuid() else {
+        let status = fstatat(directory, name, &info, AT_SYMLINK_NOFOLLOW)
+        if observation != nil && name != "ledger.db" && status != 0 && errno == ENOENT { continue }
+        guard status == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              info.st_uid == geteuid(), info.st_nlink == 1, info.st_mode & 0o777 == 0o600 else {
           throw NSError(domain: "M0FileProtectionProbe", code: 4)
         }
         identities[name] = (info.st_dev, info.st_ino)
       }
-      writeControl = try M0FileWriteControl(directory: directory, path: storage + "/m0c-" + run)
+      #if os(iOS)
+      for name in [""] + Self.names.filter({ identities[$0] != nil }) {
+        let path = storage + "/m0c-" + run + (name.isEmpty ? "" : "/" + name)
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        guard (attributes[.protectionKey] as? FileProtectionType)?.rawValue == FileProtectionType.complete.rawValue
+          || attributes[.protectionKey] as? String == FileProtectionType.complete.rawValue else {
+          throw NSError(domain: "M0FileProtectionProbe", code: 5)
+        }
+      }
+      #endif
+      writeControl = try M0FileWriteControl(directory: directory, path: storage + "/m0c-" + run,
+                                          name: "lock-write-control" + (observation.map { "-" + $0 } ?? ""))
     } catch {
       close(directory)
       directory = -1
@@ -72,16 +91,20 @@ final class M0FileProtectionProbe {
       let count = read(fd, &byte, 1)
       let code = count < 0 ? Int(errno) : 0
       byte = 0
-      result = ["stage": "read", "result": count, "errno": code]
+      result = ["stage": "read", "result": count, "errno": code, "empty": info.st_size == 0]
     }
     let closed = close(fd)
     result["closeErrno"] = closed == 0 ? 0 : Int(errno)
     return result
   }
 
+  var coverage: [String: String] {
+    Dictionary(uniqueKeysWithValues: Self.names.map { ($0, identities[$0] == nil ? "absentAtStart" : "observed") })
+  }
+
   func sample() -> [String: Any] {
-    let files = Self.names.map { ["name": $0, "read": attempt($0, writeOpen: false), "writeOpen": attempt($0, writeOpen: true)] }
-    return ["files": files, "writeControl": writeControl!.sample()]
+    let files = Self.names.filter { identities[$0] != nil }.map { ["name": $0, "read": attempt($0, writeOpen: false), "writeOpen": attempt($0, writeOpen: true)] }
+    return ["files": files, "coverage": coverage, "writeControl": writeControl!.sample()]
   }
 }
 
@@ -91,8 +114,7 @@ private final class M0FileWriteControl {
   private var value: UInt8 = 0x5a
   private var protection = "unavailableOnHost"
 
-  init(directory: Int32, path: String) throws {
-    let name = "lock-write-control"
+  init(directory: Int32, path: String, name: String) throws {
     descriptor = openat(directory, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
     do {
@@ -179,24 +201,27 @@ final class M0FileProtectionObservation {
     return observation
   }
 
-  private static func successful(_ observation: [String: Any]) -> Bool {
+  private static func successful(_ observation: [String: Any], requireAll: Bool = true) -> Bool {
     guard observation["availableBefore"] as? Bool == true,
           observation["availableAfter"] as? Bool == true,
-          let files = observation["files"] as? [[String: Any]], files.count == 3 else { return false }
+          let files = observation["files"] as? [[String: Any]],
+          !files.isEmpty, (!requireAll || files.count == 3) else { return false }
     return files.allSatisfy { file in
       ["read", "writeOpen"].allSatisfy { key in
         guard let io = file[key] as? [String: Any] else { return false }
+        let count = io["result"] as? Int
+        let readable = count == 1 || (count == 0 && io["empty"] as? Bool == true)
         return io["stage"] as? String == (key == "read" ? "read" : "open") &&
-          io["result"] as? Int == (key == "read" ? 1 : 0) && io["errno"] as? Int == 0 &&
-          io["closeErrno"] as? Int == 0
+          (key == "read" ? readable : count == 0) && io["errno"] as? Int == 0 && io["closeErrno"] as? Int == 0
       }
     }
   }
 
-  static func denied(_ observation: [String: Any]) -> Bool {
+  static func denied(_ observation: [String: Any], requireAll: Bool = true) -> Bool {
     guard observation["availableBefore"] as? Bool == false,
           observation["availableAfter"] as? Bool == false,
-          let files = observation["files"] as? [[String: Any]], files.count == 3 else { return false }
+          let files = observation["files"] as? [[String: Any]],
+          !files.isEmpty, (!requireAll || files.count == 3) else { return false }
     return files.allSatisfy { file in
       ["read", "writeOpen"].allSatisfy { key in
         guard let io = file[key] as? [String: Any], let code = io["errno"] as? Int,
@@ -232,7 +257,7 @@ final class M0FileProtectionObservation {
     guard available() else { return finish("baselineUnavailable") }
     let baseline = capture()
     report["baseline"] = baseline
-    return Self.successful(baseline) && Self.writeSucceeded(baseline) ? nil : finish("baselineFailed")
+    return Self.successful(baseline, requireAll: false) && Self.writeSucceeded(baseline) ? nil : finish("baselineFailed")
   }
 
   func tick(now: TimeInterval) -> [String: Any]? {
@@ -244,12 +269,14 @@ final class M0FileProtectionObservation {
       report["locked"] = locked
       report["lockedAttempted"] = true
       report["accessDeniedObserved"] = Self.denied(locked)
+      report["coveredFilesDenied"] = Self.denied(locked, requireAll: false)
       report["controlWriteDeniedObserved"] = Self.writeDenied(locked)
       attempted = true
     } else if attempted && available() {
       let restored = capture()
       report["restored"] = restored
       report["accessRestored"] = Self.successful(restored)
+      report["coveredFilesRestored"] = Self.successful(restored, requireAll: false)
       report["controlWriteRestored"] = Self.writeSucceeded(restored)
       return finish("observed")
     }

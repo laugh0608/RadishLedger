@@ -11,6 +11,61 @@ const run = '22222222222222222222222222222222';
 
 void main() {
   test(
+    'lock review projection rejects extra fields and stays within report bound',
+    () {
+      const secret = 'synthetic-sensitive-extra';
+      final evidence = BootstrapEvidence(session: session);
+      for (var i = 0; i < BootstrapEvidence.maxObservations; i++) {
+        evidence
+            .begin(BootstrapAction.lockVerify, run, BridgeCandidate.frb)
+            .failure(
+              const BootstrapFailure('lock_review_mismatch'),
+              report: {
+                'lockReview': {
+                  'reviewId': run,
+                  'vault': run,
+                  'device': run,
+                  'reviewState': 'mismatch',
+                  'fileOutcome': 'observed',
+                  'baselineDigest': List.filled(64, 'a').join(),
+                  'afterDigest': List.filled(64, 'b').join(),
+                  'dbCoverage': 'observed',
+                  'walCoverage': 'absentAtStart',
+                  'shmCoverage': secret,
+                  'lockedAttempted': true,
+                  'accessDeniedObserved': false,
+                  'coveredFilesDenied': true,
+                  'coveredFilesRestored': true,
+                  'accessRestored': false,
+                  'resourcesClosed': true,
+                  'controlWriteDeniedObserved': true,
+                  'controlWriteRestored': true,
+                  'sequence': 8,
+                  'revisions': 8,
+                  'operationCount': 7,
+                  'candidateCount': 2,
+                  'deletedCount': 1,
+                  'secret': secret,
+                  'audit': secret,
+                  'nativeSample': {'path': secret},
+                  'hardwareProtectionVerified': true,
+                },
+              },
+            );
+      }
+      final text = evidence.snapshot().text;
+      expect(text, isNot(contains(secret)));
+      expect(utf8.encode(text).length, lessThanOrEqualTo(96 * 1024));
+      final summary = jsonDecode(
+        text,
+      )['observations'][0]['summary']['lockReview'];
+      expect(summary['reviewState'], 'mismatch');
+      expect(summary.containsKey('hardwareProtectionVerified'), isFalse);
+      expect(summary.containsKey('shmCoverage'), isFalse);
+    },
+  );
+
+  test(
     'projection never exports extra secrets, raw errors, paths, or full audit',
     () async {
       const secret = 'never-export-this-synthetic-secret';
