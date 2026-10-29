@@ -375,7 +375,25 @@ python3 -B scripts/check-mobile-bootstrap.py ios CB767BAB-1B1B-4AF8-A3FB-0C2B793
 
 控制器不启动设备，要求准确设备和本项目包。可用 `--output-dir local-evidence/m0-c/<batch>` 分批保留报告；解析后的路径必须位于项目 M0-C 忽略证据目录内。秘密只在内存和 `0600` 私有 FIFO 中传递；Android 写入用 `adb shell -T` 的定长 `dd`，读取用 `exec-out`，避免 raw exec 的输入方向 / 完成语义造成短帧。帧短读、长度错误和超时立即失败，不输出载荷。脚本结束逐个清理登记的随机账库及系统引用；失败时保留非秘密 ownedRuns 报告，后续仅按这些身份处理。不能覆盖失败报告后忘记残留对象。
 
-实际 UI 验证入口为 `integration_test/bootstrap_test.dart`，驱动为 `test_driver/bootstrap_test.dart`，复用常规 `flutter drive --driver=... --target=... -d <device>`。Android 可先限定 arm64 构建 integration target，再通过 `--use-application-binary=<apk>` 安装同一产物。它调用真实核心检查错误口令、锁定取消、晚结果抑制、重试、A11 独立计数及原库完整摘要 / 审计，截图只在输入已清空的合成结果页生成。设置 `M0C_EVIDENCE_SUBDIR=<batch>` 可将 UI 报告和截图写入同批子目录；只接受字母、数字、下划线和连字符组成的单个名称。宿主 widget / platform 测试另验后台状态和只读 codec；模拟生命周期不代替系统任务预览或真机后台证据。
+实际 UI 验证入口为 `integration_test/bootstrap_test.dart`，驱动为 `test_driver/bootstrap_test.dart`。两条 bridge 串行通过实际页面创建 / 确认、A11 写入、错误材料保全、解锁取消与晚结果抑制、独立恢复、同库基线 / 复核、诊断输出、清理取消、结构故障后的重开页重试和候选切换。两倍字号仅在测试内覆盖，不修改设备设置。截图前断言输入和新发恢复材料均已清空；清理确认框下方仍有进度动画，等待具体按钮可操作，不以整页动画停止作为确认条件。
+
+本入口要求空 selection；已有实验、未完成发布或本批标记存在时停止，不先清空来制造测试基线。必须传入同一个非秘密 32 位小写十六进制 session，并指定独立证据子目录、平台与准确模拟器 ID：
+
+```sh
+# apps/m0_probe；<batch> 只允许字母、数字、下划线和连字符。
+M0C_EVIDENCE_SUBDIR=<batch> M0C_EVIDENCE_SESSION=<session> \
+M0C_UI_PLATFORM=<ios-or-android> M0C_UI_DEVICE=<device> \
+  flutter drive --no-pub --keep-app-running \
+  --driver=test_driver/bootstrap_test.dart \
+  --target=integration_test/bootstrap_test.dart --device-id=<device> \
+  --dart-define=M0C_EVIDENCE_SESSION=<session>
+```
+
+Android 可先限定 arm64 构建 integration target，再通过 `--use-application-binary=<apk>` 安装同一产物，构建时须带相同 session。使用现有锁定依赖与缓存，缺少时先明确处理。`--keep-app-running` 是此批次保留安装与容器的必要参数：Flutter drive 默认收尾会卸载 App，不能用于承诺保留既有容器的操作。运行前核对包 / 合成目录基线并保存需恢复的原实验 App；运行后先检查本批报告、selection、owner 与标记清理，再停止 App、恢复原包及关闭本批设备 / ADB。`simctl install` 可能迁换数据容器路径，恢复核对以原可执行文件指纹和数据状态为准，不以路径字符串相等判断。失败报告的 ownedRuns 只供精确归属，不能以卸载替代系统项清理；本轮 UI 流程不创建或删除系统保护项。
+
+Driver 启动 [observe-bootstrap-ui-background.py](../../scripts/observe-bootstrap-ui-background.py)，只接受已启动的明确模拟器。它核对本批 session、selection、owner 与 PID；Android 用 HOME，iOS 启动 Settings，仅切换前台、不改设置，两秒后返回原 App。App 独立断言 paused → resumed 与同 PID，后台请求只有非秘密身份；driver 退出或控制器超时停止等待，切换被中断时仍尝试恢复前台。控制器成功不代替 App 生命周期断言，普通宿主检查不启动这个控制器。
+
+报告保留 completed / cleanupComplete / ownedRuns、两桥接结果与未执行的认证条件；截图和报告排他写入，不覆盖旧批次。整个测试或清理未完成时 driver 返回失败，即使上游 driver 输出了笼统成功文字也不能判通过。诊断分片继续按第 7.14 节离线重组，重组成功不代表验收。实际模拟器后台不等于系统任务预览、真机后台或跨 PID 恢复；文件保护在模拟器中明确 unsupported，精确系统项失效 / 重建仍需独立平台条件。
 
 报告与截图写入忽略目录 `local-evidence/m0-c/`。schema 2 每端核心报告包含两条 bridge ×（正常重启 + 六个故障点 + A11 非空 WAL 强杀 / 原意图重放），共 16 组；另有每条 bridge 四类文件 × 六种模式，共 48 组文件故障。恢复报告对照 A11 人工预期，并比较身份、完整摘要、审计及 ready；结束时复核平台能力未变。`protectionPrepared` / `protectionPublished` 及文件故障中的核心 local-wrap 恢复单列，不冒充系统认证。实际平台测试根据现有能力执行：iOS Simulator 可核对精确 Keychain 项删除与重建；Android 无认证条件时明确记录 unsupported，日常保护与实际失效仍未验收。SIGKILL 与显式故障注入不证明断电或实际磁盘故障恢复。
 

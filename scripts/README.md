@@ -77,7 +77,7 @@ OpenSSL 升级另用 `M0_PREVIOUS_OPENSSL_WORKER` 和 `previous_openssl_preserve
 
 [openssl_armcap_probe.c](tests/openssl_armcap_probe.c) 将实际 OpenSSL armcap.c 的 `getauxval` 改名为诊断替身（编译参数 `-Dgetauxval=probe_getauxval`），直接编译原始 / 候选源码，并显式传入同批生成的 OpenSSL include、源包 include 与 crypto 目录。按目标使用 `-Wall -Wextra -Werror`，分别以 `TEST_CAPS=00/01/10/11` 启动进程；无效输入退出 2。独立期望表要求无 SVE 时不能启用 SVE2，检查其他密码加速位及向量长度探测次数。上游 4.0.3 的 01 组合预期失败，候选四组预期通过。该替身仅属于单元诊断；普通 provider / pager / App 测试不得携带 TEST_CAPS 或 OPENSSL_armcap 能力覆盖。可审阅补丁及其前后指纹见[ARM 修复专题](../docs/development/mobile-core-prototype.md#arm-能力修复的隔离验证与正式接入方案)。主工作区已选择含此补丁的完整源包，来源 / 精确文本例外与撤除条件见[源码说明](../third-party/openssl-src-patch.md)。
 
-M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `local-evidence/m0-c/`；由各集成 driver 或设备控制器保存，构建产物和缓存保持忽略。bootstrap UI driver 支持 `M0C_EVIDENCE_SUBDIR`，resilience driver 支持 `M0B_EVIDENCE_SUBDIR`；两者只接受单个英文字母 / 数字 / 下划线 / 连字符名称，以保留历史批次。同一 Flutter 工作目录的构建、测试与模式切换按实验说明串行执行。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
+M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `local-evidence/m0-c/`；由各集成 driver 或设备控制器保存，构建产物和缓存保持忽略。bootstrap UI driver 必须指定 `M0C_EVIDENCE_SUBDIR`、`M0C_EVIDENCE_SESSION`、`M0C_UI_PLATFORM` 和 `M0C_UI_DEVICE`；session 同时传入 App 的 dart-define。resilience driver 支持 `M0B_EVIDENCE_SUBDIR`；证据子目录只接受单个英文字母 / 数字 / 下划线 / 连字符名称，以保留历史批次。bootstrap UI 使用 `--keep-app-running` 防止 Flutter drive 默认卸载 App，结束按批次归属精确清理并恢复安装基线。同一 Flutter 工作目录的构建、测试与模式切换按实验说明串行执行。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
 
 错误逐项报告并返回非零；检查器没有历史预算或默认成功模式。`--only` 用于定向本地检查，PR workflow 必须使用完整入口。
 
@@ -90,6 +90,8 @@ M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `loc
 ### M0-C bootstrap 与独立解锁
 
 [check-mobile-bootstrap.py](check-mobile-bootstrap.py) 经 App 私有 FIFO 传递有界秘密字节，复用 [mobile_probe_device.py](mobile_probe_device.py) 的现有模拟器控制；该共享模块同时供 M0-B 恢复入口使用。两种 bridge 验证创建确认、独立材料跨 PID 解锁、错误输入保全、六处中断、A11 非空 WAL 强杀 / 原意图重放及精确清理；每端共 16 组恢复和 48 组封装文件故障。`--output-dir` 可保留独立批次，不能离开项目 M0-C 证据目录或覆盖仍登记 ownedRuns 的报告。系统认证能力不足会单独记录未执行，不降低保护；核心 local-wrap 不作为系统认证证据。入口、安装模式、UI 验证与失败残留处理见[移动核心实验第 7 节](../docs/development/mobile-core-prototype.md#77-已接入的复现入口与证据边界)。本入口只操作合成数据，不接受真实账库。
+
+[observe-bootstrap-ui-background.py](observe-bootstrap-ui-background.py) 仅由 bootstrap UI driver 调用，核对本批 session / selection / owner / PID 后切换明确模拟器中的本项目 App 到后台，再返回前台。iOS 仅启动 Settings，Android 仅发送 HOME，不改变认证 / 调试信任设置。App 独立断言生命周期、输入清除及同库事实，driver 回收监控进程并拒绝未完成或未清理报告；本次入口不执行系统保护项失效 / 重建。`test_bootstrap_ui_background.py` 用无设备替身验证请求归属拒绝和中断后的前台恢复，由仓库检查自动发现。完整命令、保留原安装和失败收尾见[UI 复现入口](../docs/development/mobile-core-prototype.md#77-已接入的复现入口与证据边界)。
 
 `check-core.sh` 同时执行 A11 非空候选 / 删除 / outbox 跨进程恢复、原意图重放、四类封装文件发布故障，以及实际 DB / WAL / 回滚日志检查；`check-mobile.sh` 的 `bootstrap_native_test.dart` 经宿主两种 bridge 验证非空账务和发布错误。故障注入、发布结果未定及宿主 / 设备证据边界见[文件故障专题](../docs/development/mobile-core-prototype.md#78-非空账务与文件发布故障)。这不等于真实磁盘损坏、断电或系统认证已验收。
 
