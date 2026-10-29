@@ -116,6 +116,8 @@ pub struct Event {
     pub from_account_id: Option<String>,
     pub to_account_id: Option<String>,
     pub amount_minor: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -131,6 +133,9 @@ pub enum EventKind {
 
 impl Event {
     pub fn validate(&self) -> Result<i64> {
+        if self.note.len() > 4096 || self.note.contains('\0') {
+            return Err(CoreError::new("invalid_note", "备注超过边界或含 NUL"));
+        }
         validate_date(&self.business_date)?;
         let value = minor(&self.amount_minor)?;
         if !matches!(self.kind, EventKind::Opening | EventKind::Adjustment) && value <= 0 {

@@ -20,7 +20,7 @@
 | 如何交付自部署和官方服务 | [自部署与托管](self-hosting.md) |
 | 如何导入、备份、恢复和换服务器 | [数据可迁移性](data-portability.md) |
 | M0-E 如何复核批次、归档保真与安全切换 | [数据可迁移共同案例](validation/portability-cases.md)、[待冻结契约](data-portability.md#9-冻结条件与实现顺序) |
-| 通用 CSV 输入预览如何复现与核对 | [实验 profile 与入口](validation/portability-cases.md#51-e-csv-输入预览候选)、[手写合成材料](validation/csv-preview-cases.json) |
+| 通用 CSV 预览与持久批次如何复现与核对 | [实验 profile 与入口](validation/portability-cases.md#51-e-csv-输入预览候选)、[手写合成材料](validation/csv-preview-cases.json)、[持久任务与批次](validation/portability-cases.md#52-e-csv-持久任务与原子发布候选) |
 | 手机布局、家族视觉和私有参考如何约束 | [移动端 UI 规范](design/mobile-experience.md)、[UI 采用决策](adr/0003-ui-family-and-private-references.md) |
 | 日常开发、分支、版本和验证怎么做 | [开发规范](development/README.md) |
 | 协作、Git、PR、Rulesets 与自动化如何约束 | [治理导航](governance/README.md) |

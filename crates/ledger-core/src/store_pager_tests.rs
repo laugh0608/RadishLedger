@@ -191,6 +191,7 @@ fn seed(path: &Path, key: &DbKey) -> Write {
         revision_id: crate::random_id().unwrap(),
         previous_revision_id: None,
         event: Some(Event {
+            note: String::new(),
             kind: EventKind::Transfer,
             business_date: "2026-10-19".into(),
             account_id: None,

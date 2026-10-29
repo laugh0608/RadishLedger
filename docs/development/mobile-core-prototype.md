@@ -20,6 +20,8 @@ probe 使用真实 SQLCipher 事务：每次保存前在 outbox 插入点以测�
 
 基础入口是固定合成材料的接入实验，账户 / 分类由实验准备动作建立，数据库密钥只在本次 Rust 进程内存。第 6 节的跨进程事务恢复使用公开固定合成 key；第 7 节的 bootstrap 入口使用运行时随机秘密，接入独立材料跨重启解锁与系统保护 adapter。三个入口的材料和证据不能混用。它们均未提供生产账户创建、用户账簿、备份或迁移；schema `1`、C ABI `1` 和 JSON 返回结构都是实验契约，不能解释为生产格式冻结。
 
+独立的 [E-CSV 持久任务实验](../validation/portability-cases.md#52-e-csv-持久任务与原子发布候选)仅由 Rust 宿主测试新建 schema `2` 库，包含备注及导入计划 / 来源 / 进度；既有 probe / bootstrap 创建仍为 schema `1`，没有自动升级。共享 Event 对空备注省略序列化字段，旧事实与意图字节保持兼容；非空备注写入仅允许 v2。此扩展没有接入移动桥接，不改变上述 C ABI。
+
 ## 2. 薄 C ABI 契约
 
 正式声明见 [radishledger_probe.h](../../crates/ledger-mobile/include/radishledger_probe.h)，Dart 调用见 [native.dart](../../apps/m0_probe/lib/src/native.dart)。下表描述基础 / 故障入口的普通输入与结果句柄；bootstrap 的秘密通道另见第 7.7 节，秘密不进入普通结果注册表。

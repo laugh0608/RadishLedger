@@ -18,6 +18,9 @@ pub(crate) mod boundary;
 #[path = "store_pager_tests.rs"]
 mod pager_tests;
 
+#[path = "csv_store.rs"]
+mod csv_store;
+
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {
@@ -155,7 +158,7 @@ impl Store {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(db_error)?;
-        if version != 1 {
+        if !matches!(version, 1 | 2) {
             return Err(CoreError::new("unsupported_schema", "实验账库版本不兼容"));
         }
         Ok(store)
@@ -230,7 +233,7 @@ impl Store {
         let tx = self.connection.unchecked_transaction().map_err(db_error)?;
         let mut digest = Sha256::new();
         // 固定内部表名；完整业务内容，而非只比较余额或行数。
-        for (table, key) in [
+        let mut tables = vec![
             ("accounts", "id"),
             ("categories", "id"),
             ("revisions", "id"),
@@ -238,7 +241,20 @@ impl Store {
             ("outbox", "operation_id"),
             ("candidates", "revision_id"),
             ("metadata", "id"),
-        ] {
+        ];
+        let version: i64 = tx
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .map_err(db_error)?;
+        if version == 2 {
+            tables.extend([
+                ("csv_context", "id"),
+                ("csv_tasks", "id"),
+                ("csv_rows", "task_id,record"),
+                ("csv_sources", "namespace,source_id"),
+                ("csv_batches", "task_id,first_record"),
+            ]);
+        }
+        for (table, key) in tables {
             digest.update((table.len() as u64).to_be_bytes());
             digest.update(table.as_bytes());
             let mut statement = tx
@@ -257,6 +273,11 @@ impl Store {
                         }
                         ValueRef::Text(bytes) => {
                             digest.update([2]);
+                            digest.update((bytes.len() as u64).to_be_bytes());
+                            digest.update(bytes);
+                        }
+                        ValueRef::Blob(bytes) if table == "csv_tasks" && column == 3 => {
+                            digest.update([3]);
                             digest.update((bytes.len() as u64).to_be_bytes());
                             digest.update(bytes);
                         }
@@ -447,132 +468,18 @@ impl Store {
         write: &Write,
         mut observe: impl FnMut(crate::validation::CommitPoint) -> Result<()>,
     ) -> Result<WriteEffect> {
-        for id in [&write.operation_id, &write.event_id, &write.revision_id] {
-            valid_id(id)?;
-        }
-        let intent = serde_json::to_string(write)
-            .map_err(|_| CoreError::new("encoding_error", "账务意图无法编码"))?;
         let tx = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_error)?;
-        let prior: Option<String> = tx
-            .query_row(
-                "SELECT intent FROM outbox WHERE operation_id=?1",
-                [&write.operation_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(db_error)?;
-        if let Some(prior) = prior {
-            return if prior == intent {
-                Ok(WriteEffect::Replayed)
-            } else {
-                Err(CoreError::new(
-                    "operation_reused",
-                    "同一操作身份不能用于不同账务意图",
-                ))
-            };
+        let effect = apply_write(&tx, write, &mut observe)?;
+        if effect == WriteEffect::Replayed {
+            return Ok(effect);
         }
-        let selected: Option<String> = tx
-            .query_row(
-                "SELECT revision_id FROM selected WHERE event_id=?1",
-                [&write.event_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(db_error)?;
-        if selected != write.previous_revision_id {
-            return Err(CoreError::new("stale_revision", "原修订已变化，请重新核对"));
-        }
-        let candidates = candidate_ids(&tx, &write.event_id)?;
-        if candidates != write.resolve_candidates {
-            return Err(CoreError::new(
-                "stale_candidates",
-                "冲突候选已变化，请重新核对",
-            ));
-        }
-        if let Some(sequence) = write.expected_sequence {
-            let current: i64 = tx
-                .query_row("SELECT sequence FROM metadata WHERE id=1", [], |row| {
-                    row.get(0)
-                })
-                .map_err(db_error)?;
-            if current != sequence {
-                return Err(CoreError::new("stale_observation", "对账观察已过期"));
-            }
-        }
-        if let Some(event) = &write.event {
-            validate_references(&tx, event)?;
-            if event.kind == EventKind::Adjustment {
-                let observed = write
-                    .observed_balance_minor
-                    .as_deref()
-                    .ok_or_else(|| CoreError::new("invalid_adjustment", "缺少观察余额"))?;
-                let target = write
-                    .target_balance_minor
-                    .as_deref()
-                    .ok_or_else(|| CoreError::new("invalid_adjustment", "缺少目标余额"))?;
-                if write.expected_sequence.is_none()
-                    || i128::from(minor(target)?) - i128::from(minor(observed)?)
-                        != i128::from(event.validate()?)
-                {
-                    return Err(CoreError::new(
-                        "invalid_adjustment",
-                        "对账差额或观察版本无效",
-                    ));
-                }
-                let actual = read_snapshot(&tx, &[])?.projection.balances_minor;
-                if event
-                    .account_id
-                    .as_ref()
-                    .and_then(|id| actual.get(id))
-                    .map(String::as_str)
-                    != Some(observed)
-                {
-                    return Err(CoreError::new(
-                        "invalid_adjustment",
-                        "观察余额与当前事实不一致",
-                    ));
-                }
-            }
-        } else if selected.is_none() {
-            return Err(CoreError::new("missing_event", "待删除交易不存在"));
-        }
-        let payload = write
-            .event
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|_| CoreError::new("encoding_error", "账务事实无法编码"))?;
-        tx.execute(
-            "INSERT INTO revisions(id,event_id,predecessor,payload) VALUES (?1,?2,?3,?4)",
-            params![
-                write.revision_id,
-                write.event_id,
-                write.previous_revision_id,
-                payload
-            ],
-        )
-        .map_err(db_error)?;
-        tx.execute("INSERT INTO selected(event_id,revision_id) VALUES (?1,?2) ON CONFLICT(event_id) DO UPDATE SET revision_id=excluded.revision_id", params![write.event_id,write.revision_id]).map_err(db_error)?;
-        observe(crate::validation::CommitPoint::BeforeOutbox)?;
-        tx.execute(
-            "INSERT INTO outbox(operation_id,intent,revision_id) VALUES (?1,?2,?3)",
-            params![write.operation_id, intent, write.revision_id],
-        )
-        .map_err(db_error)?;
-        tx.execute(
-            "DELETE FROM candidates WHERE event_id=?1",
-            [&write.event_id],
-        )
-        .map_err(db_error)?;
-        tx.execute("UPDATE metadata SET sequence=sequence+1 WHERE id=1", [])
-            .map_err(db_error)?;
         observe(crate::validation::CommitPoint::BeforeCommit)?;
         tx.commit().map_err(db_error)?;
         observe(crate::validation::CommitPoint::AfterCommit)?;
-        Ok(WriteEffect::Committed)
+        Ok(effect)
     }
 
     pub fn receive_candidate(
@@ -590,6 +497,7 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_error)?;
         validate_references(&tx, event)?;
+        validate_note_schema(&tx, event)?;
         let parent: Option<String> = tx
             .query_row(
                 "SELECT event_id FROM revisions WHERE id=?1",
@@ -862,4 +770,145 @@ fn validate_references(tx: &Transaction<'_>, event: &Event) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_note_schema(tx: &Transaction<'_>, event: &Event) -> Result<()> {
+    let version: i64 = tx
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(db_error)?;
+    if !event.note.is_empty() && version != 2 {
+        return Err(CoreError::new(
+            "unsupported_schema",
+            "备注写入需要新建 v2 导入实验库，原库未升级",
+        ));
+    }
+    Ok(())
+}
+
+// 单笔与 CSV 批次共用写入路径；提交边界由调用方拥有。
+fn apply_write(
+    tx: &Transaction<'_>,
+    write: &Write,
+    observe: &mut impl FnMut(crate::validation::CommitPoint) -> Result<()>,
+) -> Result<WriteEffect> {
+    for id in [&write.operation_id, &write.event_id, &write.revision_id] {
+        valid_id(id)?;
+    }
+    let intent = serde_json::to_string(write)
+        .map_err(|_| CoreError::new("encoding_error", "账务意图无法编码"))?;
+    let prior: Option<String> = tx
+        .query_row(
+            "SELECT intent FROM outbox WHERE operation_id=?1",
+            [&write.operation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?;
+    if let Some(prior) = prior {
+        return if prior == intent {
+            Ok(WriteEffect::Replayed)
+        } else {
+            Err(CoreError::new(
+                "operation_reused",
+                "同一操作身份不能用于不同账务意图",
+            ))
+        };
+    }
+    let selected: Option<String> = tx
+        .query_row(
+            "SELECT revision_id FROM selected WHERE event_id=?1",
+            [&write.event_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?;
+    if selected != write.previous_revision_id {
+        return Err(CoreError::new("stale_revision", "原修订已变化，请重新核对"));
+    }
+    let candidates = candidate_ids(tx, &write.event_id)?;
+    if candidates != write.resolve_candidates {
+        return Err(CoreError::new(
+            "stale_candidates",
+            "冲突候选已变化，请重新核对",
+        ));
+    }
+    if let Some(sequence) = write.expected_sequence {
+        let current: i64 = tx
+            .query_row("SELECT sequence FROM metadata WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .map_err(db_error)?;
+        if current != sequence {
+            return Err(CoreError::new("stale_observation", "对账观察已过期"));
+        }
+    }
+    if let Some(event) = &write.event {
+        validate_references(tx, event)?;
+        validate_note_schema(tx, event)?;
+        if event.kind == EventKind::Adjustment {
+            let observed = write
+                .observed_balance_minor
+                .as_deref()
+                .ok_or_else(|| CoreError::new("invalid_adjustment", "缺少观察余额"))?;
+            let target = write
+                .target_balance_minor
+                .as_deref()
+                .ok_or_else(|| CoreError::new("invalid_adjustment", "缺少目标余额"))?;
+            if write.expected_sequence.is_none()
+                || i128::from(minor(target)?) - i128::from(minor(observed)?)
+                    != i128::from(event.validate()?)
+            {
+                return Err(CoreError::new(
+                    "invalid_adjustment",
+                    "对账差额或观察版本无效",
+                ));
+            }
+            let actual = read_snapshot(tx, &[])?.projection.balances_minor;
+            if event
+                .account_id
+                .as_ref()
+                .and_then(|id| actual.get(id))
+                .map(String::as_str)
+                != Some(observed)
+            {
+                return Err(CoreError::new(
+                    "invalid_adjustment",
+                    "观察余额与当前事实不一致",
+                ));
+            }
+        }
+    } else if selected.is_none() {
+        return Err(CoreError::new("missing_event", "待删除交易不存在"));
+    }
+    let payload = write
+        .event
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|_| CoreError::new("encoding_error", "账务事实无法编码"))?;
+    tx.execute(
+        "INSERT INTO revisions(id,event_id,predecessor,payload) VALUES (?1,?2,?3,?4)",
+        params![
+            write.revision_id,
+            write.event_id,
+            write.previous_revision_id,
+            payload
+        ],
+    )
+    .map_err(db_error)?;
+    tx.execute("INSERT INTO selected(event_id,revision_id) VALUES (?1,?2) ON CONFLICT(event_id) DO UPDATE SET revision_id=excluded.revision_id", params![write.event_id,write.revision_id]).map_err(db_error)?;
+    observe(crate::validation::CommitPoint::BeforeOutbox)?;
+    tx.execute(
+        "INSERT INTO outbox(operation_id,intent,revision_id) VALUES (?1,?2,?3)",
+        params![write.operation_id, intent, write.revision_id],
+    )
+    .map_err(db_error)?;
+    tx.execute(
+        "DELETE FROM candidates WHERE event_id=?1",
+        [&write.event_id],
+    )
+    .map_err(db_error)?;
+    tx.execute("UPDATE metadata SET sequence=sequence+1 WHERE id=1", [])
+        .map_err(db_error)?;
+    Ok(WriteEffect::Committed)
 }

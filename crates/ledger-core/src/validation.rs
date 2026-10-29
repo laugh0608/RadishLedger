@@ -89,6 +89,7 @@ fn opening(n: usize, account: &str, amount: &str) -> Write {
         revision_id: id(n + 20000),
         previous_revision_id: None,
         event: Some(Event {
+            note: String::new(),
             kind: EventKind::Opening,
             business_date: "2026-10-14".into(),
             account_id: Some(account.into()),
@@ -106,6 +107,7 @@ fn opening(n: usize, account: &str, amount: &str) -> Write {
 fn transfer(n: usize, amount: &str) -> Write {
     let mut write = opening(n, CASH, amount);
     write.event = Some(Event {
+        note: String::new(),
         kind: EventKind::Transfer,
         business_date: "2026-10-14".into(),
         account_id: None,

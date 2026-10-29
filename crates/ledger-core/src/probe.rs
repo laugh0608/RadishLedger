@@ -117,6 +117,7 @@ impl Symbols {
             }
         };
         Ok(Event {
+            note: String::new(),
             kind,
             business_date: text(value, "businessDate")?.to_owned(),
             account_id: self.optional(value, "accountId", "account")?,

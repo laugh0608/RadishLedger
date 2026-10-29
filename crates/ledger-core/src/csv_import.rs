@@ -1,4 +1,4 @@
-//! M0-E 有界输入预览；没有发布、持久任务或生产 CSV 格式承诺。
+//! M0-E 有界预览与持久任务候选；不是生产 CSV 格式或移动入口。
 use crate::domain::{Event, EventKind, parse_yuan};
 use crate::store::Store;
 use crate::{CoreError, Result};
@@ -12,6 +12,10 @@ mod input;
 #[cfg(test)]
 #[path = "csv_import_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "csv_test_support.rs"]
+pub(crate) mod test_support;
 
 pub const PROFILE: &str = "m0-csv-preview-v1";
 
@@ -46,7 +50,7 @@ pub struct Mapping {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub event: Event,
-    // 现有实验 Event 尚无备注；预览完整保留，不能直接丢弃它后调用单笔 commit。
+    // 预览保持来源原文；确认时通过 fact() 一并进入修订和上传意图。
     pub note: String,
 }
 
@@ -54,8 +58,14 @@ pub struct Candidate {
 pub enum SourceMatch {
     Missing,
     UniqueInFile,
-    RepeatedInFile { first_record: usize },
+    RepeatedInFile {
+        first_record: usize,
+    },
     ConflictingInFile,
+    PreviouslyImported {
+        event_id: String,
+        revision_id: String,
+    },
 }
 
 pub struct Row {
@@ -156,6 +166,7 @@ impl Mapping {
                 .ok_or_else(|| CoreError::new("csv_reference_mapping", "来源引用尚未明确映射"))
         };
         let event = Event {
+            note: String::new(),
             kind,
             business_date: self.get(row, Field::Date).to_owned(),
             amount_minor: parse_yuan(self.get(row, Field::Amount), false)?.to_string(),
@@ -306,4 +317,115 @@ fn preview_checked(
         observed_sequence,
         rows,
     })
+}
+
+/// 不含外部可变引用；确认只能使用这份输入副本和映射。
+pub struct Prepared {
+    pub(crate) preview: Preview,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) mapping: Mapping,
+    pub(crate) target_id: String,
+    pub(crate) previous_tasks: Vec<String>,
+}
+
+impl Prepared {
+    pub fn preview(&self) -> &Preview {
+        &self.preview
+    }
+    pub fn target_id(&self) -> &str {
+        &self.target_id
+    }
+    pub fn previous_tasks(&self) -> &[String] {
+        &self.previous_tasks
+    }
+}
+
+impl Candidate {
+    pub(crate) fn fact(&self) -> Event {
+        let mut event = self.event.clone();
+        event.note.clone_from(&self.note);
+        event
+    }
+}
+
+pub fn prepare(
+    store: &Store,
+    bytes: &[u8],
+    mapping: &Mapping,
+    cancelled: &AtomicBool,
+) -> Result<Prepared> {
+    let mut preview = preview(store, bytes, mapping, cancelled)?;
+    let (target_id, previous_tasks) =
+        store.inspect_csv_preview(&mut preview, &mapping.source_namespace)?;
+    check_cancelled(cancelled)?;
+    Ok(Prepared {
+        preview,
+        bytes: bytes.to_vec(),
+        mapping: mapping.clone(),
+        target_id,
+        previous_tasks,
+    })
+}
+
+pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<()> {
+    if cancelled.load(Ordering::Relaxed) {
+        Err(CoreError::new(
+            "cancelled",
+            "导入已停止；已完成范围须从持久任务核对",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    Import,
+    Skip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskState {
+    Ready,
+    Cancelled,
+    Complete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Task {
+    pub id: String,
+    pub target_id: String,
+    pub state: TaskState,
+    pub total: usize,
+    pub next_record: usize,
+    pub batch_size: usize,
+    pub imported: usize,
+    pub skipped: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Batch {
+    pub first_record: usize,
+    pub last_record: usize,
+    pub imported: usize,
+    pub skipped: usize,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRow {
+    pub record: usize,
+    pub row_id: String,
+    pub event_id: Option<String>,
+    pub revision_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub outcome: RowOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowOutcome {
+    Pending,
+    Imported,
+    Skipped,
 }
