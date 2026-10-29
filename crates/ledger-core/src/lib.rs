@@ -4,6 +4,7 @@ mod bootstrap_files;
 #[cfg(test)]
 mod bootstrap_tests;
 pub mod crypto;
+pub mod csv_import;
 pub mod domain;
 pub mod probe;
 pub mod store;

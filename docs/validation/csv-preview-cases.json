@@ -1,0 +1,38 @@
+{
+  "fixtureVersion": 1,
+  "dataOrigin": "synthetic",
+  "profile": "m0-csv-preview-v1",
+  "a01Input": "类型,金额,日期,币种,账户,类别,转出,转入,来源,备注\n收入,2000.00,2026-01-05,CNY,银行,工资,,,src-1,\"  合成工资 \"\"一\"\"  \"\n转账,200.00,2026-01-06,CNY,,,银行,现金,src-2,\"跨行\n备注\"\n支出,30.00,2026-01-07,CNY,现金,餐饮,,,src-3,合成餐饮\n支出,100.00,2026-01-08,CNY,信用卡,购物,,,src-4,\n还款,100.00,2026-01-09,CNY,,,银行,信用卡,src-5,\n退款,10.00,2026-01-10,CNY,现金,餐饮,,,src-6,'合法前缀\n",
+  "a01StepIds": ["salary", "transfer", "dining", "shopping", "repayment", "refund"],
+  "a01Notes": ["  合成工资 \"一\"  ", "跨行\n备注", "合成餐饮", "", "", "'合法前缀"],
+  "syntax": [
+    {"id": "C01", "input": "a,b\r\nc,d\r\n", "records": [["a", "b"], ["c", "d"]]},
+    {"id": "C02", "input": "a,\"b,b\",\"c\"\"d\"\n", "records": [["a", "b,b", "c\"d"]]},
+    {"id": "C03", "input": "\"a\r\nb\", tail ", "records": [["a\r\nb", " tail "]]},
+    {"id": "C04", "input": "a,b,", "records": [["a", "b", ""]]},
+    {"id": "C05", "input": "\"\"", "records": [[""]]},
+    {"id": "C06", "input": "a,b\rc,d", "error": "csv_newline"},
+    {"id": "C07", "input": "a,b\"c", "error": "csv_quote"},
+    {"id": "C08", "input": "a,\"b\" c", "error": "csv_quote"},
+    {"id": "C09", "input": "a,\"b", "error": "csv_quote"},
+    {"id": "C10", "input": "", "error": "csv_empty"},
+    {"id": "C11", "input": "a,\u0000b", "error": "csv_nul"},
+    {"id": "C12", "input": "a,\"b\r\"", "records": [["a", "b\r"]]}
+  ],
+  "invalidRows": [
+    {"id": "R01", "input": "收入,1.001,2026-01-01,CNY,银行,工资,,,r1,", "error": "excess_precision"},
+    {"id": "R02", "input": "收入,1.00,2026-02-30,CNY,银行,工资,,,r2,", "error": "invalid_calendar_date"},
+    {"id": "R03", "input": "分期,1.00,2026-01-01,CNY,银行,工资,,,r3,", "error": "csv_type"},
+    {"id": "R04", "input": "转账,1.00,2026-01-01,CNY,,,银行,银行,r4,", "error": "same_account"},
+    {"id": "R05", "input": "收入,1.00,2026-01-01,USD,银行,工资,,,r5,", "error": "csv_currency"},
+    {"id": "R06", "input": "支出,1.00,2026-01-01,CNY,不存在,餐饮,,,r6,", "error": "csv_reference_mapping"},
+    {"id": "R07", "input": "收入,1.00,2026-01-01,CNY,银行,,,,r7,", "error": "invalid_reference"},
+    {"id": "R08", "input": "收入,-1.00,2026-01-01,CNY,银行,工资,,,r8,", "error": "non_positive"},
+    {"id": "R09", "input": "收入, 1.00,2026-01-01,CNY,银行,工资,,,r9,", "error": "unsupported_format"},
+    {"id": "R10", "input": "期初,1.00,2026-01-01,CNY,银行,,,,r10,", "error": "csv_unsupported_kind"},
+    {"id": "R11", "input": "调整,1.00,2026-01-01,CNY,银行,,,,r11,", "error": "csv_unsupported_kind"},
+    {"id": "R12", "input": "转账,1.00,2026-01-01,CNY,银行,,银行,现金,r12,", "error": "invalid_reference"},
+    {"id": "R13", "input": "支出,1.00,2026-01-01,CNY,现金,工资,,,r13,", "error": "category_type_mismatch"},
+    {"id": "R14", "input": "收入,92233720368547758.08,2026-01-01,CNY,银行,工资,,,r14,", "error": "out_of_range"}
+  ]
+}

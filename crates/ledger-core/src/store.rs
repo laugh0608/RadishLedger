@@ -95,7 +95,7 @@ pub struct Snapshot {
     pub archived_category_ids: BTreeSet<String>,
 }
 
-fn valid_id(id: &str) -> Result<()> {
+pub(crate) fn valid_id(id: &str) -> Result<()> {
     if id.len() != 32
         || !id
             .bytes()
@@ -410,6 +410,35 @@ impl Store {
 
     pub fn commit(&mut self, write: &Write) -> Result<WriteEffect> {
         self.commit_observed(write, |_| Ok(()))
+    }
+
+    // 同一只读快照核对全部 CSV 候选，复用正常提交的领域 / 引用检查。
+    // sequence 只是预览证据，不授予稍后写入许可；确认发布时仍需重新校验。
+    pub(crate) fn check_import_references(
+        &self,
+        events: &[&Event],
+        check_cancelled: &mut impl FnMut() -> Result<()>,
+    ) -> Result<(i64, Vec<Option<CoreError>>)> {
+        let tx = self.connection.unchecked_transaction().map_err(db_error)?;
+        let sequence = tx
+            .query_row("SELECT sequence FROM metadata WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .map_err(db_error)?;
+        let mut errors = Vec::with_capacity(events.len());
+        for event in events {
+            check_cancelled()?;
+            let error = validate_references(&tx, event).err();
+            if let Some(error) = &error
+                && error.code == "storage_error"
+            {
+                return Err(error.clone());
+            }
+            errors.push(error);
+        }
+        check_cancelled()?;
+        tx.commit().map_err(db_error)?;
+        Ok((sequence, errors))
     }
 
     // 实验观测点与正常提交共用唯一事务路径；不提供第二套保存实现。

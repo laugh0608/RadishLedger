@@ -118,3 +118,7 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 [`check-sync-db.py`](check-sync-db.py) 是显式运行的 PostgreSQL 合成事务实验，使用 [`sync_db_probe.py`](sync_db_probe.py) 的独立 psql 连接和锁屏障，以及 [`sync-db-probe.sql`](sync-db-probe.sql) 的候选事务。运行 `python3 -B scripts/check-sync-db.py` 复用已缓存 PostgreSQL 17.10 镜像，不 pull、不安装驱动、不发布宿主端口；按 image ID 创建本批容器，2 CPU / 512 MiB，结束核对归属后删除容器及匿名数据卷。它不随 check-repo / check-core / check-mobile 自动启动，也不将未执行算通过。
 
 用例核对完整状态、真实锁等待、CAS / 幂等、事务中断 / PostgreSQL 强杀恢复、sequence 漏读反例、固定分页、冻结竞争及有界控制登记。连接中断不能冒充真实 HTTP 服务或双端同步；allowed 控制位、符号 jsonb、实验上限都不是生产契约。版本、源码指纹、屏障 / 进程与清理结果写入新的 `local-evidence/m0-d/<session>/report.json`。精确边界、运行 / 中断清理方式与尚未覆盖的案例见 [D-DB 复现说明](../docs/validation/sync-cases.md#51-d-db-独立-postgresql-实验)。
+
+### M0-E CSV 输入预览
+
+`check-core.sh` 自动执行 `csv_import::tests`；定向入口为 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_import::tests --jobs 4`，无需新依赖 / Docker / 设备。手写材料验证严格有界解析、字段与既有引用映射、文件内来源冲突、取消和存储错误；真实 SQLCipher 只读快照及双连接归档竞争覆盖预览一致性。A01 候选投影与原库内容 / outbox 分别核对；这不是批次落库、跨进程导入恢复或受限撤销通过。profile、预算与剩余边界见 [E-CSV 说明](../docs/validation/portability-cases.md#51-e-csv-输入预览候选)。
