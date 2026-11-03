@@ -4,7 +4,7 @@ use crate::csv_undo::State;
 use crate::domain::Event;
 use crate::store::{Snapshot as Verification, Write as Intent};
 use crate::{CoreError, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -94,6 +94,13 @@ impl Write for Encoder<'_> {
             self.failure = Some(error);
             return Err(std::io::Error::other("snapshot encoding stopped"));
         }
+        self.bytes.try_reserve(buffer.len()).map_err(|_| {
+            self.failure = Some(CoreError::new(
+                "resource_unavailable",
+                "逻辑快照编码内存不可用",
+            ));
+            std::io::Error::other("snapshot allocation stopped")
+        })?;
         self.bytes.extend_from_slice(buffer);
         Ok(buffer.len())
     }
@@ -110,13 +117,13 @@ pub struct Contents {
     pub verification: Verification,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Facts {
-    pub profile: &'static str,
+    pub profile: String,
     pub source_schema: i64,
     pub sequence: i64,
-    pub currency: &'static str,
+    pub currency: String,
     pub minor_unit_scale: u8,
     /// 当前实验没有远端确认 / cursor 模型，不能伪造已同步范围。
     pub remote_knowledge: RemoteKnowledge,
@@ -130,13 +137,14 @@ pub struct Facts {
     pub imports: Option<ImportHistory>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteKnowledge {
     Unknown,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Reference {
     pub id: String,
     pub kind: String,
@@ -144,8 +152,8 @@ pub struct Reference {
     pub archived: bool,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Revision {
     pub id: String,
     pub event_id: String,
@@ -153,15 +161,15 @@ pub struct Revision {
     pub event: Option<Event>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Selection {
     pub event_id: String,
     pub revision_id: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImportHistory {
     /// 原本机实验目标，仅为来源证据，不授予新 runtime / 同步域身份。
     pub source_target_id: String,
@@ -174,8 +182,8 @@ pub struct ImportHistory {
     pub undo_batches: Vec<UndoBatch>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImportTask {
     pub id: String,
     pub profile: String,
@@ -189,7 +197,7 @@ pub struct ImportTask {
     pub batch_size: usize,
 }
 
-#[derive(Serialize, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportOutcome {
     Pending,
@@ -197,8 +205,8 @@ pub enum ImportOutcome {
     Skipped,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImportRow {
     pub task_id: String,
     pub record: usize,
@@ -208,8 +216,8 @@ pub struct ImportRow {
     pub outcome: ImportOutcome,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Source {
     pub namespace: String,
     pub source_id: String,
@@ -218,8 +226,8 @@ pub struct Source {
     pub revision_id: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImportBatch {
     pub task_id: String,
     pub first_record: usize,
@@ -228,8 +236,8 @@ pub struct ImportBatch {
     pub skipped: usize,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UndoSelection {
     pub record: usize,
     pub row_id: String,
@@ -238,8 +246,8 @@ pub struct UndoSelection {
     pub revision_id: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UndoTask {
     pub id: String,
     pub import_task_id: String,
@@ -250,8 +258,8 @@ pub struct UndoTask {
     pub batch_size: usize,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UndoRow {
     pub undo_id: String,
     pub ordinal: usize,
@@ -261,8 +269,8 @@ pub struct UndoRow {
     pub deleted: bool,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UndoBatch {
     pub undo_id: String,
     pub first_ordinal: usize,

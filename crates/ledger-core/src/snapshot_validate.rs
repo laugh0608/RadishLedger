@@ -445,7 +445,7 @@ fn check_undos(
     Ok(())
 }
 
-pub(super) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> Result<Snapshot> {
+pub(crate) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> Result<Snapshot> {
     let mut index = Index {
         accounts: BTreeMap::new(),
         categories: BTreeMap::new(),

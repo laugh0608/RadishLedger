@@ -174,7 +174,38 @@ Event.note 为最多 4096 UTF-8 字节、不含 NUL 的原文；空备注保持�
 
 复现：`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core snapshot_store --jobs 4`；聚合仍由 `check-core.sh` 自动发现。沿用锁定工具链和缓存依赖，不启动服务 / 设备、不访问系统密钥；合成库由 tempfile 独占创建并清理，不输出账务或秘密到日志。精确结果见 [11 月记录](../devlogs/2026-11.md)。
 
-本入口只覆盖 E09 的宿主捕获和 E13 / E14 / E16 的部分事实读取 / 关系前置，不关闭这些完整案例、E-SNAPSHOT 的生产交付或 M0-E。没有认证容器 / 独立密码向量、归档解码 / 暂存恢复、空白设备、旧域确认 / 新读取基线、完整非秘密设置或生产 Book 身份；没有真实读取 IO 故障、捕获中强杀 / 掉电、移动内存 / 长期 WAL 表现证据。候选 JSON 不作为用户备份格式；下一项按 current 进入 E-CONTAINER 的字节 / 密码 / 资源评审，再实施认证与恢复。
+本入口只覆盖 E09 的宿主捕获和 E13 / E14 / E16 的部分事实读取 / 关系前置，不关闭这些完整案例、E-SNAPSHOT 的生产交付或 M0-E。本捕获层不承担认证容器或解码；宿主内存封装与独立密码向量见第 5.6 节。暂存恢复、空白设备、旧域确认 / 新读取基线、完整非秘密设置和生产 Book 身份仍缺证据；真实读取 IO 故障、捕获中强杀 / 掉电、移动内存 / 长期 WAL 表现尚未验证。候选 JSON 不作为用户备份格式；接续顺位只维护在 current。
+
+### 5.5 E-CONTAINER 评审材料与输入
+
+候选构造与唯一字节表见[可迁移性第 3.2.1–3.2.6 节](../data-portability.md#321-e-container-首个宿主候选与实施边界)，机器输入见 [`archive-container-review-inputs.json`](archive-container-review-inputs.json)。所有者已批准宿主实验，候选仍未冻结；实际实现、证据与未覆盖项见下一节。
+
+- 候选为有界整体 XChaCha20-Poly1305、无压缩 / 无加密续写，176-byte 固定公开头，独立随机 Archive Key 与归档用途 HKDF 标签；KDF 沿用当前 64 MiB / 3 / 1 宿主候选，不将其与 RFC 9106 的 4 路推荐组合混同。
+- 公开 S / M / B 为 518 / 116 / 654 字节，完整密文为 846 字节。材料版本 2 保留人工输入与 framing 预期，并补入先于 Rust encoder 生成的独立 Go Argon2id / HKDF / XChaCha 输出、完整密文及来源指纹；没有用生产 encoder 自生 expected。
+- R01–R24 是 E10–E12、E15–E16 的输入 / 调度细化，不替代原案例编号。`hostTest` 映射实际 Rust 测试；不以 24 个输入编号宣称 24 项独立业务测试。R24 是合成阶段取消 / 共享名额验证，不代表原生 KDF 中途抢占或移动 UI 延迟。
+- `python3.14 -B scripts/check-archive-review.py` 仅用 Python 3.11+ 标准库核对固定偏移、SHA、AAD、11 个预检调度及独立输出 / 源码指纹。它不执行密码算法、产品 codec 或恢复，不接收用户文件，不加入 Core Quality 冒充业务门禁。
+
+### 5.6 E-CONTAINER 宿主内存封装与有界解封
+
+`archive_container::seal` 接收 E-SNAPSHOT、原始 UTF-8 口令、显式 `Limits` 和取消标志，每次使用系统新随机材料，返回仅可显式借用的 `SealedArchive`。`open` 接收有界密文，在全部认证与业务校验通过后返回 `OpenedArchive` 的逻辑 `Contents`；不伪造原库捕获统计，不提供旧域运行权限、恢复写入或活动切换。实现沿用锁定依赖，无新增 schema、生产 ABI 或移动入口。
+
+公开版本 / 长度 / flags / suite / KDF 白名单在昂贵调用前拒绝；封装失败为 `archive_unlock_failed`（“口令不正确或归档损坏”），封装成功后正文失败为 `archive_content_auth_failed`。认证成功后还要核对清单、原始 payload SHA、长度 / 终结、唯一 JSON 键、未知字段、完整事实图及从事实重建的核对报告；业务非法为 `invalid_archive_payload`，超预算和取消分别保留。调用复用原 M0-C 的一个 KDF 名额，忙则拒绝；原始 Argon2id 提取后仍保留旧派生标签 / salt 的字节兼容。
+
+| 实际宿主测试组 | 核对范围 |
+| --- | --- |
+| 独立向量与口令身份 | Go 全容器与 Rust 逐字节相同；原始 Argon2id、两用途密钥、两层密文、旧 M0-C 派生及 NFC / NFD 原始字节分别匹配；直接打开 Go 密文 |
+| KDF 前拒绝 | 持有真实执行名额调用非法头、版本 / 参数、截断 / 附加 / 超限密文，仍得到预检错误而非 `kdf_busy`；弱 / 极端参数不触发 KDF |
+| 认证分层 | 错口令、salt / ID / nonce / 封装变化、正文 / tag 变化与等长跨归档拼接失败；正文每个字节的变化另经底层 AEAD 对照，不宣称对每字节都重跑完整 KDF |
+| 认证后非法载荷 | 合法 AEAD 下错误清单 / hash / 数量 / 长度 / 终结、非法 UTF-8、BOM / 多顶层值、重复及转义重复键、未知字段、虚假汇总、缺 parent / 引用均拒绝；观测点证明已越过正文认证 |
+| 有界解析 | 载荷 16 MiB−1 / 16 MiB / +1，记录 100,000、深度 64、单字符串 64 KiB、累计字符串预算和集合成员 1,000,000 的适用边界；累计字符串硬上限 16 MiB 另受原始载荷上限约束，使用下调预算验证边界；数组独立计数后才 typed decode |
+| 取消 / 失败 / 重试 | KDF 前后、封装 / 正文 / JSON / 返回边界合成注入；原语执行和工作块清理期间名额仍占用；结果不发布、源 SQLCipher 内容不变、重试成功并使用新随机材料 |
+| 非空 SQLCipher 保真 | A11 的 8 修订、2 候选、1 删除和 7 原意图逐项相同，原意图重放仍为 replay；丢弃原 DB Key 后仍可从容器取得逻辑内容；v2 导入不升级 / 不捏造撤销，v3 取消导入与部分撤销只保留为历史，不自动续做 |
+
+复现：`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core archive_container --jobs 4`，也由 `check-core.sh` 的 workspace all-features 测试自动执行。本批最终新增 13 项全部通过；全量结果、精确工具版本及非秘密日志见 [11 月 devlog](../devlogs/2026-11.md#2026-11-03-e-container-已批准宿主实现与独立向量)。使用 tempfile 独占合成 SQLCipher 库与内存缓冲，不启动服务 / 设备、访问系统项或下载依赖。
+
+独立 oracle 的来源、版本、许可与复现见[脚本说明](../../scripts/README.md#m0-e-认证容器评审材料)。独立完整密文向量覆盖人工空载荷；非空 A11 / v2 / v3 另对原始事实和既有独立账务预期核对，非法认证载荷由测试底层原语构造，不把它们说成第二套独立密码实现。
+
+本入口仅交付宿主内存容器候选。没有文件保存 / fsync / 条件发布、受保护暂存数据库、空白设备恢复、平台密钥 / 活动切换、D / E 新读取基线或移动接入；没有真实 IO / 掉电、移动 KDF 耗时 / 峰值与 UI 取消证据。显式缓冲可失败分配，但 serde 的转义临时空间和领域集合仍受输入总量约束，不能宣称所有分配失败均可恢复；内存 Zeroizing 也不等于 OS swap / crash dump 审计。原生 Argon2 调用不可中途抢占，测试仅在其前后注入取消。不关闭完整 E10–E12 / E15–E16、M0-E 或正式格式冻结；下一顺位统一见 current。
 
 ## 6. 规格复核与验收对应
 

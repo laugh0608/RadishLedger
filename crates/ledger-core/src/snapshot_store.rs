@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicBool;
 #[path = "snapshot_tests.rs"]
 mod tests;
 #[path = "snapshot_validate.rs"]
-mod validate;
+pub(crate) mod validate;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CapturePoint {
@@ -555,10 +555,10 @@ impl Store {
         };
         observe(CapturePoint::Imports)?;
         let facts = Facts {
-            profile: PROFILE,
+            profile: PROFILE.into(),
             source_schema: version,
             sequence: *sequence,
-            currency: "CNY",
+            currency: "CNY".into(),
             minor_unit_scale: 2,
             remote_knowledge: RemoteKnowledge::Unknown,
             accounts,

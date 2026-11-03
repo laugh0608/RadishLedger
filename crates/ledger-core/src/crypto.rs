@@ -13,6 +13,14 @@ use zeroize::Zeroizing;
 
 pub type Secret = Zeroizing<[u8; 32]>;
 static KDF: Mutex<()> = Mutex::new(());
+#[cfg(test)]
+pub(crate) static KDF_TESTS: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KdfPoint {
+    Acquired,
+    Hashed,
+}
 
 pub fn error() -> CoreError {
     CoreError::new(
@@ -74,17 +82,34 @@ impl Profile {
 }
 
 pub fn password_key(password: &[u8], salt: &[u8; 16], profile: &Profile) -> Result<Secret> {
-    profile.validate()?;
+    let output = password_material(password, salt, profile, |_| Ok(()))?;
+    derive(output.as_ref(), salt, b"radishledger/m0c/v1/password-wrap")
+}
+
+pub(crate) fn validate_password(password: &[u8]) -> Result<()> {
     if password.is_empty() || password.len() > 1024 || std::str::from_utf8(password).is_err() {
         return Err(CoreError::new(
             "invalid_password",
             "口令必须是 1 至 1024 字节的 UTF-8",
         ));
     }
+    Ok(())
+}
+
+/// 原始 Argon2id 材料与用途派生分开；所有用途共用同一有界执行名额。
+pub(crate) fn password_material(
+    password: &[u8],
+    salt: &[u8; 16],
+    profile: &Profile,
+    mut observe: impl FnMut(KdfPoint) -> Result<()>,
+) -> Result<Secret> {
+    profile.validate()?;
+    validate_password(password)?;
     // 不排队积压昂贵 KDF；所有 bridge / isolate 共用一把有界执行锁。
     let _guard = KDF
         .try_lock()
         .map_err(|_| CoreError::new("kdf_busy", "已有口令派生任务尚未结束"))?;
+    observe(KdfPoint::Acquired)?;
     let params = Params::new(
         profile.memory_kib,
         profile.iterations,
@@ -103,7 +128,8 @@ pub fn password_key(password: &[u8], salt: &[u8; 16], profile: &Profile) -> Resu
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into_with_memory(password, salt, output.as_mut(), blocks.as_mut_slice())
         .map_err(|_| error())?;
-    derive(output.as_ref(), salt, b"radishledger/m0c/v1/password-wrap")
+    observe(KdfPoint::Hashed)?;
+    Ok(output)
 }
 
 pub fn derive(key: &[u8], salt: &[u8], purpose: &[u8]) -> Result<Secret> {

@@ -25,7 +25,7 @@ mod csv_store;
 mod csv_undo_store;
 
 #[path = "snapshot_store.rs"]
-mod snapshot_store;
+pub(crate) mod snapshot_store;
 
 pub struct DbKey(Zeroizing<[u8; 32]>);
 

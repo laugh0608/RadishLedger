@@ -1,4 +1,5 @@
 //! M0 移动接入所需的有界账务与加密事务核心；尚非可交付的用户账库。
+pub mod archive_container;
 pub mod bootstrap;
 mod bootstrap_files;
 #[cfg(test)]

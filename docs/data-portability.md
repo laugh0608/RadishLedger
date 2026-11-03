@@ -135,6 +135,117 @@ CSV 不含完整修订、冲突、删除与恢复材料，不能称为完整备�
 
 生成归档在临时输出中完成全部认证内容、终结和保存确认后才标记可用；失败 / 取消不把部分文件替换到既有成功备份。重新开始归档生成使用新的 Archive Key / 归档身份；若支持断点写续传，必须证明 nonce / 块身份不复用及输出未改变，不能简单在旧文件尾继续加密。外部文件提供方的保存语义另行验证；本地完成与外部保存结果分开报告。
 
+### 3.2.1 E-CONTAINER 首个宿主候选与实施边界
+
+所有者已于 2026-11-03 批准 `m0-archive-container-review-1` 的 Rust 宿主内存封装 / 有界解封实验；以下字节、用途与资源 profile 仍是**实验候选，未冻结为生产格式**。实现与实际证据见[宿主验证入口](validation/portability-cases.md#56-e-container-宿主内存封装与有界解封)。现有归档边界继续有效，不据此关闭完整 E10–E12、E15–E16 或 M0-E。
+
+| 候选 | 适用性与代价 | 本轮建议 |
+| --- | --- | --- |
+| 有界整体 AEAD | 与当前至多 16 MiB 内存快照衔接；一个内容 tag 覆盖清单、完整载荷和终结字段；需要完整密文 / 明文缓冲，暂不能支持任意大归档 | 首个宿主候选；超限明确拒绝，不截断或拆成不完整备份 |
+| 分块 AEAD | 可降低单次密码缓冲，但还需块身份 / 顺序、成员清单、终结认证、nonce / 续写、受保护暂存与 IO 恢复证据 | 保留方向，当前不引入；单块认证不得代替完整档案认证 |
+
+本宿主切片采用整体认证、无压缩、无断点加密续写；每次新尝试都生成新的随机 Archive Key、archive_id、salt 与 nonce。取消、失败或重新选择输入不能在旧文件尾继续加密。本候选只验证内存封装与有界解封，不写用户备份、不创建恢复库或操作系统密钥，不新增依赖，也不把实验 `.ledger-backup` 变成已交付承诺。
+
+原语沿用威胁模型方向：XChaCha20-Poly1305、HKDF-SHA256 和 Argon2id。192-bit nonce 的随机使用与同钥不复用边界依据 [libsodium 原始说明](https://doc.libsodium.org/secret-key_cryptography/aead/chacha20-poly1305/xchacha20-poly1305_construction)；`info` 的用途 / 上下文隔离依据 [RFC 5869 §3.2](https://www.rfc-editor.org/rfc/rfc5869.html#section-3.2)。这是本项目候选构造，不是这些来源已经评审本容器的结论。XChaCha 的[公开向量文档](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-xchacha-03#appendix-A.3.1)为过期 Internet-Draft，不称为 RFC。
+
+### 3.2.2 公开头的精确候选字节
+
+所有无符号整数均为大端；区间均为从 0 开始、右端不包含的字节区间。ASCII 常量不带隐式 NUL，只有后文明确列出的 AAD 分隔字节为 `00`。外层为 `H[176] || C_body[L]`；不存在可忽略的尾部、可选扩展、目录成员或第二份头。
+
+| 区间 | 字段 | 本候选唯一接受值 / 解释 |
+| --- | --- | --- |
+| `[0,8)` | magic | ASCII `RLM0E001`，明确为 M0 实验标识 |
+| `[8,10)`、`[10,12)` | major、minor，u16 | `0`、`1`；当前只接受这一对，不把未知 minor 当兼容 |
+| `[12,16)` | header_length，u32 | `176`，不据此任意分配头缓冲 |
+| `[16,18)` | suite_id，u16 | `1`：XChaCha20-Poly1305 / HKDF-SHA256 |
+| `[18,20)` | kdf_profile_id，u16 | `1`：本候选固定 Argon2id 参数 |
+| `[20,24)` | flags，u32 | `0`；非零包括压缩 / 分块标志均不支持 |
+| `[24,40)` | archive_id | 每份尝试独立的 16 个系统随机字节，不是业务 / 同步身份 |
+| `[40,56)` | salt | 16 个独立系统随机字节，用于 Argon2id |
+| `[56,60)`、`[60,64)` | Argon2 version、memory_kib，u32 | `19`（0x13）、`65536` |
+| `[64,68)`、`[68,72)` | iterations、lanes，u32 | `3`、`1` |
+| `[72,96)` | N_wrap | 24 个系统随机字节，封装 Archive Key |
+| `[96,120)` | N_body | 24 个系统随机字节，认证完整正文 |
+| `[120,128)` | content_cipher_length，u64 | `L=N+152`，含 16-byte tag；`N` 是载荷字节数 |
+| `[128,176)` | C_wrap | 32-byte Archive Key 的 AEAD combined 输出，含 16-byte tag，共 48 字节 |
+
+未认证头只允许做固定读取、整数检查、版本 / 算法 / profile 白名单与资源拒绝。先检查 `153 <= L <= 16,777,368` 和实际总长 `176+L`，再做 KDF；尾部附加或截断均拒绝。不可 seek 的输入须在相同上限内读足并核对 EOF；实际提供方错误按 IO 失败返回，不把未知长度当成功。头不放账户名、业务日期、金额、备注、payload hash、清单或生产 Book ID；长度与随机标识仍会暴露，不能宣称隐藏体积或新鲜度。
+
+### 3.2.3 密钥与认证输入
+
+令 `P` 为备份口令的原始 UTF-8 字节：1–1024 字节，继承当前口令输入边界，不 trim、不做 Unicode normalization、不隐式换编码。Argon2id 使用头中固定参数、16-byte salt、32-byte 输出，不使用 Argon2 的 secret / associated-data 可选输入。
+
+```text
+I = Argon2id(P, salt, v=19, m=65536 KiB, t=3, p=1, out=32)
+K_wrap = HKDF-SHA256(IKM=I, salt=archive_id,
+                    info=ASCII("radishledger/archive/review1/password-wrap"), L=32)
+K_body = HKDF-SHA256(IKM=ArchiveKey, salt=archive_id,
+                    info=ASCII("radishledger/archive/review1/content-key"), L=32)
+AAD_wrap = ASCII("radishledger/archive/review1/wrap") || 00 || H[0:128]
+C_wrap = AEAD_Encrypt(K_wrap, N_wrap, ArchiveKey, AAD_wrap)
+H = H[0:128] || C_wrap
+AAD_body = ASCII("radishledger/archive/review1/content") || 00 || H[0:176]
+C_body = AEAD_Encrypt(K_body, N_body, B, AAD_body)
+```
+
+HKDF 均含 Extract 与 Expand。`L` 在头部先确定，因此认证关系无循环：先构造 128-byte 前缀，再封装、形成完整头、最后认证正文。公开参数、salt、nonce、archive_id 与长度由封装认证绑定；正文再绑定完整封装字节。等长跨归档拼接也必须失败。manifest 在正文内一并认证，不能把未认证头当作清单。
+
+本地 `crypto::password_key` 已在 Argon2id 后使用 `radishledger/m0c/v1/password-wrap`；其输出不能直接冒充上式 `I` 或 `K_wrap`。实现以 `password_material` 提取原始 Argon2id 材料，共享原有执行锁 / 内存管理；既有 `password_key` 保留 M0-C 标签和 salt 关系，独立向量核对其派生兼容。不能复制一套无执行限额的 KDF，也不能手写密码原语。依据 [RFC 9106 §4](https://www.rfc-editor.org/rfc/rfc9106.html#section-4)，其 64 MiB / 3 次迭代推荐组合使用 **4 路**；这里的 **1 路**沿用项目既有未冻结实验候选，不将其描述为 RFC 同一 profile 或已获真机性能证据。
+
+Archive Key 独立随机生成，不由原 DB Key、Vault Root Key、同步钥或登录凭据导出，也不写进 manifest。两次 AEAD 的 nonce 独立随机，同钥不得复用；不提供原地换口令 / 重封装 / 加密续写入口。持有相应解密材料的人能够创建有效容器，AEAD 不提供作者签名、时间新鲜度、唯一最新档案或其他离线设备完整性证明。
+
+### 3.2.4 认证正文、清单与终结
+
+`S` 为长度 `N` 的 UTF-8 逻辑快照候选载荷；当前候选仅承载 `m0-logical-snapshot-v1` 的 schema 1–3 语义，不能据此承诺生产身份、设置或旧域恢复。`1 <= N <= 16,777,216`。正文为：
+
+```text
+B = u32be(116) || M[116] || u64be(N) || S[N] || ASCII("RLM0END1")
+len(B) = N + 136
+len(C_body) = N + 152
+len(H || C_body) = N + 328       # 最大 16,777,544 字节
+```
+
+| M 内区间 | 字段 | 认证后必须核对 |
+| --- | --- | --- |
+| `[0,8)` | manifest_magic | ASCII `RLM0MAN1` |
+| `[8,10)`、`[10,12)` | manifest_version、payload_profile_id，u16 | `1`、`1`；未知值不忽略 |
+| `[12,16)` | source_schema，u32 | 仅 1–3，且与 S 一致 |
+| `[16,24)` | source_sequence，u64 | 与 S 一致且在源 i64 非负范围；不是新域 cursor |
+| `[24,76)` | 13 个 u32 数量 | 依次为 accounts、categories、revisions、selected、candidates、intent_history、import tasks / rows / sources / batches、undo tasks / rows / batches |
+| `[76,84)` | payload_length，u64 | 与外层推得的 N、正文长度和实际 S 一致 |
+| `[84,116)` | payload_sha256 | SHA-256(S 原始字节)，密文内保存；认证后重算 |
+
+13 项数量分别对应 S 的声明数组；无 imports 时其中七项为 0。它们累计不超过 100,000，并在解码中独立计数重检，不据头或 manifest 值直接 reserve。嵌套确认集合、mapping 与候选引用另受累计成员预算和领域关系约束。payload hash 只核对本载荷字节，**不是已冻结的确定性业务摘要、签名或归档身份**；不能以它替代完整事实、关系和统计检查。
+
+S 为无 BOM 的单个 UTF-8 JSON 文本，可含 JSON 定义的前后空白；拒绝多个顶层值和非空白尾部，hash 始终覆盖原始 S 字节。写端沿当前快照编码输出固定字段次序与紧凑字节，不把读端接受的空白 / key 顺序变化误称为统一的业务规范编码。
+
+完整 AEAD 成功后，仍须拒绝错误 manifest / 长度 / 终结、重复 JSON 键、重复身份、未知必需字段、非法 UTF-8 / 金额 / 引用 / 候选 / parent、来源与任务漂移，以及虚假的核对清单。不能直接用会覆盖重复 map key 的普通 JSON 解码宣布成功。须从事实重建报表、与 S 的 verification 和 M 逐项比较；合法归档历史引用保留。正文必须精确结束于终结字段，外层也必须精确 EOF。终结常量本身不代替认证；本候选没有块序号，分块重排用例不能伪称已覆盖。
+
+### 3.2.5 资源、取消与失败结果
+
+| 边界 | 候选限制 / 行为 |
+| --- | --- |
+| KDF | 只允许 profile 1 的全部精确参数；更弱、更高、未知算法 / 版本 / 路数都在昂贵调用前拒绝，不做 fallback |
+| 并发 | 与既有核心共享至多一个昂贵 KDF 执行名额；忙则明确返回，不建立无限等待队列 |
+| 明文 / 密文 | 按上表 N / L / 总长检查，加法先 checked，再转换平台 usize；只读固定头，不跟随内部路径、链接、脚本或外部资源 |
+| JSON 解码 | 原始 S 至多 16 MiB；嵌套深度 64、单个解码字符串 64 KiB、累计解码字符串 16 MiB、全部集合 / map 成员累计 1,000,000；另重检 100,000 个声明数组成员及现有领域限额 |
+| 分配 | 显式预算与可失败预分配；评估 in-place AEAD，避免不受控明文副本；不能捕获 OOM 后假报成功或降 KDF 强度。64 MiB KDF、内容缓冲、typed JSON / 集合与 SQLite 缓存不能混称为 64 MiB 峰值内存 |
+| 取消 | KDF 前、返回后及 AEAD / 解码阶段检查；当前 Argon2 原语不能中途停止，UI 停等不等于已退出。取消后待本次原语返回、丢弃并清理结果，期间不释放名额再启动下一次 |
+| 解密失败 | 受污染的工作缓冲不返回、不展示、不写普通文件；尽量 Zeroizing，清理不宣传为系统级绝对擦除 |
+| 生成失败 | 不生成可用归档标记、不覆盖旧备份；重试新建随机材料。平台保存 / fsync / owner / 条件发布留给后续实际 IO 切片 |
+
+错误分层候选为：公开格式 / profile 不支持、资源超限、口令输入无效、KDF 忙 / 分配失败、IO、取消、封装认证失败、正文认证失败、认证后载荷 / 业务非法。`archive_unlock_failed` 的用户解释必须为“口令不正确或归档损坏”；封装成功后才可报告 `archive_content_auth_failed`，不能透露未认证内容。代码名称也是候选，不另冻公共错误 ABI。
+
+### 3.2.6 独立向量输入与实施门槛
+
+[公开评审输入](validation/archive-container-review-inputs.json)提供一个人工空快照 S、公开固定测试口令 / key / nonce / salt、精确头前缀 / manifest / 正文摘要 / AAD 以及 R01–R24 调度。它们全部是已公开标记的合成输入，不能用于运行材料。输入 S 为 518 字节，M 为 116 字节，B 为 654 字节；独立 Go 向量的完整密文为 846 字节，Rust 随后逐字节匹配。该文件的固定材料只用于公开向量，生产入口没有注入固定 nonce / key 的选项。
+
+[`check-archive-review.py`](../scripts/check-archive-review.py)仅用 Python 标准库独立解读固定偏移、重算 SHA / 长度并复核 11 个预检调度；它不执行 Argon2、HKDF、AEAD、生产 codec 或恢复。材料版本 2 已补独立密码输出和来源指纹，R01–R24 映射到宿主测试；检查脚本只验证材料 / 指纹，不运行密码算法，也不以材料检查替代 Cargo 的真实认证与业务校验。原语来源仍是 [RFC 9106 §5.3](https://www.rfc-editor.org/rfc/rfc9106.html#section-5.3)、[RFC 5869 Appendix A.1](https://www.rfc-editor.org/rfc/rfc5869.html#appendix-A.1)和上述 XChaCha 草案；现有原语测试不替代新的用途 / 组合向量。
+
+独立预期先于 Rust encoder 生成：复用已安装 Go 1.26.3、缓存 `golang.org/x/crypto v0.50.0` / `x/sys v0.43.0`（The Go Authors，BSD-3-Clause），使用 Go Argon2id、XChaCha20-Poly1305 与标准库 HKDF。入口为 [`archive-vector-oracle.py`](../scripts/archive-vector-oracle.py)，来源 API 见 [Go Argon2](https://pkg.go.dev/golang.org/x/crypto/argon2)、[Go XChaCha](https://pkg.go.dev/golang.org/x/crypto@v0.50.0/chacha20poly1305) 与 [Go HKDF](https://pkg.go.dev/crypto/hkdf)。仅在独占忽略目录生成工具、模块引用和输出，禁用下载 / 自动工具链 / 遥测；没有安装或修改产品依赖。固定输入、工具版本、Go 源码 / 模块 / 许可指纹和原输出 hash 保留在材料 provenance；Rust 逐项匹配 I、两用途密钥、两层完整密文、旧 M0-C 派生和 Unicode 输入，不以生产 encoder 自生 expected。
+
+宿主验证映射至少覆盖 R01 正常独立解封、R02–R12 KDF 前拒绝、R13–R17 错口令 / 各层篡改 / 等长拼接、R18–R21 **合法认证但载荷非法**、R22 可达硬上限与下调资源预算的 limit−1 / limit / limit+1、R23 原始 UTF-8 身份与 R24 取消 / 忙 / 原库保全。A11 非空事实及 v2 / v3 历史已有宿主内存保真证据；后续仍需临时保存与旧备份保全、真实 IO / 中断、移动峰值 / KDF 与空白设备恢复证据；正式格式与支持矩阵另经 ADR，不由本次确认自动冻结。
+
 ## 4. 恢复流程
 
 1. 在新暂存区检查格式与版本，不覆盖活动账库。

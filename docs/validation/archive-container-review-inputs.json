@@ -1,0 +1,336 @@
+{
+  "materialVersion": 2,
+  "dataOrigin": "synthetic-public-review-inputs",
+  "status": "approved_host_experiment_not_frozen",
+  "profile": "m0-archive-container-review-1",
+  "sourceOfExpectedFraming": "公开固定人工输入；Go 独立重建 header / manifest / plaintext 并与原 Python 大端材料交叉核对；密码预期来自 Go，不来自 Rust encoder",
+  "proposal": {
+    "headerBytes": 176,
+    "manifestBytes": 116,
+    "plaintextOverheadBytes": 136,
+    "tagBytes": 16,
+    "fileOverheadBytes": 328,
+    "maxPayloadBytes": 16777216,
+    "maxFileBytes": 16777544,
+    "maxRecords": 100000,
+    "maxJsonDepth": 64,
+    "maxStringBytes": 65536,
+    "maxDecodedStringBytes": 16777216,
+    "maxCollectionEntries": 1000000,
+    "maxConcurrentKdf": 1
+  },
+  "baseInput": {
+    "passwordUtf8": "public-review-password",
+    "archiveKeyHex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+    "archiveIdHex": "000102030405060708090a0b0c0d0e0f",
+    "saltHex": "101112131415161718191a1b1c1d1e1f",
+    "wrapNonceHex": "404142434445464748494a4b4c4d4e4f5051525354555657",
+    "contentNonceHex": "606162636465666768696a6b6c6d6e6f7071727374757677",
+    "kdf": {
+      "algorithm": "argon2id",
+      "version": 19,
+      "memoryKiB": 65536,
+      "iterations": 3,
+      "lanes": 1,
+      "outputBytes": 32
+    },
+    "payloadUtf8": "{\"facts\":{\"profile\":\"m0-logical-snapshot-v1\",\"sourceSchema\":1,\"sequence\":0,\"currency\":\"CNY\",\"minorUnitScale\":2,\"remoteKnowledge\":\"unknown\",\"accounts\":[],\"categories\":[],\"revisions\":[],\"selected\":[],\"candidates\":[],\"intentHistory\":[],\"imports\":null},\"verification\":{\"balancesMinor\":{},\"netAssetsMinor\":\"0\",\"assetsMinor\":\"0\",\"liabilitiesMinor\":\"0\",\"monthlyReports\":{},\"activeEventIds\":[],\"selectedRevisionIds\":{},\"deletedEventIds\":[],\"unresolvedCandidateRevisionIds\":[],\"archivedAccountIds\":[],\"archivedCategoryIds\":[]}}"
+  },
+  "domains": {
+    "wrapKeyInfoAscii": "radishledger/archive/review1/password-wrap",
+    "contentKeyInfoAscii": "radishledger/archive/review1/content-key",
+    "wrapAadLabelAscii": "radishledger/archive/review1/wrap",
+    "contentAadLabelAscii": "radishledger/archive/review1/content",
+    "aadSeparatorHex": "00"
+  },
+  "framingExpected": {
+    "payloadBytes": 518,
+    "payloadSha256": "9475462693b867676386b318411251d96f08fbb1741cd2dd0886b7d2b5d8b653",
+    "headerPrefixHex": "524c4d304530303100000001000000b00001000100000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000013000100000000000300000001404142434445464748494a4b4c4d4e4f5051525354555657606162636465666768696a6b6c6d6e6f7071727374757677000000000000029e",
+    "manifestHex": "524c4d304d414e31000100010000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002069475462693b867676386b318411251d96f08fbb1741cd2dd0886b7d2b5d8b653",
+    "plaintextSha256": "94b639f52b9a18193f21e993ef6307ac3c7a0afe7dd10278ba1ac702fdf65c68",
+    "plaintextBytes": 654,
+    "contentCipherBytes": 670,
+    "fileBytes": 846,
+    "wrapAadHex": "7261646973686c65646765722f617263686976652f726576696577312f7772617000524c4d304530303100000001000000b00001000100000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000013000100000000000300000001404142434445464748494a4b4c4d4e4f5051525354555657606162636465666768696a6b6c6d6e6f7071727374757677000000000000029e"
+  },
+  "cryptoExpected": {
+    "archiveHex": "524c4d304530303100000001000000b00001000100000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000013000100000000000300000001404142434445464748494a4b4c4d4e4f5051525354555657606162636465666768696a6b6c6d6e6f7071727374757677000000000000029ef01f608afe14509eabf1c8077e5f84b6acb189e3e8a20ccb418e767a7f39e487ba541729d49b6103572edf162c4ebbce770ae003da284bc0cf78ea4deaa8351d477c8d33de30825fa2e5363dc374e326f63cc8b50f1ac5144cc5c2b1429875404417bf1bb949a54692569cb700340a48a9cbec68930ade874c70ce8243f86594c0114d8062ae63f9578e4e364beeb2fcd856191cca3c6f00f40281f3b7fa8f81a823374a1d2f6fdd6591513fa4ccfe16669886d6172e24fedfc9fed5c6146783cb068b4ebdf17a22e48c5601b0ad19030db20e702a39dfe3884acd3c518af4fd5abd11fabdf569a673c5ec352ebf7d2367abec62d75c2bd8fa1715e4ac08a56125145c6c783744c8235869648f7b0607d46802df5b77fdb052b30329261349eca140e8fd421eb92156788e680c9756ced690b69fb932f578d5a5eb79b45c6d5527711d38066a3f468d6b1759913047e509a4137419dfaaef5000624851e242c29f4f6e9bb8b0b7f6e78ff390d918ec24c968b50c080fd4c5a12bd50cfc15c892fe85dde08886b4c57ecf01797b9bbbf79ffe8d98a1335170b63b8b61385325405b62241d684b06130d86c4be6d0bfe000cd3771537e5f7911e1b1239973750811d666a16c96269ce46561566c7bf9f08a932ff28e60ed087ffb0e78f794af5b4a7578594240fe0ae69b2901507ed463ee45d0f1413bc5ca57c2a1dfcec4256247ea7a84c17d8858c1275baa76efedb9f7e127a2d7e10c32ace34b8579c63c8b44902b7a5d9a86a45d60cd135d7bf8a174406b06a71430025a77a34b4d3a7c5df33b0338936061ec252bc8e71bdcce240154e670b0eb6c7f0371e0bfb4bb8de52222f201ca2726aac8f65981eca656e87766f6ede79c9cfed2f118ddec5ded938f0c49d89a9e417eccc712ad511bb3b4e71137397d33837cf8164bc15df234a8d1ef071a72ef0947aee16ec16d9f899e07dcf8ddaa9a56a782aa2145d21564171cfb5f3dacddc39fbb5bb47ef7ed4",
+    "archiveSha256": "59816737fb2759dde36bc75dc222124f74430a984b221225fdfa93dba75fc478",
+    "argon2idOutputHex": "402c2e8a7b91ad40a65f75dd68e9c4718643e779c66aedab984be657e72c69b5",
+    "contentCiphertextHex": "770ae003da284bc0cf78ea4deaa8351d477c8d33de30825fa2e5363dc374e326f63cc8b50f1ac5144cc5c2b1429875404417bf1bb949a54692569cb700340a48a9cbec68930ade874c70ce8243f86594c0114d8062ae63f9578e4e364beeb2fcd856191cca3c6f00f40281f3b7fa8f81a823374a1d2f6fdd6591513fa4ccfe16669886d6172e24fedfc9fed5c6146783cb068b4ebdf17a22e48c5601b0ad19030db20e702a39dfe3884acd3c518af4fd5abd11fabdf569a673c5ec352ebf7d2367abec62d75c2bd8fa1715e4ac08a56125145c6c783744c8235869648f7b0607d46802df5b77fdb052b30329261349eca140e8fd421eb92156788e680c9756ced690b69fb932f578d5a5eb79b45c6d5527711d38066a3f468d6b1759913047e509a4137419dfaaef5000624851e242c29f4f6e9bb8b0b7f6e78ff390d918ec24c968b50c080fd4c5a12bd50cfc15c892fe85dde08886b4c57ecf01797b9bbbf79ffe8d98a1335170b63b8b61385325405b62241d684b06130d86c4be6d0bfe000cd3771537e5f7911e1b1239973750811d666a16c96269ce46561566c7bf9f08a932ff28e60ed087ffb0e78f794af5b4a7578594240fe0ae69b2901507ed463ee45d0f1413bc5ca57c2a1dfcec4256247ea7a84c17d8858c1275baa76efedb9f7e127a2d7e10c32ace34b8579c63c8b44902b7a5d9a86a45d60cd135d7bf8a174406b06a71430025a77a34b4d3a7c5df33b0338936061ec252bc8e71bdcce240154e670b0eb6c7f0371e0bfb4bb8de52222f201ca2726aac8f65981eca656e87766f6ede79c9cfed2f118ddec5ded938f0c49d89a9e417eccc712ad511bb3b4e71137397d33837cf8164bc15df234a8d1ef071a72ef0947aee16ec16d9f899e07dcf8ddaa9a56a782aa2145d21564171cfb5f3dacddc39fbb5bb47ef7ed4",
+    "contentKeyHex": "70b16e8c011ac58f892e24f3c930eafcb432b83bce8d2575a5636ed3f600e02d",
+    "headerPrefixHex": "524c4d304530303100000001000000b00001000100000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000013000100000000000300000001404142434445464748494a4b4c4d4e4f5051525354555657606162636465666768696a6b6c6d6e6f7071727374757677000000000000029e",
+    "m0cPasswordKeyHex": "f246a396f99bdb74855eb327a165ec0f3e6386c08f0f78c33139f6b5d77d9485",
+    "manifestHex": "524c4d304d414e31000100010000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002069475462693b867676386b318411251d96f08fbb1741cd2dd0886b7d2b5d8b653",
+    "plaintextSha256": "94b639f52b9a18193f21e993ef6307ac3c7a0afe7dd10278ba1ac702fdf65c68",
+    "status": "independent_go_oracle",
+    "unicodeNfcArgon2Hex": "651c7ce17f68306567a526feebb62290c5e99697f081102ee4c08bf5191d1839",
+    "unicodeNfdArgon2Hex": "9686d7b1c8b9eb715436a699984df6cc2551082e28ab6372a2a0e235b1bc3292",
+    "wrapKeyHex": "ec2a92b55b76d4a5035b87081d4b8da1b5adfb2c0204f7579e6614deb201f487",
+    "wrappedArchiveKeyHex": "f01f608afe14509eabf1c8077e5f84b6acb189e3e8a20ccb418e767a7f39e487ba541729d49b6103572edf162c4ebbce",
+    "provenance": {
+      "goVersion": "go version go1.26.3 darwin/arm64",
+      "modules": {
+        "golang.org/x/crypto": "v0.50.0",
+        "golang.org/x/sys": "v0.43.0"
+      },
+      "license": "BSD-3-Clause; The Go Authors",
+      "sourceSha256": "91cebb3caa80d3f2fa7dc6b06770fda034533418c268071f1cc335c54f9c0f5d",
+      "materialSha256": "39a9032d680bdb6894b8d4c91e5a80a12b96063aff3b4c503ce5badc3d0041de",
+      "outputsSha256": "09ab0c5fc94b3b495a5f8c2a212c75de303a0190f025da23aaabfac3b05232ef",
+      "network": "GOPROXY=off / GOSUMDB=off / GOTOOLCHAIN=local",
+      "packageSources": {
+        "crypto@v0.50.0": {
+          "goSourceCount": 316,
+          "sha256": "63980e51aaf964f0b4e6ecca3a34b4202d6c81658761fd199d50ea135e08989c",
+          "licenseSha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        "sys@v0.43.0": {
+          "goSourceCount": 477,
+          "sha256": "37695966faa0b33daad9579e60e076a3e70ec44ac88b9577d7e46d750d66ebf2",
+          "licenseSha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "R01",
+      "name": "结构正常",
+      "mutation": "none",
+      "stage": "framing_only",
+      "expected": "基准公开输入；未运行容器认证，所有密码预期为空",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::independent_go_vector_matches_keys_full_ciphertext_and_m0c_compatibility"
+    },
+    {
+      "id": "R02",
+      "name": "未知版本",
+      "mutation": "major=1",
+      "stage": "preflight",
+      "expected": "unsupported_archive",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R03",
+      "name": "头长极端值",
+      "mutation": "header_length=4294967295",
+      "stage": "preflight",
+      "expected": "invalid_archive",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R04",
+      "name": "未知算法",
+      "mutation": "suite_id=2",
+      "stage": "preflight",
+      "expected": "unsupported_archive",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R05",
+      "name": "未知 KDF profile",
+      "mutation": "kdf_profile_id=2",
+      "stage": "preflight",
+      "expected": "unsupported_kdf",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R06",
+      "name": "KDF 弱化",
+      "mutation": "memory_kib=65535",
+      "stage": "preflight",
+      "expected": "unsupported_kdf",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R07",
+      "name": "KDF 放大",
+      "mutation": "memory_kib=4294967295",
+      "stage": "preflight",
+      "expected": "unsupported_kdf",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R08",
+      "name": "并行路数变化",
+      "mutation": "lanes=4",
+      "stage": "preflight",
+      "expected": "unsupported_kdf",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R09",
+      "name": "非零 flags",
+      "mutation": "flags=1",
+      "stage": "preflight",
+      "expected": "unsupported_archive",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R10",
+      "name": "密文长度越界",
+      "mutation": "content_cipher_length=16777369",
+      "stage": "preflight",
+      "expected": "archive_limit",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R11",
+      "name": "截断",
+      "mutation": "actual_file_length=expected-1",
+      "stage": "preflight",
+      "expected": "invalid_archive",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R12",
+      "name": "尾部附加",
+      "mutation": "actual_file_length=expected+1",
+      "stage": "preflight",
+      "expected": "invalid_archive",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::unsupported_header_length_flags_profile_and_input_size_are_rejected_before_kdf"
+    },
+    {
+      "id": "R13",
+      "name": "错误口令",
+      "mutation": "password_utf8=wrong-public-review-password",
+      "stage": "wrap_auth",
+      "expected": "archive_unlock_failed",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::wrong_password_wrap_body_and_cross_archive_splice_have_distinct_failures"
+    },
+    {
+      "id": "R14",
+      "name": "封装篡改",
+      "mutation": "wrapped_archive_key[0]^=1",
+      "stage": "wrap_auth",
+      "expected": "archive_unlock_failed",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::wrong_password_wrap_body_and_cross_archive_splice_have_distinct_failures"
+    },
+    {
+      "id": "R15",
+      "name": "salt 改变",
+      "mutation": "salt[0]^=1",
+      "stage": "wrap_auth",
+      "expected": "archive_unlock_failed",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::wrong_password_wrap_body_and_cross_archive_splice_have_distinct_failures"
+    },
+    {
+      "id": "R16",
+      "name": "内容篡改",
+      "mutation": "content_ciphertext[0]^=1",
+      "stage": "content_auth",
+      "expected": "archive_content_auth_failed",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::wrong_password_wrap_body_and_cross_archive_splice_have_distinct_failures"
+    },
+    {
+      "id": "R17",
+      "name": "等长跨归档拼接",
+      "mutation": "replace content with second archive of equal length",
+      "stage": "content_auth",
+      "expected": "archive_content_auth_failed",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::wrong_password_wrap_body_and_cross_archive_splice_have_distinct_failures"
+    },
+    {
+      "id": "R18",
+      "name": "已认证错误摘要",
+      "mutation": "encrypt manifest with incorrect payload_sha256",
+      "stage": "payload_validation",
+      "expected": "invalid_archive_payload",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::payload::authenticated_bad_manifest_terminator_json_and_summary_are_rejected_after_aead"
+    },
+    {
+      "id": "R19",
+      "name": "已认证重复 JSON 键",
+      "mutation": "encrypt payload with duplicated facts key",
+      "stage": "payload_validation",
+      "expected": "invalid_archive_payload",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::payload::authenticated_bad_manifest_terminator_json_and_summary_are_rejected_after_aead"
+    },
+    {
+      "id": "R20",
+      "name": "已认证缺终结",
+      "mutation": "encrypt plaintext with invalid end marker",
+      "stage": "payload_validation",
+      "expected": "invalid_archive_payload",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::payload::authenticated_bad_manifest_terminator_json_and_summary_are_rejected_after_aead"
+    },
+    {
+      "id": "R21",
+      "name": "已认证计数漂移",
+      "mutation": "encrypt manifest with accounts_count=1",
+      "stage": "payload_validation",
+      "expected": "invalid_archive_payload",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::payload::authenticated_bad_manifest_terminator_json_and_summary_are_rejected_after_aead"
+    },
+    {
+      "id": "R22",
+      "name": "明文预算边界",
+      "mutation": "payload length=16777215/16777216/16777217",
+      "stage": "resource",
+      "expected": "先两者仅尺寸可接受；后一项在 KDF 前拒绝，不证明业务合法",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::payload::json_budgets_include_nested_records_keys_decoded_text_depth_and_members; payload::authenticated_payload_limit_accepts_both_edges_and_rejects_one_more_before_kdf"
+    },
+    {
+      "id": "R23",
+      "name": "Unicode 原字节",
+      "mutation": "password=utf8(U+00E9) versus utf8(U+0065 U+0301)",
+      "stage": "kdf_identity",
+      "expected": "两份口令输入不同，不 trim 或 normalize；密码输出待独立预期",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::raw_utf8_password_identity_matches_independent_nfc_and_nfd_vectors"
+    },
+    {
+      "id": "R24",
+      "name": "KDF 执行中取消",
+      "mutation": "cancel after Argon2id entry",
+      "stage": "lifecycle",
+      "expected": "等待本次原语返回后丢弃结果，不提前释放执行名额或继续 AEAD",
+      "execution": "mapped_to_host_tests",
+      "hostTest": "archive_container::tests::cancellation_failure_and_shared_gate_keep_original_source_and_allow_retry",
+      "scope": "合成阶段取消 / 失败与真实共享名额；未声称原语内部可抢占、真实 UI 或取消延迟证据"
+    }
+  ],
+  "primitiveReferences": [
+    {
+      "name": "Argon2id",
+      "source": "https://www.rfc-editor.org/rfc/rfc9106.html#section-5.3",
+      "localEntry": "crates/ledger-core/src/crypto.rs::tests::independent_vectors_and_authentication",
+      "scope": "公开原语材料，32 KiB / 4 lanes，与本容器候选 profile 不同"
+    },
+    {
+      "name": "HKDF-SHA256",
+      "source": "https://www.rfc-editor.org/rfc/rfc5869.html#appendix-A.1",
+      "localEntry": "crates/ledger-core/src/crypto.rs::tests::independent_vectors_and_authentication",
+      "scope": "公开原语材料，不证明新的归档用途标签或构造"
+    },
+    {
+      "name": "XChaCha20-Poly1305",
+      "source": "https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-xchacha-03#appendix-A.3.1",
+      "localEntry": "crates/ledger-core/src/crypto.rs::tests::independent_vectors_and_authentication",
+      "scope": "过期 Internet-Draft 的公开原语向量，不是 RFC 或已审查归档协议"
+    }
+  ]
+}

@@ -31,6 +31,7 @@ fn create_input(password: &[u8], recovery: &Secret) -> Zeroizing<Vec<u8>> {
 
 #[test]
 fn bootstrap_preserves_identity_and_unsynced_facts_through_recovery() {
+    let _test_guard = crypto::KDF_TESTS.lock().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let run = crate::random_id().unwrap();
     let path = directory.path().join(format!("m0c-{run}"));
