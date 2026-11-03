@@ -22,6 +22,8 @@ probe 使用真实 SQLCipher 事务：每次保存前在 outbox 插入点以测�
 
 独立的 [E-CSV 持久任务实验](../validation/portability-cases.md#52-e-csv-持久任务与原子发布候选)仅由 Rust 宿主测试新建 schema `2` 库，包含备注及导入计划 / 来源 / 进度；既有 probe / bootstrap 创建仍为 schema `1`，没有自动升级。共享 Event 对空备注省略序列化字段，旧事实与意图字节保持兼容；非空备注写入允许 v2 及新增 v3。[受限撤销实验](../validation/portability-cases.md#53-e-csv-受限撤销候选)另由宿主独占新建 schema `3` 库，复用 v2 导入布局并保存撤销身份 / 进度 / 回执；open 接受 v1–v3，但不自动升级任何既有库。这些扩展没有接入移动桥接，不改变上述 C ABI。
 
+[E-SNAPSHOT 只读候选](../validation/portability-cases.md#54-e-snapshot-最小一致逻辑快照候选)从同一 SQLCipher 事务捕获 schema 1–3 的声明事实 / 意图 / 导入与撤销状态，重建清单并可显式有界编码；不创建新 schema、不读取原始 CSV 或 bootstrap、不写归档或恢复目标。该入口只在 Rust 宿主验证，候选字节与资源上限没有冻结为生产契约；共用 Write / Mapping 的未知字段解码明确拒绝，不另建语言契约。
+
 ## 2. 薄 C ABI 契约
 
 正式声明见 [radishledger_probe.h](../../crates/ledger-mobile/include/radishledger_probe.h)，Dart 调用见 [native.dart](../../apps/m0_probe/lib/src/native.dart)。下表描述基础 / 故障入口的普通输入与结果句柄；bootstrap 的秘密通道另见第 7.7 节，秘密不进入普通结果注册表。

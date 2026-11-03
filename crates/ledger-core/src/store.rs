@@ -24,6 +24,9 @@ mod csv_store;
 #[path = "csv_undo_store.rs"]
 mod csv_undo_store;
 
+#[path = "snapshot_store.rs"]
+mod snapshot_store;
+
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {
@@ -68,8 +71,8 @@ pub struct Store {
     connection: Connection,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Write {
     pub operation_id: String,
     pub event_id: String,

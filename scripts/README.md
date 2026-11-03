@@ -126,3 +126,7 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 持久任务与批次定向复现 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_ --jobs 4`，合并预览、`store::csv_store::tests` 与 `store::csv_undo_store::tests`。新建隔离 v2 SQLCipher 库验证固定身份、备注 / 来源 / 进度 / 意图同事务、历史去重、取消 / 重开和真实 SQL 拒绝；父测试实际在五个写入点强杀专属子进程并用普通入口恢复。随机合成 key 经 stdin 管道、单子进程等待上限 20 秒、Drop 回收进程，tempfile 清理独占目录；不需要后台服务或设备。本入口的实现范围及未覆盖的移动 / 同步 / 导出见 [持久批次说明](../docs/validation/portability-cases.md#52-e-csv-持久任务与原子发布候选)。
 
 受限撤销定向复现 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_undo --jobs 4`，仍由 `check-core.sh` 自动发现。独占新建 v3 库保留 v2 导入布局，验证不可变确认集合、原修订 / 候选重检、正常删除与意图 / 进度同事务、取消 / 恢复、SQL 拒绝、重复撤销及来源防复活。真实 SQLCipher 双连接与 A01 独立投影覆盖 E07 的备注竞争；父测试在已完成一批后，于下一批五点分别强杀子进程，普通入口恢复并沿原删除身份重试。目录 / 密钥 / 20 秒单 worker 等待和清理方式沿用上项；无新依赖、设备或服务。旧 v1 / v2 不自动升级，完整 E07 的新建引用分支仍缺证据，详见[受限撤销候选](../docs/validation/portability-cases.md#53-e-csv-受限撤销候选)。
+
+### M0-E 一致逻辑快照
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core snapshot_store --jobs 4` 验证 E-SNAPSHOT 只读宿主候选，仍由 `check-core.sh` 自动发现。只使用 tempfile 独占合成 SQLCipher 库和内存编码，不启动服务 / 设备、下载依赖或访问系统项。A04 在七个读取边界并发恢复，A11 保全修订 / 候选 / 删除 / 原意图，A06 和全部原账务案例对照独立 JSON；v2 / v3 核对未完成导入与撤销身份，另测预算、取消、关系损坏、未知 schema / 表 / 列与明示排除内容。候选不是认证归档或恢复入口，完整范围及剩余证据见 [E-SNAPSHOT](../docs/validation/portability-cases.md#54-e-snapshot-最小一致逻辑快照候选)。

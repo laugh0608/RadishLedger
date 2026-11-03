@@ -36,20 +36,20 @@ R01–R12 的原定义保持唯一来源；本表是归属映射，不改变 MVP
 | 隐私、密钥与恢复保护 | [M0-C 加密与系统密钥](development/mobile-core-validation.md#3-m0-c加密与系统密钥) | 原 C 矩阵；T08–T12、T23 | 原矩阵与实验记录；真实系统认证、文件保护和硬件证据独立，不从桥接通过推导 |
 | 连接与多端同步 | [D 实施任务](validation/sync-cases.md#5-后续实施任务与运行条件) | D-DB / D-CLIENT / D-ENVELOPE / D-RECOVERY / D-E2E；S01–S24 | 原第 5.1 节 D-DB 结果及 current；其他任务按原范围和前置推进，发布 T 映射见原第 6 节 |
 | 数据交换、归档与迁移 | [E-CSV](data-portability.md#1-通用-csv) | E01–E08 / T16；原输入预览、持久批次、E07 受限撤销 | [案例与任务](validation/portability-cases.md#5-实施任务与证据)、第 5.1–5.3 节局部结果；current 维护后续切片与未覆盖范围 |
-| 数据交换、归档与迁移 | [一致快照](data-portability.md#31-一致快照与保真清单) | E-SNAPSHOT：E09、E13–E14、E16；关联 T17 | 原 E 任务表与 current；需独立保全集合与真实一致读取 |
+| 数据交换、归档与迁移 | [一致快照](data-portability.md#31-一致快照与保真清单) | E-SNAPSHOT：E09、E13–E14、E16；关联 T17 | [宿主候选](validation/portability-cases.md#54-e-snapshot-最小一致逻辑快照候选)、原 E 任务表与 current；需独立保全集合与真实一致读取 |
 | 数据交换、归档与迁移 | [认证容器](data-portability.md#32-认证容器与资源约束)、[暂存恢复](data-portability.md#41-恢复任务与活动切换)、[迁移](data-portability.md#5-服务器迁移) | E-CONTAINER / E-RESTORE / E-MIGRATION；原 E 与 T 对应 | 原 E 任务表与第 6 节；D-ENVELOPE / D-RECOVERY 协同，不提前冻结未决格式或跨域恢复语义 |
 | 服务交付与运维生命周期 | [安装、备份与升级](self-hosting.md)、[删除与离开](data-portability.md#7-数据删除与离开产品) | M2 / M3；T13、T19–T22，恢复同时引用 T15 / T18 | 原交付清单与发布验收；远期临近实施再细化，不据文档宣布服务已交付 |
 
 ## 近期任务的读取链
 
-保持 current 的原顺位，以下仅说明归属与关闭依据。
+接续顺位以 current 为准，以下仅说明归属与关闭依据。
 
 | 接续项 | 牵头 / 协同 | 标准与证据入口 |
 | --- | --- | --- |
 | E-CSV 受限撤销 E07 | 数据交换、归档与迁移；账务、隐私协同 | [E 案例](validation/portability-cases.md#2-csv-输入批次与导出)、[局部验证入口](validation/portability-cases.md#53-e-csv-受限撤销候选)及[current](status/current.md#接下来的事项)：原修订重检、备注编辑竞争、取消 / 强杀恢复、重复撤销与重导防复活；尚不能判定的依赖保持阻塞 |
-| E-SNAPSHOT 最小一致快照 | 数据交换、归档与迁移；账务 / 同步协同 | 原 E 任务表与 current；保全事实、修订、候选、删除、来源、未确认意图及导入 / 撤销任务，不把摘要或原 DB 文件当归档 |
+| E-SNAPSHOT 最小一致快照 | 数据交换、归档与迁移；账务 / 同步协同 | [只读候选](validation/portability-cases.md#54-e-snapshot-最小一致逻辑快照候选)、原 E 任务表与 current；保全事实、修订、候选、删除、来源、原意图及导入 / 撤销任务，不把摘要或原 DB 文件当归档 |
 | Android 人工流程补验 | 移动端体验与核心接入；隐私主线协同 | current 第 3 项与设备操作单；ADB 信任条件恢复后按精确授权取证，iOS / 宿主结果不替代 |
 | 两端真机 release | 隐私、密钥与恢复保护牵头；移动主线协同 | current 第 4 项、B / C 矩阵和设备操作单；保留真实认证、保护、重启与资源缺口 |
 | M0 选型与退出评审 | 移动端体验与核心接入牵头整合，六条主线协同 | current 第 5 项及路线图 M0 出口；真实证据齐备后冻结对应 ADR，再安排 M1，不从文档整理宣布退出 |
 
-任务执行结果仍写回对应原任务 / 案例与 devlog，由 current 引用。金额 JSON、S / E 案例、冻结与未冻结边界均保持原样；本批只建立阅读关系。
+任务执行结果仍写回对应原任务 / 案例与 devlog，由 current 引用。金额 JSON、S / E 案例与冻结边界仍由原来源维护；本页只维护读取关系。

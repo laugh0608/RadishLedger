@@ -419,6 +419,33 @@ pub(crate) fn populate_bootstrap_fixture(store: &mut Store) -> Result<CaseReport
     Ok(populate_case(store, case, array(&input, "rejectedIntents")?)?.0)
 }
 
+/// 测试复用同一账务案例 adapter；截取原步骤，不复制金额或派生预期。
+#[cfg(test)]
+pub(crate) fn populate_snapshot_fixture(
+    store: &mut Store,
+    case_id: &str,
+    step_id: &str,
+) -> Result<BTreeMap<String, String>> {
+    let input: Value = serde_json::from_str(CASES).map_err(|_| invalid_fixture())?;
+    let mut case = array(&input, "cases")?
+        .iter()
+        .find(|c| c["id"] == case_id)
+        .ok_or_else(invalid_fixture)?
+        .clone();
+    let steps = case["steps"].as_array_mut().ok_or_else(invalid_fixture)?;
+    let count = steps
+        .iter()
+        .position(|s| s["id"] == step_id)
+        .ok_or_else(invalid_fixture)?
+        + 1;
+    steps.truncate(count);
+    Ok(
+        populate_case(store, &case, array(&input, "rejectedIntents")?)?
+            .1
+            .aliases,
+    )
+}
+
 pub fn run(directory: &Path) -> Result<ProbeReport> {
     if !directory.is_absolute() || !directory.is_dir() {
         return Err(CoreError::new("invalid_directory", "实验临时目录不可用"));

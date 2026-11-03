@@ -2,7 +2,7 @@
 use crate::domain::{Event, EventKind, parse_yuan};
 use crate::store::Store;
 use crate::{CoreError, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +19,7 @@ pub(crate) mod test_support;
 
 pub const PROFILE: &str = "m0-csv-preview-v1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Field {
     Kind,
@@ -36,8 +36,8 @@ pub enum Field {
 }
 
 /// 每个输入列都必须显式映射或 Ignore；不按表头猜类型或按名称自动建对象。
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Mapping {
     pub has_header: bool,
     pub fields: Vec<Field>,
@@ -89,7 +89,7 @@ pub struct Preview {
 }
 
 impl Mapping {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.fields.is_empty() || self.fields.len() > input::MAX_COLUMNS {
             return Err(CoreError::new("csv_mapping", "CSV 映射列数无效"));
         }
@@ -378,14 +378,15 @@ pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<()> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
     Import,
     Skip,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskState {
     Ready,
     Cancelled,
