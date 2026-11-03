@@ -10,6 +10,7 @@ pub mod csv_undo;
 pub mod domain;
 pub mod logical_snapshot;
 pub mod probe;
+pub mod restore_stage;
 pub mod store;
 pub mod validation;
 

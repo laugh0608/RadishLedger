@@ -140,3 +140,11 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 独立公开向量复现入口为 `python3.14 -B scripts/archive-vector-oracle.py --work-dir "$PWD/local-evidence/m0-e/container-oracle-new"`，输出目录必须不存在。需要已安装 Go 1.26+（本批 1.26.3）及固定缓存 `~/go/pkg/mod/golang.org/x/crypto@v0.50.0`、`x/sys@v0.43.0`，缺失即停止；不自动安装 / 下载。Go 使用原模块 Argon2id / XChaCha 和标准库 HKDF，独立从 baseInput 重建字节，不消费 Rust encoder / framingExpected。The Go Authors 的 BSD-3-Clause 来源与许可指纹在材料 provenance 中；脚本未复制第三方源码进仓库，也未引入产品 Go 依赖。
 
 脚本只接受仓库公开合成 fixture，显式禁用 GOPROXY / GOSUMDB、工具链自动获取和遥测，build 限两路 / 120 秒、oracle 限 20 秒，无端口或后台任务。`main.go` / `go.mod` / 二进制 / 专属 cache / 输出与 provenance 保留在排他忽略目录；结束后无运行资源，材料可按本批精确目录另行清理。模块指纹只覆盖 `.go` 源文件及 LICENSE，不代表汇编、编译器或完整供应链已审计。复现后的 `outputs.json` 应逐项匹配 `cryptoExpected`（除 provenance）；原材料 SHA 记录生成时的版本 1 输入，版本 2 加入输出后文件自身 SHA 随之变化，不能误称原文件指纹等于现版本。
+
+### M0-E 受保护暂存恢复
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_stage --jobs 4` 覆盖独立新 DB Key 的 SQLCipher 暂存、A11 / A06 / A04 与 v2 / v3 历史保真、重开 / 取消 / SQL 拒绝、归属 / 文件 / 预算与显式放弃。也由 `check-core.sh` 执行，无新依赖或迁移用户库。详细契约和未覆盖范围见[暂存宿主候选](../docs/validation/portability-cases.md#57-e-restore-受保护暂存宿主候选)。
+
+Unix 父测试实际调度 10 个准备点和数据库删除后的子进程 SIGKILL；只向自己创建的 worker 匿名 stdin 传随机合成暂存钥，参数 / 文件 / 日志不存钥。单 worker 最多等 20 秒，由父测试 Drop 回收进程；tempfile 回收本批原库 / 归档 / 暂存 / 明文扫描正向对照，未使用固定真实目录、端口、设备或系统项。ignored worker 是内部入口，父测试已覆盖它；不得单独当成未执行的业务能力或重复通过数。完整批次包含多次 64 MiB KDF 且共用测试串行锁，约数分钟，不等于单次 KDF / 真机性能。
+
+暂存 schema 1001 是内部未发布候选，原 schema 1–3 不升级；Task / Ticket 保留在内存和合成定位材料，新钥尚无平台保存。结果只表示完整核对后的未发布目标，不代表活动切换、原队列可继续、空白设备恢复或生产备份文件保存。未知临时文件 / 缺 owner 及最终定位材料删除异常保留为缺口，不递归清理来制造成功。

@@ -165,7 +165,7 @@ pub(crate) fn sync(directory: &Path) -> Result<()> {
         .map_err(io_error)
 }
 
-fn exclusive_lock(file: &File) -> Result<()> {
+pub(crate) fn exclusive_lock(file: &File) -> Result<()> {
     // Rust 1.96 的 std::fs::File::try_lock 未接入 Android；直接使用其 NDK flock。
     // 锁绑定打开的文件描述符，进程退出或 File drop 后由内核释放。
     #[cfg(target_os = "android")]

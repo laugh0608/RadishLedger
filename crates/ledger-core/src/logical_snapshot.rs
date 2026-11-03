@@ -54,24 +54,32 @@ impl LogicalSnapshot {
 
     /// 固定字段顺序、稳定集合顺序的 JSON 候选；未冻结为备份字节协议。
     pub fn encode(&self, max_bytes: usize, cancel: &AtomicBool) -> Result<Vec<u8>> {
-        cancelled(cancel)?;
-        if !(1..=MAX_BYTES).contains(&max_bytes) {
-            return Err(limit());
-        }
-        let mut writer = Encoder {
-            bytes: Vec::new(),
-            max_bytes,
-            cancel,
-            failure: None,
-        };
-        if serde_json::to_writer(&mut writer, &self.contents).is_err() {
-            return Err(writer
-                .failure
-                .unwrap_or_else(|| CoreError::new("encoding_error", "逻辑快照无法编码")));
-        }
-        cancelled(cancel)?;
-        Ok(writer.bytes)
+        encode_contents(&self.contents, max_bytes, cancel)
     }
+}
+
+pub(crate) fn encode_contents<T: Serialize>(
+    contents: &T,
+    max_bytes: usize,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>> {
+    cancelled(cancel)?;
+    if !(1..=MAX_BYTES).contains(&max_bytes) {
+        return Err(limit());
+    }
+    let mut writer = Encoder {
+        bytes: Vec::new(),
+        max_bytes,
+        cancel,
+        failure: None,
+    };
+    if serde_json::to_writer(&mut writer, contents).is_err() {
+        return Err(writer
+            .failure
+            .unwrap_or_else(|| CoreError::new("encoding_error", "逻辑快照无法编码")));
+    }
+    cancelled(cancel)?;
+    Ok(writer.bytes)
 }
 
 struct Encoder<'a> {

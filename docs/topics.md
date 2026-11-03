@@ -37,7 +37,7 @@ R01–R12 的原定义保持唯一来源；本表是归属映射，不改变 MVP
 | 连接与多端同步 | [D 实施任务](validation/sync-cases.md#5-后续实施任务与运行条件) | D-DB / D-CLIENT / D-ENVELOPE / D-RECOVERY / D-E2E；S01–S24 | 原第 5.1 节 D-DB 结果及 current；其他任务按原范围和前置推进，发布 T 映射见原第 6 节 |
 | 数据交换、归档与迁移 | [E-CSV](data-portability.md#1-通用-csv) | E01–E08 / T16；原输入预览、持久批次、E07 受限撤销 | [案例与任务](validation/portability-cases.md#5-实施任务与证据)、第 5.1–5.3 节局部结果；current 维护后续切片与未覆盖范围 |
 | 数据交换、归档与迁移 | [一致快照](data-portability.md#31-一致快照与保真清单) | E-SNAPSHOT：E09、E13–E14、E16；关联 T17 | [宿主候选](validation/portability-cases.md#54-e-snapshot-最小一致逻辑快照候选)、原 E 任务表与 current；需独立保全集合与真实一致读取 |
-| 数据交换、归档与迁移 | [认证容器](data-portability.md#32-认证容器与资源约束)、[暂存恢复](data-portability.md#41-恢复任务与活动切换)、[迁移](data-portability.md#5-服务器迁移) | E-CONTAINER / E-RESTORE / E-MIGRATION；原 E 与 T 对应 | [容器宿主实验](validation/portability-cases.md#56-e-container-宿主内存封装与有界解封)及[独立输入](validation/portability-cases.md#55-e-container-评审材料与输入)、原 E 任务表与第 6 节；D-ENVELOPE / D-RECOVERY 协同，不提前冻结未决格式或跨域恢复语义 |
+| 数据交换、归档与迁移 | [认证容器](data-portability.md#32-认证容器与资源约束)、[暂存恢复](data-portability.md#41-恢复任务与活动切换)、[迁移](data-portability.md#5-服务器迁移) | E-CONTAINER / E-RESTORE / E-MIGRATION；原 E 与 T 对应 | [容器宿主实验](validation/portability-cases.md#56-e-container-宿主内存封装与有界解封)、[独立输入](validation/portability-cases.md#55-e-container-评审材料与输入)与[暂存宿主候选](validation/portability-cases.md#57-e-restore-受保护暂存宿主候选)、原 E 任务表与第 6 节；D-ENVELOPE / D-RECOVERY 协同，不提前冻结未决格式或跨域恢复语义 |
 | 服务交付与运维生命周期 | [安装、备份与升级](self-hosting.md)、[删除与离开](data-portability.md#7-数据删除与离开产品) | M2 / M3；T13、T19–T22，恢复同时引用 T15 / T18 | 原交付清单与发布验收；远期临近实施再细化，不据文档宣布服务已交付 |
 
 ## 近期任务的读取链

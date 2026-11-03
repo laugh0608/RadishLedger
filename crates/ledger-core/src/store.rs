@@ -27,6 +27,9 @@ mod csv_undo_store;
 #[path = "snapshot_store.rs"]
 pub(crate) mod snapshot_store;
 
+#[path = "restore_store.rs"]
+pub(crate) mod restore_store;
+
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {

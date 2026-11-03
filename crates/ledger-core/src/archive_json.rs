@@ -173,7 +173,7 @@ impl Visitor<'_> for Key<'_, '_> {
     }
 }
 
-pub(super) fn scan(input: &[u8], limits: Limits, cancel: &AtomicBool) -> Result<()> {
+pub(crate) fn scan(input: &[u8], limits: Limits, cancel: &AtomicBool) -> Result<()> {
     cancelled(cancel)?;
     if input.is_empty() || input.len() > limits.payload_bytes {
         return Err(limit());

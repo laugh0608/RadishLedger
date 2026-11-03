@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroizing;
 
 #[path = "archive_json.rs"]
-mod json;
+pub(crate) mod json;
 #[cfg(test)]
 #[path = "archive_tests.rs"]
 mod tests;
