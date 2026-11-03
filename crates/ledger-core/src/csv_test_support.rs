@@ -2,6 +2,19 @@ use super::*;
 use crate::store::DbKey;
 use serde_json::Value;
 
+#[cfg(unix)]
+pub(crate) struct Worker(pub(crate) std::process::Child);
+
+#[cfg(unix)]
+impl Drop for Worker {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+
 pub(crate) const FIXTURE: &str = include_str!("../../../docs/validation/csv-preview-cases.json");
 pub(crate) const ACCOUNTING: &str = include_str!("../../../docs/validation/accounting-cases.json");
 pub(crate) const HEADER: &str = "类型,金额,日期,币种,账户,类别,转出,转入,来源,备注\n";

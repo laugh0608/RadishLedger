@@ -2,7 +2,7 @@
 use super::*;
 use std::io::{Read, Write as IoWrite};
 use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const POINTS: [ImportPoint; 5] = [
@@ -12,16 +12,6 @@ const POINTS: [ImportPoint; 5] = [
     ImportPoint::BeforeCommit,
     ImportPoint::AfterCommit,
 ];
-
-struct Worker(Child);
-impl Drop for Worker {
-    fn drop(&mut self) {
-        if self.0.try_wait().ok().flatten().is_none() {
-            let _ = self.0.kill();
-        }
-        let _ = self.0.wait();
-    }
-}
 
 #[test]
 #[ignore = "由父测试以匿名管道提供合成材料并在写入点强杀"]

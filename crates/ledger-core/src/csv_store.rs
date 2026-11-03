@@ -21,7 +21,7 @@ pub(super) enum ImportPoint {
     AfterCommit,
 }
 
-fn encode<T: Serialize>(value: &T) -> Result<String> {
+pub(super) fn encode<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|_| CoreError::new("encoding_error", "导入计划无法编码"))
 }
 
@@ -29,10 +29,10 @@ fn target(connection: &Connection) -> Result<String> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(db_error)?;
-    if version != 2 {
+    if !matches!(version, 2 | 3) {
         return Err(CoreError::new(
             "unsupported_schema",
-            "持久导入需要新建 v2 实验库，原库未升级",
+            "持久导入需要 v2 或 v3 实验库，原库未升级",
         ));
     }
     let id: String = connection
@@ -44,7 +44,7 @@ fn target(connection: &Connection) -> Result<String> {
     Ok(id)
 }
 
-fn check_target(connection: &Connection, expected: &str) -> Result<()> {
+pub(super) fn check_target(connection: &Connection, expected: &str) -> Result<()> {
     if target(connection)? != expected {
         return Err(CoreError::new(
             "csv_target_changed",
@@ -80,11 +80,11 @@ fn check_source(
     Ok(())
 }
 
-fn index(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<usize> {
+pub(super) fn index(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<usize> {
     row.get::<_, u32>(column).map(|value| value as usize)
 }
 
-fn read_task(connection: &Connection, id: &str) -> Result<Task> {
+pub(super) fn read_task(connection: &Connection, id: &str) -> Result<Task> {
     let row: Option<(String,String,usize,usize,usize,String)> = connection.query_row(
         "SELECT target_id,state,total,next_record,batch_size,profile FROM csv_tasks WHERE id=?1", [id],
         |r| Ok((r.get(0)?,r.get(1)?,index(r,2)?,index(r,3)?,index(r,4)?,r.get(5)?))).optional().map_err(db_error)?;
@@ -567,7 +567,7 @@ impl Store {
     }
 }
 
-fn decode_write(intent: &str) -> Result<Write> {
+pub(super) fn decode_write(intent: &str) -> Result<Write> {
     let write: Write = serde_json::from_str(intent)
         .map_err(|_| CoreError::new("csv_corrupt_task", "导入意图无法解释"))?;
     if write.previous_revision_id.is_some()

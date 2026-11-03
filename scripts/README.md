@@ -119,8 +119,10 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 
 用例核对完整状态、真实锁等待、CAS / 幂等、事务中断 / PostgreSQL 强杀恢复、sequence 漏读反例、固定分页、冻结竞争及有界控制登记。连接中断不能冒充真实 HTTP 服务或双端同步；allowed 控制位、符号 jsonb、实验上限都不是生产契约。版本、源码指纹、屏障 / 进程与清理结果写入新的 `local-evidence/m0-d/<session>/report.json`。精确边界、运行 / 中断清理方式与尚未覆盖的案例见 [D-DB 复现说明](../docs/validation/sync-cases.md#51-d-db-独立-postgresql-实验)。
 
-### M0-E CSV 预览与持久批次
+### M0-E CSV 预览、持久批次与受限撤销
 
 `check-core.sh` 自动执行预览与持久批次测试；定向入口为 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_import::tests --jobs 4`，无需新依赖 / Docker / 设备。手写材料验证严格有界解析、字段与既有引用映射、文件内来源冲突、取消和存储错误；真实 SQLCipher 只读快照及双连接归档竞争覆盖预览一致性。A01 候选投影与原库内容 / outbox 分别核对。profile、预算与剩余边界见 [E-CSV 说明](../docs/validation/portability-cases.md#51-e-csv-输入预览候选)。
 
-持久任务与批次定向复现 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_ --jobs 4`，合并预览和 `store::csv_store::tests`。新建隔离 v2 SQLCipher 库验证固定身份、备注 / 来源 / 进度 / 意图同事务、历史去重、取消 / 重开和真实 SQL 拒绝；父测试实际在五个写入点强杀专属子进程并用普通入口恢复。随机合成 key 经 stdin 管道、单子进程等待上限 20 秒、Drop 回收进程，tempfile 清理独占目录；不需要后台服务或设备。实现范围及未覆盖的受限撤销 / 移动 / 同步 / 导出见 [持久批次说明](../docs/validation/portability-cases.md#52-e-csv-持久任务与原子发布候选)。
+持久任务与批次定向复现 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_ --jobs 4`，合并预览、`store::csv_store::tests` 与 `store::csv_undo_store::tests`。新建隔离 v2 SQLCipher 库验证固定身份、备注 / 来源 / 进度 / 意图同事务、历史去重、取消 / 重开和真实 SQL 拒绝；父测试实际在五个写入点强杀专属子进程并用普通入口恢复。随机合成 key 经 stdin 管道、单子进程等待上限 20 秒、Drop 回收进程，tempfile 清理独占目录；不需要后台服务或设备。本入口的实现范围及未覆盖的移动 / 同步 / 导出见 [持久批次说明](../docs/validation/portability-cases.md#52-e-csv-持久任务与原子发布候选)。
+
+受限撤销定向复现 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_undo --jobs 4`，仍由 `check-core.sh` 自动发现。独占新建 v3 库保留 v2 导入布局，验证不可变确认集合、原修订 / 候选重检、正常删除与意图 / 进度同事务、取消 / 恢复、SQL 拒绝、重复撤销及来源防复活。真实 SQLCipher 双连接与 A01 独立投影覆盖 E07 的备注竞争；父测试在已完成一批后，于下一批五点分别强杀子进程，普通入口恢复并沿原删除身份重试。目录 / 密钥 / 20 秒单 worker 等待和清理方式沿用上项；无新依赖、设备或服务。旧 v1 / v2 不自动升级，完整 E07 的新建引用分支仍缺证据，详见[受限撤销候选](../docs/validation/portability-cases.md#53-e-csv-受限撤销候选)。

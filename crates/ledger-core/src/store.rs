@@ -21,6 +21,9 @@ mod pager_tests;
 #[path = "csv_store.rs"]
 mod csv_store;
 
+#[path = "csv_undo_store.rs"]
+mod csv_undo_store;
+
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {
@@ -158,7 +161,7 @@ impl Store {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(db_error)?;
-        if !matches!(version, 1 | 2) {
+        if !matches!(version, 1..=3) {
             return Err(CoreError::new("unsupported_schema", "实验账库版本不兼容"));
         }
         Ok(store)
@@ -245,13 +248,20 @@ impl Store {
         let version: i64 = tx
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(db_error)?;
-        if version == 2 {
+        if matches!(version, 2 | 3) {
             tables.extend([
                 ("csv_context", "id"),
                 ("csv_tasks", "id"),
                 ("csv_rows", "task_id,record"),
                 ("csv_sources", "namespace,source_id"),
                 ("csv_batches", "task_id,first_record"),
+            ]);
+        }
+        if version == 3 {
+            tables.extend([
+                ("csv_undo_tasks", "id"),
+                ("csv_undo_rows", "undo_id,ordinal"),
+                ("csv_undo_batches", "undo_id,first_ordinal"),
             ]);
         }
         for (table, key) in tables {
@@ -776,10 +786,10 @@ fn validate_note_schema(tx: &Transaction<'_>, event: &Event) -> Result<()> {
     let version: i64 = tx
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(db_error)?;
-    if !event.note.is_empty() && version != 2 {
+    if !event.note.is_empty() && !matches!(version, 2 | 3) {
         return Err(CoreError::new(
             "unsupported_schema",
-            "备注写入需要新建 v2 导入实验库，原库未升级",
+            "备注写入需要 v2 或 v3 导入实验库，原库未升级",
         ));
     }
     Ok(())
