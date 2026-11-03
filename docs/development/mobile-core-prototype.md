@@ -24,7 +24,7 @@ probe 使用真实 SQLCipher 事务：每次保存前在 outbox 插入点以测�
 
 [E-SNAPSHOT 只读候选](../validation/portability-cases.md#54-e-snapshot-最小一致逻辑快照候选)从同一 SQLCipher 事务捕获 schema 1–3 的声明事实 / 意图 / 导入与撤销状态，重建清单并可显式有界编码；不创建新 schema、不读取原始 CSV 或 bootstrap、不写归档或恢复目标。该入口只在 Rust 宿主验证，候选字节与资源上限没有冻结为生产契约；共用 Write / Mapping 的未知字段解码明确拒绝，不另建语言契约。
 
-[E-CONTAINER 宿主候选](../validation/portability-cases.md#56-e-container-宿主内存封装与有界解封)在该捕获结果上做内存整体 AEAD，解封后重检事实 / 报告；先取得独立 Go 密码向量，再与 Rust 完整字节匹配。它复用 M0-C 的 KDF 执行名额并保持旧派生兼容，未接入 C ABI / 两种移动 bridge，也没有暂存恢复或平台保存。宿主证据不替代本篇移动流程与矩阵门槛。
+[E-CONTAINER 宿主候选](../validation/portability-cases.md#56-e-container-宿主内存封装与有界解封)在该捕获结果上做内存整体 AEAD，解封后重检事实 / 报告；先取得独立 Go 密码向量，再与 Rust 完整字节匹配。它复用 M0-C 的 KDF 执行名额并保持旧派生兼容，未接入 C ABI / 两种移动 bridge；此容器层只处理内存，暂存由下述独立入口承担，平台保存仍未接入。宿主证据不替代本篇移动流程与矩阵门槛。
 
 [E-RESTORE 受保护暂存](../validation/portability-cases.md#57-e-restore-受保护暂存宿主候选)以独立新 DB Key 在 SQLCipher 私有目录重建事实与惰性历史，关闭 / 重开后核对，支持原任务重试和显式放弃；没有移动 bridge、平台钥保存或活动选择入口。宿主 SIGKILL / 文件扫描与真机系统保护分别解释，不代替 M0-B / C 验收。
 
