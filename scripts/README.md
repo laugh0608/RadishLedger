@@ -45,6 +45,8 @@ Issue 表单继续使用 JSON-compatible YAML，按 JSON 完整解析。其他�
 
 workflow 的聚合必须 `always()` 等待 `Repo Hygiene` 与 `Core Quality`，只接受全体 `success`。后者使用 `rust-toolchain.toml` 的 Rust 和 [setup-flutter-ci.py](setup-flutter-ci.py) 的固定 Flutter revision，复用两个真实语言入口。设置脚本只接受 GitHub Actions 环境，在 RUNNER_TEMP 准备 SDK，不用于修改开发机工具链。检查器验证聚合脚本、依赖、权限、凭据、Action pin 与触发契约；负向回归实际执行聚合脚本，证明任一组件失败、取消、跳过或缺失都会拒绝。
 
+[`Cargo.toml`](../Cargo.toml) 在 Cargo `test` profile 中优化 `argon2` 和实例化缓冲区泛型清零的 `radishledger-core`。`check-core` 继续执行同一套真实密码向量、归档认证和进程恢复测试，使用原 KDF 参数及 debug 断言。
+
 新增 workflow 必须同步审阅清单，避免额外 push / tag 触发或重复 required context 绕开声明的 CI 策略。
 
 Action 使用 [actions/checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) 的[完整 commit](https://github.com/actions/checkout/commit/3d3c42e5aac5ba805825da76410c181273ba90b1)。选择记录用于复核引用，不宣称已在远端运行；升级时审阅来源、权限和实际 PR 行为。

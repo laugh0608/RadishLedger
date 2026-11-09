@@ -26,6 +26,14 @@ argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "z
 hkdf = "=0.13.0"
 sha2 = "=0.11.1"
 
+[profile.test.package.argon2]
+# 保留真实 KDF 参数，优化 Argon2 热循环。
+opt-level = 3
+
+[profile.test.package.radishledger-core]
+# 核心实例化 KDF 工作缓冲区的泛型清零代码，保留 test profile 的断言。
+opt-level = 1
+
 [profile.release]
 panic = "unwind"
 # Rust/LLVM strip 在 Apple 27 SDK 下可破坏 LINKEDIT 对齐；保持链接器原始布局。
