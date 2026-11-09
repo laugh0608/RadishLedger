@@ -1,0 +1,26 @@
+[package]
+name = "radishledger-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
+tempfile.workspace = true
+chacha20poly1305.workspace = true
+argon2.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+rusqlite = { version = "=0.41.0", default-features = false, features = ["bundled-sqlcipher"] }
+
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+rusqlite = { version = "=0.41.0", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }

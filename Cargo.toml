@@ -1,0 +1,40 @@
+[workspace]
+members = ["crates/ledger-core", "crates/ledger-mobile"]
+exclude = ["third-party/openssl-sys", "third-party/openssl-src"]
+resolver = "2"
+
+[patch.crates-io]
+# 0.9.117 已识别 OpenSSL 4.x；仅修正 vendored source 的版本约束，来源见补丁说明。
+openssl-sys = { path = "third-party/openssl-sys" }
+# 完整发布源码仅补 SVE2 的 SVE 前置条件；来源与逐文件哈希见 third-party。
+openssl-src = { path = "third-party/openssl-src" }
+
+[workspace.package]
+version = "26.10.1"
+edition = "2024"
+rust-version = "1.96"
+license-file = "LICENSE"
+
+[workspace.dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+getrandom = "=0.3.4"
+zeroize = "=1.8.2"
+tempfile = "=3.27.0"
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+hkdf = "=0.13.0"
+sha2 = "=0.11.1"
+
+[profile.test.package.argon2]
+# 保留真实 KDF 参数，优化 Argon2 热循环。
+opt-level = 3
+
+[profile.test.package.radishledger-core]
+# 核心实例化 KDF 工作缓冲区的泛型清零代码，保留 test profile 的断言。
+opt-level = 1
+
+[profile.release]
+panic = "unwind"
+# Rust/LLVM strip 在 Apple 27 SDK 下可破坏 LINKEDIT 对齐；保持链接器原始布局。
+strip = "none"

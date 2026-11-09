@@ -56,6 +56,82 @@ class RepositoryChecksTest(unittest.TestCase):
         self.assertFalse(CHECKS.check_docs(self.root, files, texts))
         self.assertFalse(CHECKS.check_governance(self.root, files, documents))
 
+    def test_native_patch_rejects_source_drift_and_extra_files(self):
+        source = "third-party/openssl-sys/src/lib.rs"
+        original = (self.root / source).read_text()
+        self.write(source, original + "// synthetic unauthorized change\n")
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("unapproved upstream source change" in e
+                            for e in CHECKS.check_openssl_patch(self.root, files, documents)))
+        self.write(source, original)
+        self.write("third-party/openssl-sys/extra.rs", "// synthetic\n")
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("source inventory differs" in e
+                            for e in CHECKS.check_openssl_patch(self.root, files, documents)))
+
+    def test_native_patch_rejects_unselected_or_widened_requirement(self):
+        name = "third-party/openssl-sys/Cargo.toml"
+        self.write(name, (self.root / name).read_text().replace('"=400.0.2"', '"400"'))
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("unexpected source requirement" in e
+                            for e in CHECKS.check_openssl_patch(self.root, files, documents)))
+        name = "Cargo.toml"
+        self.write(name, (self.root / name).read_text().replace('path = "third-party/openssl-sys"',
+                                                              'path = "third-party/unreviewed"'))
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("does not select" in e
+                            for e in CHECKS.check_openssl_patch(self.root, files, documents)))
+
+    def test_openssl_text_exception_requires_original_file_and_pinned_manifest(self):
+        name = "third-party/openssl-src/.cargo_vcs_info.json"
+        original = (self.root / name).read_bytes()
+        self.assertFalse(CHECKS.check_text(self.root, [name])[0])
+        (self.root / name).write_bytes(original + b" ")
+        self.assertTrue(CHECKS.check_text(self.root, [name])[0])
+        (self.root / name).write_bytes(original)
+        manifest = self.root / CHECKS.OPENSSL_SOURCE_MANIFEST
+        manifest.write_bytes(manifest.read_bytes() + b" ")
+        self.assertTrue(any("no text exceptions" in e
+                            for e in CHECKS.check_text(self.root, [name])[0]))
+
+    def test_openssl_source_rejects_code_mode_inventory_and_attribute_drift(self):
+        name = "third-party/openssl-src/openssl/crypto/armcap.c"
+        path = self.root / name
+        original = path.read_bytes()
+        path.write_bytes(original + b"// unauthorized synthetic change\n")
+        files = CHECKS.repository_files(self.root)
+        self.assertTrue(any("unapproved upstream source change" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+        path.write_bytes(original)
+        path.chmod(0o755)
+        self.assertTrue(any("executable mode differs" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+        path.chmod(0o644)
+        self.write("third-party/openssl-src/extra.c", "// synthetic\n")
+        self.assertTrue(any("source inventory differs" in e
+                            for e in CHECKS.check_openssl_source(self.root, CHECKS.repository_files(self.root))))
+        (self.root / "third-party/openssl-src/extra.c").unlink()
+        with (self.root / ".gitattributes").open("a") as stream:
+            stream.write("*.c -whitespace\n")
+        self.assertTrue(any("whitespace exceptions differ" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+
+    def test_openssl_source_rejects_missing_patch_and_unselected_source(self):
+        patch = self.root / "third-party/openssl-armcap-sve.patch"
+        patch.write_bytes(patch.read_bytes() + b"\n")
+        files = CHECKS.repository_files(self.root)
+        self.assertTrue(any("ARM patch changed" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+        name = "third-party/openssl-armcap-sve.json"
+        self.write(name, (self.root / name).read_text().replace(
+            '"applied-to-workspace-source"', '"not-applied"'))
+        self.assertTrue(any("ARM patch metadata differs" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+        self.write("Cargo.toml", (self.root / "Cargo.toml").read_text().replace(
+            'path = "third-party/openssl-src"', 'path = "third-party/unreviewed"'))
+        self.assertTrue(any("does not select" in e
+                            for e in CHECKS.check_openssl_source(self.root, files)))
+
     def test_untracked_included_ignored_excluded_tracked_never_hidden(self):
         self.write("bad.md", "synthetic\r\n")
         self.write("local-data/private.txt", "ignored synthetic\r\n")
@@ -170,6 +246,34 @@ class RepositoryChecksTest(unittest.TestCase):
         self.write(CHECKS.WORKFLOW_FILE, path.read_text(encoding="utf-8") + "on: push\n")
         self.assertTrue(any("generated YAML drift" in error for error in self.inspect()[1]))
 
+    def test_language_components_must_run_real_checks_independently(self):
+        files, _, _, documents = self.inspect()
+        mutations = (
+            lambda w: w["jobs"]["core-quality"].update(**{"if": "false"}),
+            lambda w: w["jobs"]["core-quality"]["steps"][2].update(run="exit 0"),
+            lambda w: w["jobs"]["mobile-quality"]["steps"][2].update(run="exit 0"),
+            lambda w: w["jobs"]["mobile-quality"].update(needs=["core-quality"]),
+            lambda w: w["jobs"]["candidate-quality"].update(needs=["repo-hygiene", "core-quality"]),
+        )
+        for mutate in mutations:
+            changed = copy.deepcopy(documents)
+            mutate(changed[".github/workflows/pr-check.yml"])
+            self.assertTrue(CHECKS.check_governance(self.root, files, changed))
+
+    def test_version_mirrors_must_follow_the_root_source(self):
+        path = self.root / "Cargo.toml"
+        original = path.read_text()
+        version = json.loads((self.root / "version.json").read_text())["productVersion"]
+        changed = original.replace(f'version = "{version}"', 'version = "0.0.0"')
+        self.assertNotEqual(original, changed)
+        self.write("Cargo.toml", changed)
+        files, _, _, documents = self.inspect()
+        self.assertTrue(any("Cargo mirror drift" in error for error in CHECKS.check_governance(self.root, files, documents)))
+        self.write("Cargo.toml", original)
+        files, _, _, documents = self.inspect()
+        documents["apps/m0_probe/pubspec.yaml"]["version"] = "0.0.0+1"
+        self.assertTrue(any("Flutter mirror drift" in error for error in CHECKS.check_governance(self.root, files, documents)))
+
     def test_regenerated_workflow_cannot_bypass_policy(self):
         source = json.loads((self.root / CHECKS.WORKFLOW_SOURCE).read_text(encoding="utf-8"))
         source["on"]["push"] = {}
@@ -188,9 +292,16 @@ class RepositoryChecksTest(unittest.TestCase):
     def test_actual_aggregate_rejects_failure_cancel_skip_missing(self):
         workflow = json.loads((ROOT / CHECKS.WORKFLOW_SOURCE).read_text())
         script = workflow["jobs"]["candidate-quality"]["steps"][0]["run"]
-        cases = [({"repo-hygiene": {"result": "success"}}, 0), ({}, 1)]
-        cases += [({"repo-hygiene": {"result": value}}, 1) for value in ("failure", "cancelled", "skipped")]
-        cases += [({"repo-hygiene": {}}, 1), ({"repo-hygiene": {"result": "success"}, "extra": {"result": "failure"}}, 1)]
+        success = {
+            name: {"result": "success"}
+            for name in ("repo-hygiene", "core-quality", "mobile-quality")
+        }
+        cases = [(success, 0), ({}, 1), ({**success, "extra": {"result": "success"}}, 1)]
+        for name in success:
+            cases.append(({key: item for key, item in success.items() if key != name}, 1))
+            cases.append(({**success, name: {}}, 1))
+            for result in ("failure", "cancelled", "skipped"):
+                cases.append(({**success, name: {"result": result}}, 1))
         for results, expected in cases:
             with self.subTest(results=results):
                 env = dict(os.environ, NEEDS_JSON=json.dumps(results))

@@ -45,6 +45,7 @@ Rust 核心与 SQLCipher 是优先验证的实现方向；移动端桥接、依�
 - [导入导出、恢复与迁移](docs/data-portability.md)
 - [移动端体验与家族视觉](docs/design/mobile-experience.md)
 - [开发规范](docs/development/README.md)
+- [移动核心实验与复现](docs/development/mobile-core-prototype.md)
 - [协作与仓库治理](docs/governance/README.md)
 - [贡献指南](CONTRIBUTING.md)
 - [安全报告](SECURITY.md)
@@ -55,3 +56,5 @@ Rust 核心与 SQLCipher 是优先验证的实现方向；移动端桥接、依�
 `dev` 是日常串行开发与集成分支；`master` 是通过 PR 晋级的稳定主线。分支、PR、合并、回流与 GitHub 策略见[仓库治理](docs/governance/repository-governance.md)，实现与版本规则见[开发规范](docs/development/README.md)。创建远端、推送、发布和部署按实际任务授权执行。
 
 仓库采用 [RadishLedger Source-Available License 1.0](LICENSE)，属于源码可见授权，不是开放源码许可证。个人可免费获取、构建、使用和自部署，也可为自己的实例进行私有修改；商业服务和再分发按许可证处理。用户自己的账务数据不受软件许可证限制。
+
+第三方依赖、Flutter 模板与实验包内许可见[第三方来源](THIRD_PARTY_NOTICES.md)，各自授权独立于项目许可证。

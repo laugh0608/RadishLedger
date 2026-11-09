@@ -1,6 +1,6 @@
 # 仓库检查
 
-检查入口使用 Python 3.11+ 标准库和 Git，不安装依赖、不访问网络、不修改文件或暂存区。Shell 入口适用于 macOS / Linux；其他环境可以直接运行 Python 入口。显式生成命令 `--write-workflow` 单独用于更新下述生成文件，不属于只读检查。
+仓库治理入口使用 Python 3.11+ 标准库和 Git，不安装依赖、不访问网络、不修改文件或暂存区。Shell 入口适用于 macOS / Linux；其他环境可以直接运行 Python 入口。显式生成命令 `--write-workflow` 单独用于更新下述生成文件，不属于只读检查。Rust / Flutter 入口会使用构建缓存并在缓存缺失时下载锁定依赖，不能套用治理入口的无网络说明。
 
 ```bash
 ./scripts/check-repo.sh
@@ -21,6 +21,8 @@ python3 -B scripts/check-repo.py
 | `check-text-files` | Git 已跟踪和未忽略的未跟踪文件，UTF-8、无 BOM、LF、末尾换行、尾随空白、JSON / Issue JSON-compatible YAML 解析、重复键、生成 workflow 与来源逐字一致 |
 | `check-docs` | 上述文本检查，加 Markdown 本地链接 / 锚点、代码围栏、表格列数、根协作入口一致 |
 | `check-repo` | 上述检查，加必需资产、版本格式、远端目标 / Ruleset / workflow / Issue 配置契约、强制跟踪忽略产物的拒绝、无门禁语言实现阻断、实际 Git diff 空白与可选 PR 提交范围；运行检查器自身的负向回归 |
+| `check-core` | Rust fmt、锁定 workspace all-features test（账务、并发、进程恢复、密码向量与 bootstrap）、all-targets clippy、C header 的 clang 语法检查；不执行移动设备构建 |
+| `check-mobile` | 锁定 pub、Dart format、fatal-infos analyze、Flutter test；实际加载宿主 Rust / SQLCipher，另验证 UI 错误 / 取消 / 晚结果与平台字节缓冲区；不验证真实系统认证 |
 
 Markdown 允许非空行末的两个空格作硬换行；其他尾随空格仍报错。文件链接必须位于仓库并指向会进入 Git 的材料，避免链接只在维护者机器上存在。代码围栏里的命令和占位路径不作真实文档链接。外部 URL 不联网检查。
 
@@ -35,18 +37,116 @@ python3 -B scripts/check-repo.py --write-workflow
 
 Issue 表单继续使用 JSON-compatible YAML，按 JSON 完整解析。其他任意 YAML 不宣称通过语法校验；新增自由编辑的 YAML 配置时，先选择正式解析依赖并更新检查器、CI 与回归。
 
-检查器不作秘密扫描、法律审查、账务核算或业务测试。未跟踪的忽略目录不扫描；已跟踪文件不会因 `.gitignore` 而跳过，强制跟踪的忽略产物会报错。未知二进制文件不按 UTF-8 处理，已知文本扩展名中的 NUL / 非 UTF-8 仍失败。正式材料单文件超过 5 MiB 时失败，较大资产需先说明来源和实际交付用途再调整规则。
+仓库治理检查器不作秘密扫描、法律审查、账务核算或业务测试。业务结果由上面的实际语言入口验证。未跟踪的忽略目录不扫描；已跟踪文件不会因 `.gitignore` 而跳过，强制跟踪的忽略产物会报错。未知二进制文件不按 UTF-8 处理，已知文本扩展名中的 NUL / 非 UTF-8 仍失败。正式材料单文件超过 5 MiB 时失败，较大资产需先说明来源和实际交付用途再调整规则。
 
 ## 自动化契约与扩展
 
 `PR Checks` 在合并候选执行 `check-repo`，提交检查不把 GitHub 合成 merge commit 当作用户提交。真实 merge commit 根据父提交数量豁免 Conventional Commits；单父提交即使以 `Merge` 开头也不能绕过检查。PR 范围拒绝已知 AI 的 `Co-authored-by` 署名。
 
-workflow 的聚合必须 `always()` 等待全部真实组件，只接受全体 `success`。检查器验证聚合脚本、依赖、权限、凭据、Action pin 与触发契约；负向回归实际执行聚合脚本，证明失败、取消、跳过或缺失结果会拒绝。
+workflow 在独立 runner 并行运行 `Repo Hygiene`、`Core Quality` 和 `Mobile Quality`。`Core Quality` 使用 `rust-toolchain.toml` 对应的 Rust 执行 `check-core`，`Mobile Quality` 使用同版 Rust 与 [setup-flutter-ci.py](setup-flutter-ci.py) 固定的 Flutter revision 执行 `check-mobile`。设置脚本只接受 GitHub Actions 环境，在 RUNNER_TEMP 准备 SDK。`Candidate Quality` 必须 `always()` 等待三项，只接受三项全部 `success`。检查器验证组件与聚合、权限、凭据、Action pin 和触发契约。负向回归实际执行聚合脚本，覆盖任一组件失败、取消、跳过或缺失。
+
+[`Cargo.toml`](../Cargo.toml) 在 Cargo `test` profile 中优化 `argon2` 和实例化缓冲区泛型清零的 `radishledger-core`。`check-core` 继续执行同一套真实密码向量、归档认证和进程恢复测试，使用原 KDF 参数及 debug 断言。
 
 新增 workflow 必须同步审阅清单，避免额外 push / tag 触发或重复 required context 绕开声明的 CI 策略。
 
 Action 使用 [actions/checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) 的[完整 commit](https://github.com/actions/checkout/commit/3d3c42e5aac5ba805825da76410c181273ba90b1)。选择记录用于复核引用，不宣称已在远端运行；升级时审阅来源、权限和实际 PR 行为。
 
-第一次添加 Rust / Go / Dart 源文件或 `Cargo.toml` / `go.mod` / `pubspec.yaml` 时，现有仅治理组件的配置会失败。接入真实语言检查后，同一变更更新 workflow、检查器组件契约、此说明和回归；不能简单删掉阻断或添加返回成功的 job。更复杂的恢复、协议、数据库、平台与安全验证按[开发规范](../docs/development/README.md)执行。
+Rust / Dart 仅允许已接入真实检查的 `crates/ledger-core`、`crates/ledger-mobile` 和 `apps/m0_probe`；另有明确排除 workspace 的 `third-party/openssl-sys` 与 `third-party/openssl-src` 完整上游副本，由原包哈希 / 最小差异检查覆盖并经 Linux core-quality 实际编译；未知语言工程或 Go 实现仍会阻断。检查器同时核对必需 manifests / lockfile / 工具链和根版本镜像，语言组件不能增加跳过条件或改成返回成功的脚本。新增实际模块或语言时同步更新 workflow、检查器契约、说明和回归；更复杂的恢复、协议、数据库、平台与安全验证按[开发规范](../docs/development/README.md)执行。
+
+## 移动构建、生成与证据
+
+[build-mobile-core.py](build-mobile-core.py) 由 Dart build hook 调用，以真实目标编译同一个 Rust release code asset；不会安装工具、制造空库或回退宿主。Android clang / ar / ranlib 与 Apple SDK 显式传递。移动构建与实际 `flutter drive` 验证命令见[实验说明](../docs/development/mobile-core-prototype.md)，模拟器和真机证据分别记录。
+
+[generate-mobile-bridge.py](generate-mobile-bridge.py) 使用项目内固定 FRB / cargo-expand，从 `crate::api` 生成 Rust / Dart binding，检查工具版本并关闭自动依赖升级。它会写生成代码，只在 API 改动后显式执行。
+
+[collect-native-notices.py](collect-native-notices.py) 从本机锁定缓存收集两端 arm64 与验证宿主的 native 许可，并保留固定 Rust 标准库的官方许可集；`--check` 只读比较。它不联网，缓存缺失明确失败；重新生成需复核 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)。本地 openssl-sys / openssl-src 仅接受根 patch 指定的精确路径，保留包装与嵌套许可及补丁标记（包括构建期 Text::Template）；其他未知本地依赖不静默略过。普通 CI 没有宣称完整供应链扫描。
+
+sqlcipher-src 的包装许可、嵌套 SQLCipher / libtomcrypt 许可与 SQLite header 首段声明分别收集；缺失、空文件或声明格式漂移均拒绝生成。[许可回归](tests/test_native_notices.py)使用临时合成包验证完整收集和拒绝路径，由 `check-repo` 的测试发现入口执行，不接触真实缓存。
+
+SQLCipher 升级另需跨版本检查：在依赖修改前，从已知旧锁定版本构建 `m0-bootstrap-worker`，单独复制到本批忽略证据目录，并记录 Git / Cargo.lock / binary 指纹；不能把升级后重建的 worker 当作旧基线。完成升级后，显式执行：
+
+```bash
+M0_PREVIOUS_BOOTSTRAP_WORKER=/absolute/path/to/saved/baseline-worker \
+  cargo test --release --locked -p radishledger-core --test bootstrap_process \
+  previous_sqlcipher_preserves_closed_and_interrupted_vaults -- --ignored --nocapture
+```
+
+该用例核对旧 worker 为 SQLCipher 4.14.0、新 worker 为 4.19.0，验证正常关闭与强杀后待恢复 WAL；旧版仅读取后者副本，原文件由新版首次打开。A11 独立预期、错材料不改写、完整事实 / 身份、原意图重放与清理均断言。随机秘密仅经内存和管道传递，合成目录由测试清理；不接收用户账库。默认 ignored 是对外部旧二进制前置条件的明确要求，`check-core` 不将其计为通过；单独执行缺少旧 worker 时失败。此结果不承诺新写库回退兼容，也不代替移动设备运行。
+
+OpenSSL 升级另用 `M0_PREVIOUS_OPENSSL_WORKER` 和 `previous_openssl_preserves_closed_and_interrupted_vaults`，其他 cargo 参数与上例相同。旧 worker 必须是 SQLCipher 4.19.0 + OpenSSL 3.6.3，候选为 SQLCipher 4.19.0 + OpenSSL 4.0.3；测试保存前后的 provider 运行日志及二进制指纹，不能以 Apple CommonCrypto 冒充（该用例在 Apple 明确拒绝执行）。两个用例复用同一 A11 保真 / 恢复流程，但外部 worker 来源必须分别证明。
+
+[openssl_vectors.c](tests/openssl_vectors.c) 是独立公开密码向量和 RAND / SQLCipher 初始化失败传播验证，当前由迁移批次显式执行，不纳入普通 macOS CommonCrypto 检查。用目标 C 编译器加 `-std=c11 -Wall -Wextra -Werror -DSQLITE_HAS_CODEC`，显式传入同批 Cargo 输出的 OpenSSL / SQLCipher include、`libsqlcipher.a` 和 `libcrypto.a`，Linux 另加 `-ldl -pthread -lm`，Android 另加 `-ldl -lm -llog`；不得以系统 `-lcrypto` 代替。执行参数依次为 `vectors` 或 `provider-failure`、精确版本字符串、尚不存在的合成数据库路径。两个模式必须分别启动进程，版本 / 向量 / 预期失败不符返回非零，成功时只删除指定数据库。失败应先检查精确路径、保留诊断，再按归属清理，不全局覆盖 OpenSSL 配置。实际完成范围及历史阻塞见[OpenSSL 专题](../docs/development/mobile-core-prototype.md#32-openssl-修补方案评审与验证计划)。
+
+[openssl_armcap_probe.c](tests/openssl_armcap_probe.c) 将实际 OpenSSL armcap.c 的 `getauxval` 改名为诊断替身（编译参数 `-Dgetauxval=probe_getauxval`），直接编译原始 / 候选源码，并显式传入同批生成的 OpenSSL include、源包 include 与 crypto 目录。按目标使用 `-Wall -Wextra -Werror`，分别以 `TEST_CAPS=00/01/10/11` 启动进程；无效输入退出 2。独立期望表要求无 SVE 时不能启用 SVE2，检查其他密码加速位及向量长度探测次数。上游 4.0.3 的 01 组合预期失败，候选四组预期通过。该替身仅属于单元诊断；普通 provider / pager / App 测试不得携带 TEST_CAPS 或 OPENSSL_armcap 能力覆盖。可审阅补丁及其前后指纹见[ARM 修复专题](../docs/development/mobile-core-prototype.md#arm-能力修复的隔离验证与正式接入方案)。主工作区已选择含此补丁的完整源包，来源 / 精确文本例外与撤除条件见[源码说明](../third-party/openssl-src-patch.md)。
+
+M0-B 运行报告和合成截图写入 `local-evidence/m0-b/`，M0-C 写入 `local-evidence/m0-c/`；由各集成 driver 或设备控制器保存，构建产物和缓存保持忽略。bootstrap UI driver 必须指定 `M0C_EVIDENCE_SUBDIR`、`M0C_EVIDENCE_SESSION`、`M0C_UI_PLATFORM` 和 `M0C_UI_DEVICE`；session 同时传入 App 的 dart-define。resilience driver 支持 `M0B_EVIDENCE_SUBDIR`；证据子目录只接受单个英文字母 / 数字 / 下划线 / 连字符名称，以保留历史批次。bootstrap UI 使用 `--keep-app-running` 防止 Flutter drive 默认卸载 App，结束按批次归属精确清理并恢复安装基线。同一 Flutter 工作目录的构建、测试与模式切换按实验说明串行执行。没有私人账单或私人参考衍生材料，不能改成截取用户已有设备 / 容器。
 
 错误逐项报告并返回非零；检查器没有历史预算或默认成功模式。`--only` 用于定向本地检查，PR workflow 必须使用完整入口。
+
+
+### M0-B 故障与跨进程恢复
+
+`check-core.sh` 包含共享 SQLCipher 并发和独立子进程 SIGKILL 恢复检查；`check-mobile.sh` 包含实际两种 bridge 的有界压力、panic / ABI 错误及句柄归还检查。模拟器还需分别运行 `resilience_test.dart` 与 `check-mobile-recovery.py`，步骤、固定合成材料和清理边界见[移动核心实验](../docs/development/mobile-core-prototype.md#6-压力故障并发与强杀恢复实验)。该 Python 入口只控制明确指定的现有模拟器内本项目 App，不启动 / 新建设备；它需要可用 adb / simctl 权限，真实结果保存于忽略目录。普通宿主检查不能替代移动端证据。
+
+
+### M0-C bootstrap 与独立解锁
+
+[check-mobile-bootstrap.py](check-mobile-bootstrap.py) 经 App 私有 FIFO 传递有界秘密字节，复用 [mobile_probe_device.py](mobile_probe_device.py) 的现有模拟器控制；该共享模块同时供 M0-B 恢复入口使用。两种 bridge 验证创建确认、独立材料跨 PID 解锁、错误输入保全、六处中断、A11 非空 WAL 强杀 / 原意图重放及精确清理；每端共 16 组恢复和 48 组封装文件故障。`--output-dir` 可保留独立批次，不能离开项目 M0-C 证据目录或覆盖仍登记 ownedRuns 的报告。系统认证能力不足会单独记录未执行，不降低保护；核心 local-wrap 不作为系统认证证据。入口、安装模式、UI 验证与失败残留处理见[移动核心实验第 7 节](../docs/development/mobile-core-prototype.md#77-已接入的复现入口与证据边界)。本入口只操作合成数据，不接受真实账库。
+
+[observe-bootstrap-ui-background.py](observe-bootstrap-ui-background.py) 仅由 bootstrap UI driver 调用，核对本批 session / selection / owner / PID 后切换明确模拟器中的本项目 App 到后台，再返回前台。iOS 仅启动 Settings，Android 仅发送 HOME，不改变认证 / 调试信任设置。App 独立断言生命周期、输入清除及同库事实，driver 回收监控进程并拒绝未完成或未清理报告；本次入口不执行系统保护项失效 / 重建。`test_bootstrap_ui_background.py` 用无设备替身验证请求归属拒绝和中断后的前台恢复，由仓库检查自动发现。完整命令、保留原安装和失败收尾见[UI 复现入口](../docs/development/mobile-core-prototype.md#77-已接入的复现入口与证据边界)。
+
+`check-core.sh` 同时执行 A11 非空候选 / 删除 / outbox 跨进程恢复、原意图重放、四类封装文件发布故障，以及实际 DB / WAL / 回滚日志检查；`check-mobile.sh` 的 `bootstrap_native_test.dart` 经宿主两种 bridge 验证非空账务和发布错误。故障注入、发布结果未定及宿主 / 设备证据边界见[文件故障专题](../docs/development/mobile-core-prototype.md#78-非空账务与文件发布故障)。这不等于真实磁盘损坏、断电或系统认证已验收。
+
+`bootstrap_experiment_test.dart` 经两种真实 bridge / 核心验证人工实验管理：精确项缺失后的 A11 独立恢复、重建、全部候选清理登记、失败 / 取消重试、核心目录删除后的继续清理与无关对象保留；平台系统保护为内存替身。`bootstrap_widget_test.dart` 覆盖确认、后台取消等待、清理失败后重开页及清理成功后切换 bridge，宿主页面重建不算设备重启。正常测试发现入口包含这两份测试；操作和登记边界见[人工实验流程](../docs/development/mobile-core-prototype.md#713-人工实验页的精确失效清理与候选切换)。
+
+[collect-bootstrap-evidence.py](collect-bootstrap-evidence.py) 只离线重组人工页显式输出的本批合成分片，不启动 adb / simctl、不安装或连接设备。输入 / 输出限本仓库 `local-evidence/m0-c`，已保存的普通 UTF-8 输入上限 2 MiB、报告上限 96 KiB；缺片、冲突、身份不符或输出已存在均拒绝，错误不回显输入内容。它不执行 B / C 验收，也不把任意日志清洗为可公开材料。字段来源、批次开关、精确命令和局限见[有界非秘密报告](../docs/development/mobile-core-prototype.md#714-人工实验的有界非秘密报告)。
+
+`bootstrap_lock_review_test.dart` 经 thin / FRB 的真实 Rust / SQLCipher 验证同库非秘密基线、错材料保全、重新独立解锁 / 系统适配、取消后复核与清理重试；系统认证和文件观测是显式替身。`bootstrap_lock_review_widget_test.dart` 覆盖后台输入清除、窗口继续 / 取消、重新解锁失败、摘要不符、晚结果抑制、重开页缺失基线和窄屏两倍字号。两份测试纳入正常 Flutter 发现入口；[同库复核契约](../docs/development/mobile-core-prototype.md#716-解锁后-a11-前后复核)区分文件保护观测和账务比较，不能据宿主结果宣布真机验收。
+
+`bootstrap_evidence_test.dart` 测试报告字段排除、记录边界、默认禁止输出、停止等待 / 晚成功、失败重试、同库复核投影 / 96 KiB 上限及 Dart → Python 实际往返，后者使用 PATH 中已有 Python 标准库。`scripts/tests/test_bootstrap_evidence.py` 的重组 / 路径 / 文件边界回归由仓库检查自动发现；两组均不读取真实设备日志。共用分片函数维持原 App 文件报告的格式，并由宿主测试核对。
+
+Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程中的测试 VFS 在实际 WAL 提交、DELETE 提交和 checkpoint 的写入 / 同步位置注入故障，SIGKILL 后由未注入的普通入口恢复并重试；另观察 TEMP 表、排序 / 索引、物化查询、语句回滚、VACUUM、super-journal 和 SHM。MEMORY 策略与 FILE 正向对照分别断言，匿名临时文件在关闭前扫描。可通过 `M0_PAGER_EVIDENCE_DIR` 保存忽略目录内的有界 JSON 证据；子进程入口标记 ignored，由两个父测试实际调度，不能作为未运行或单独通过的业务测试计数。完整判据、清理和适用边界见[DB pager 与临时文件](../docs/development/mobile-core-prototype.md#79-db-pager-故障与临时文件边界)。
+
+
+`build-mobile-core.py --pager-tests` 用既有目标配置生成独立的 `cfg(test)` 原生核心可执行文件，不改变 App code asset。新增 [check-mobile-pager.py](check-mobile-pager.py) 复用已有模拟器 / App 定位能力，先核对实际目标、默认 VFS 与全部编译选项，再运行相同 pager / 临时文件 harness，并要求所有子进程配置一致。Android `TEMP_STORE=3` 强制内存，FILE 请求仍须不落盘；iOS `TEMP_STORE=2` 执行真实 FILE 临时文件对照，两端另有独立明文扫描对照。配置、运行与精确清理见[移动原生复验](../docs/development/mobile-core-prototype.md#710-移动模拟器原生-pager-复验)；不自动启动设备、安装 App、改变锁屏或证明 Flutter / 生产安全域 / 真机行为。
+
+[check-mobile-app-files.py](check-mobile-app-files.py) 控制已安装专用入口的现有模拟器 App，不自行构建 / 安装或启动设备。正常 App 进程运行两 bridge × MEMORY / FILE，独立复核路径、UID、权限、Android release / SELinux / shell 拒绝及 iOS 备份排除；`--interrupt-once` 实际停止后要求新 PID 清理登记并重新完成。iOS Simulator 缺少文件保护属性记录未验证，不默认成功。专用入口、诊断传输和精确恢复步骤见 [App 文件复验](../docs/development/mobile-core-prototype.md#711-app-进程安全域与文件路径复验)。`check-mobile.sh` 的 `file_boundary_test.dart` 验证宿主真实双 bridge 以及弱保护、调试进程和越界路径拒绝；不代替移动证据。
+
+[check-ios-file-protection.sh](check-ios-file-protection.sh) 用现有 macOS / Xcode Swift 工具链编译实际 iOS 文件采样器；运行 `sh scripts/check-ios-file-protection.sh` 验证 DB / WAL / SHM 合成内容保留、身份 / 链接拒绝、同库缺失与零长度 sidecar 的独立覆盖、独立对照实际 pwrite / fsync / 回读、已有对照不覆盖与描述符关闭，以及注入状态下的超时、取消、短写 / 同步失败和错误分类。该独立定向检查不连接设备或模拟硬件保护，临时目录与编译缓存退出时清理；可选 App 入口、45 秒窗口及证据边界见[有界锁屏观测](../docs/development/mobile-core-prototype.md#715-ios-有界锁屏访问观测)。
+
+
+### M0-D 同步事务数据库实验
+
+[`check-sync-db.py`](check-sync-db.py) 是显式运行的 PostgreSQL 合成事务实验，使用 [`sync_db_probe.py`](sync_db_probe.py) 的独立 psql 连接和锁屏障，以及 [`sync-db-probe.sql`](sync-db-probe.sql) 的候选事务。运行 `python3 -B scripts/check-sync-db.py` 复用已缓存 PostgreSQL 17.10 镜像，不 pull、不安装驱动、不发布宿主端口；按 image ID 创建本批容器，2 CPU / 512 MiB，结束核对归属后删除容器及匿名数据卷。它不随 check-repo / check-core / check-mobile 自动启动，也不将未执行算通过。
+
+用例核对完整状态、真实锁等待、CAS / 幂等、事务中断 / PostgreSQL 强杀恢复、sequence 漏读反例、固定分页、冻结竞争及有界控制登记。连接中断不能冒充真实 HTTP 服务或双端同步；allowed 控制位、符号 jsonb、实验上限都不是生产契约。版本、源码指纹、屏障 / 进程与清理结果写入新的 `local-evidence/m0-d/<session>/report.json`。精确边界、运行 / 中断清理方式与尚未覆盖的案例见 [D-DB 复现说明](../docs/validation/sync-cases.md#51-d-db-独立-postgresql-实验)。
+
+### M0-E CSV 预览、持久批次与受限撤销
+
+`check-core.sh` 自动执行预览与持久批次测试；定向入口为 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_import::tests --jobs 4`，无需新依赖 / Docker / 设备。手写材料验证严格有界解析、字段与既有引用映射、文件内来源冲突、取消和存储错误；真实 SQLCipher 只读快照及双连接归档竞争覆盖预览一致性。A01 候选投影与原库内容 / outbox 分别核对。profile、预算与剩余边界见 [E-CSV 说明](../docs/validation/portability-cases.md#51-e-csv-输入预览候选)。
+
+持久任务与批次定向复现 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_ --jobs 4`，合并预览、`store::csv_store::tests` 与 `store::csv_undo_store::tests`。新建隔离 v2 SQLCipher 库验证固定身份、备注 / 来源 / 进度 / 意图同事务、历史去重、取消 / 重开和真实 SQL 拒绝；父测试实际在五个写入点强杀专属子进程并用普通入口恢复。随机合成 key 经 stdin 管道、单子进程等待上限 20 秒、Drop 回收进程，tempfile 清理独占目录；不需要后台服务或设备。本入口的实现范围及未覆盖的移动 / 同步 / 导出见 [持久批次说明](../docs/validation/portability-cases.md#52-e-csv-持久任务与原子发布候选)。
+
+受限撤销定向复现 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core csv_undo --jobs 4`，仍由 `check-core.sh` 自动发现。独占新建 v3 库保留 v2 导入布局，验证不可变确认集合、原修订 / 候选重检、正常删除与意图 / 进度同事务、取消 / 恢复、SQL 拒绝、重复撤销及来源防复活。真实 SQLCipher 双连接与 A01 独立投影覆盖 E07 的备注竞争；父测试在已完成一批后，于下一批五点分别强杀子进程，普通入口恢复并沿原删除身份重试。目录 / 密钥 / 20 秒单 worker 等待和清理方式沿用上项；无新依赖、设备或服务。旧 v1 / v2 不自动升级，完整 E07 的新建引用分支仍缺证据，详见[受限撤销候选](../docs/validation/portability-cases.md#53-e-csv-受限撤销候选)。
+
+### M0-E 一致逻辑快照
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core snapshot_store --jobs 4` 验证 E-SNAPSHOT 只读宿主候选，仍由 `check-core.sh` 自动发现。只使用 tempfile 独占合成 SQLCipher 库和内存编码，不启动服务 / 设备、下载依赖或访问系统项。A04 在七个读取边界并发恢复，A11 保全修订 / 候选 / 删除 / 原意图，A06 和全部原账务案例对照独立 JSON；v2 / v3 核对未完成导入与撤销身份，另测预算、取消、关系损坏、未知 schema / 表 / 列与明示排除内容。候选不是认证归档或恢复入口，完整范围及剩余证据见 [E-SNAPSHOT](../docs/validation/portability-cases.md#54-e-snapshot-最小一致逻辑快照候选)。
+
+### M0-E 认证容器评审材料
+
+`python3.14 -B scripts/check-archive-review.py`（Python 3.11+ 标准库）只读[公开合成输入](../docs/validation/archive-container-review-inputs.json)，独立检查固定偏移、长度、SHA、AAD 和 11 个预检调度，复核 R01–R24 映射及材料版本 2 的独立 Go 输出 / 源码指纹；它不运行 KDF / AEAD 或产品 codec。该[已批准宿主候选](../docs/data-portability.md#321-e-container-首个宿主候选与实施边界)的真实认证与业务验证由 Cargo 执行；材料脚本未新增 CI job，不能据此关闭 E10–E12 / E15–E16。
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core archive_container --jobs 4` 定向运行内存 seal / open：独立完整密文、预检、认证分层、非法认证载荷、资源、取消、原库保全及 A11 / v2 / v3 保真。也由 `check-core.sh` 自动发现。固定 64 MiB KDF 共用执行名额，测试显式串行昂贵部分；整个定向批次约两分钟，并非单次 KDF 或设备耗时结论。使用 tempfile 合成库，结束自动回收；无端口、长期进程、移动安装、文件恢复或系统密钥项。范围与未覆盖证据见[宿主实验](../docs/validation/portability-cases.md#56-e-container-宿主内存封装与有界解封)。
+
+独立公开向量复现入口为 `python3.14 -B scripts/archive-vector-oracle.py --work-dir "$PWD/local-evidence/m0-e/container-oracle-new"`，输出目录必须不存在。需要已安装 Go 1.26+（本批 1.26.3）及固定缓存 `~/go/pkg/mod/golang.org/x/crypto@v0.50.0`、`x/sys@v0.43.0`，缺失即停止；不自动安装 / 下载。Go 使用原模块 Argon2id / XChaCha 和标准库 HKDF，独立从 baseInput 重建字节，不消费 Rust encoder / framingExpected。The Go Authors 的 BSD-3-Clause 来源与许可指纹在材料 provenance 中；脚本未复制第三方源码进仓库，也未引入产品 Go 依赖。
+
+脚本只接受仓库公开合成 fixture，显式禁用 GOPROXY / GOSUMDB、工具链自动获取和遥测，build 限两路 / 120 秒、oracle 限 20 秒，无端口或后台任务。`main.go` / `go.mod` / 二进制 / 专属 cache / 输出与 provenance 保留在排他忽略目录；结束后无运行资源，材料可按本批精确目录另行清理。模块指纹只覆盖 `.go` 源文件及 LICENSE，不代表汇编、编译器或完整供应链已审计。复现后的 `outputs.json` 应逐项匹配 `cryptoExpected`（除 provenance）；原材料 SHA 记录生成时的版本 1 输入，版本 2 加入输出后文件自身 SHA 随之变化，不能误称原文件指纹等于现版本。
+
+### M0-E 受保护暂存恢复
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_stage --jobs 4` 覆盖独立新 DB Key 的 SQLCipher 暂存、A11 / A06 / A04 与 v2 / v3 历史保真、重开 / 取消 / SQL 拒绝、归属 / 文件 / 预算与显式放弃。也由 `check-core.sh` 执行，无新依赖或迁移用户库。详细契约和未覆盖范围见[暂存宿主候选](../docs/validation/portability-cases.md#57-e-restore-受保护暂存宿主候选)。
+
+Unix 父测试实际调度 10 个准备点和数据库删除后的子进程 SIGKILL；只向自己创建的 worker 匿名 stdin 传随机合成暂存钥，参数 / 文件 / 日志不存钥。单 worker 最多等 20 秒，由父测试 Drop 回收进程；tempfile 回收本批原库 / 归档 / 暂存 / 明文扫描正向对照，未使用固定真实目录、端口、设备或系统项。ignored worker 是内部入口，父测试已覆盖它；不得单独当成未执行的业务能力或重复通过数。完整批次包含多次 64 MiB KDF 且共用测试串行锁，约数分钟，不等于单次 KDF / 真机性能。
+
+暂存 schema 1001 是内部未发布候选，原 schema 1–3 不升级；Task / Ticket 保留在内存和合成定位材料，新钥尚无平台保存。结果只表示完整核对后的未发布目标，不代表活动切换、原队列可继续、空白设备恢复或生产备份文件保存。未知临时文件 / 缺 owner、目录仍在但 stage.db 缺失的阶段判定、discard 撤除后的终结窗口及最终定位材料删除异常均保留为缺口；现有原任务重试证据不覆盖这些窗口，不递归清理来制造成功。

@@ -1,0 +1,6 @@
+--- a/openssl/crypto/armcap.c
++++ b/openssl/crypto/armcap.c
+@@ -353 +353,2 @@
+-    if (getauxval(OSSL_HWCAP2) & OSSL_HWCAP2_SVE2)
++    if ((OPENSSL_armcap_P & ARMV8_SVE)
++        && (getauxval(OSSL_HWCAP2) & OSSL_HWCAP2_SVE2))

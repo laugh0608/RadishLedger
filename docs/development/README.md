@@ -62,7 +62,7 @@
 - `productVersion`：不含前导 v 的产品日历版本。
 - `flutterBuildNumber`：移动端构建序号，发行构建必须单调增加。
 
-后续 manifests / 构建产物从该文件同步，不维护多个独立手填版本。初始值是仓库规划基线，不表示已有对应 App 或发行包。
+manifests / 构建产物从该文件同步，不维护多个独立真相；仓库检查强制核对 Cargo workspace 与 Flutter manifest 的镜像值。规划值和合成实验包均不代表已有稳定产品发行。
 
 产品版本、协议主版本、envelope / 业务 / 备份 schema、DB migration、FFI ABI 和 key epoch 各有用途，不能互相替代。金额或密码语义的兼容变更必须单独设计。
 
@@ -83,6 +83,8 @@
 仓库检查、文档与文本定向入口的实际命令和覆盖见 [scripts/README.md](../../scripts/README.md)。检查清单包含未跟踪文件，避免普通 `git diff --check` 的盲区；PR 使用 base / head 的真实提交范围，验证合并候选的文件树。
 
 语言实现首次进入时同步建立真实定向入口与 CI 组件；仅治理的门禁会阻断没有对应检查的 Rust / Go / Dart 工程。金额与转账至少验证边界整数和事务中断；同步 / 删除至少验证重复提交、并发、重启与旧设备；crypto / 导入 / 归档覆盖认证失败、资源界限与不完整恢复；这些证据不由文档或检查器回归替代。
+
+移动核心实验的模块、FFI 契约、锁定工具链、生成代码与两端复现命令见[实验说明](mobile-core-prototype.md)；M0 的正式退出条件见[验证矩阵](mobile-core-validation.md)。宿主 CI、模拟器运行与真机目标构建分别记录，不能互相替代。
 
 ## 7. 数据、许可与执行
 

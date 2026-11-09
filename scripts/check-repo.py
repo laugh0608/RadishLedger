@@ -2,12 +2,14 @@
 """Repository checks (read-only by default), using Python's standard library and Git."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 from urllib.parse import unquote, urlsplit
 
 
@@ -32,6 +34,7 @@ TEXT_SUFFIXES = {
     ".cfg", ".sh", ".py", ".rs", ".go", ".dart", ".sql", ".csv", ".tsv",
     ".xml", ".svg", ".html", ".css", ".js", ".ts", ".lock", ".mod",
     ".sum", ".gradle", ".properties", ".kt", ".swift", ".h", ".c", ".cpp",
+    ".kts", ".plist", ".pbxproj", ".xcconfig", ".storyboard", ".xcscheme", ".xcsettings", ".xcworkspacedata",
 }
 BINARY_SUFFIXES = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip",
@@ -41,16 +44,21 @@ BINARY_SUFFIXES = {
 JSON_YAML_FILES = {
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/bug-report.yml", ".github/ISSUE_TEMPLATE/proposal.yml",
+    "apps/m0_probe/pubspec.yaml", "apps/m0_probe/analysis_options.yaml",
 }
 WORKFLOW_SOURCE = ".github/workflow-sources/pr-check.json"
 WORKFLOW_FILE = ".github/workflows/pr-check.yml"
 MAX_FILE_BYTES = 5 * 1024 * 1024
+OPENSSL_SOURCE_PREFIX = "third-party/openssl-src/"
+OPENSSL_SOURCE_MANIFEST = "third-party/openssl-src-upstream.json"
+OPENSSL_SOURCE_MANIFEST_SHA256 = "cf19919264f45b1ffab02f34087f21db1967e7b107c2a1becd7b919841fbe60a"
 AGGREGATE_RUN = """python3 - <<'PY'
 import json, os, sys
 results = json.loads(os.environ['NEEDS_JSON'])
-for name, result in results.items():
-    print(name + ': ' + result.get('result', 'missing'))
-sys.exit(0 if results and all(item.get('result') == 'success' for item in results.values()) else 1)
+expected = {'repo-hygiene', 'core-quality', 'mobile-quality'}
+for name in sorted(expected | results.keys()):
+    print(name + ': ' + results.get(name, {}).get('result', 'missing'))
+sys.exit(0 if results.keys() == expected and all(item.get('result') == 'success' for item in results.values()) else 1)
 PY"""
 CHECK_RUN = """if [[ -n "${PR_BASE_SHA}" ]]; then
   ./scripts/check-repo.sh --base-ref "${PR_BASE_SHA}" --head-ref "${PR_HEAD_SHA}"
@@ -159,6 +167,17 @@ def ignored_tracked_files(root):
 
 def check_text(root, files):
     errors, texts, documents = [], {}, {}
+    # 例外由固定来源清单及各原始文件哈希共同授权，不能仅按目录跳过。
+    exemptions = set()
+    if any(name.startswith(OPENSSL_SOURCE_PREFIX) for name in files):
+        try:
+            manifest = openssl_source_manifest(root)
+            for name in manifest["textExceptions"]:
+                path = root / OPENSSL_SOURCE_PREFIX / name
+                if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == manifest["files"][name]:
+                    exemptions.add(OPENSSL_SOURCE_PREFIX + name)
+        except (OSError, ValueError) as error:
+            errors.append(f"openssl-src: no text exceptions: {error}")
     for name in files:
         path = root / name
         if path.stat().st_size > MAX_FILE_BYTES:
@@ -179,15 +198,15 @@ def check_text(root, files):
                 errors.append(f"{name}: text is not UTF-8")
             continue
         texts[name] = text
-        if raw.startswith(b"\xef\xbb\xbf"):
+        if raw.startswith(b"\xef\xbb\xbf") and name not in exemptions:
             errors.append(f"{name}: UTF-8 BOM")
-        if b"\r" in raw:
+        if b"\r" in raw and name not in exemptions:
             errors.append(f"{name}: CR / CRLF, expected LF")
-        if raw and not raw.endswith(b"\n"):
+        if raw and not raw.endswith(b"\n") and name not in exemptions:
             errors.append(f"{name}: missing final newline")
         for number, line in enumerate(text.splitlines(), 1):
             trailing = re.search(r"[ \t]+$", line)
-            if trailing and not (
+            if trailing and name not in exemptions and not (
                 path.suffix == ".md" and trailing.group() == "  "
                 and line[:trailing.start()].strip()
             ):
@@ -308,8 +327,97 @@ def check_docs(root, files, texts):
     return errors
 
 
+def check_openssl_patch(root, files, documents):
+    """核对完整发布源码；只允许两份 manifest 的 source 约束及 VCS JSON 末尾 LF。"""
+    prefix = "third-party/openssl-sys/"
+    manifest = documents.get("third-party/openssl-sys-upstream.json", {})
+    hashes = manifest.get("files", {})
+    errors = []
+    if (manifest.get("name") != "openssl-sys" or manifest.get("version") != "0.9.117"
+            or manifest.get("archiveSha256") != "b47e7e6bb2c38cd930d25a23b40fa52e068c10e85f3e03a7f5ba5aaca5713695"
+            or not isinstance(hashes, dict) or len(hashes) != 81):
+        return ["openssl-sys: invalid upstream provenance manifest"]
+    actual = {name.removeprefix(prefix) for name in files if name.startswith(prefix)}
+    if actual != set(hashes):
+        errors.append("openssl-sys: source inventory differs from upstream")
+    for name in sorted(actual & set(hashes)):
+        raw = (root / prefix / name).read_bytes()
+        if name in {"Cargo.toml", "Cargo.toml.orig"}:
+            if raw.count(b'version = "=400.0.2"') != 1:
+                errors.append(f"openssl-sys: unexpected source requirement in {name}")
+                continue
+            raw = raw.replace(b'version = "=400.0.2"', b'version = "300.2.0"')
+        elif name == ".cargo_vcs_info.json":
+            raw = raw.removesuffix(b"\n")
+        if hashlib.sha256(raw).hexdigest() != hashes[name]:
+            errors.append(f"openssl-sys: unapproved upstream source change: {name}")
+    try:
+        workspace = tomllib.loads((root / "Cargo.toml").read_text())
+        if workspace.get("patch", {}).get("crates-io", {}).get("openssl-sys") != {"path": prefix.rstrip("/")}:
+            errors.append("openssl-sys: workspace does not select the reviewed local patch")
+        if workspace.get("workspace", {}).get("exclude") != [prefix.rstrip("/"), OPENSSL_SOURCE_PREFIX.rstrip("/")]:
+            errors.append("openssl-sys: local dependency must not become a workspace member")
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"openssl-sys: cannot inspect workspace: {error}")
+    return errors
+
+
+def openssl_source_manifest(root):
+    raw = (root / OPENSSL_SOURCE_MANIFEST).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != OPENSSL_SOURCE_MANIFEST_SHA256:
+        raise ValueError("upstream manifest checksum differs from the reviewed source")
+    return json.loads(raw, object_pairs_hook=unique_object)
+
+
+def check_openssl_source(root, files):
+    """源码、文件模式和补丁均与已审阅来源绑定；不执行或下载上游内容。"""
+    try:
+        manifest = openssl_source_manifest(root)
+    except (OSError, ValueError) as error:
+        return [f"openssl-src: {error}"]
+    errors = []
+    actual = {name.removeprefix(OPENSSL_SOURCE_PREFIX) for name in files
+              if name.startswith(OPENSSL_SOURCE_PREFIX)}
+    if actual != set(manifest["files"]):
+        errors.append("openssl-src: source inventory differs from upstream")
+    patch = manifest["patch"]
+    for name in sorted(actual & set(manifest["files"])):
+        path = root / OPENSSL_SOURCE_PREFIX / name
+        expected = (patch["patchedFileSha256"] if name == patch["file"]
+                    else manifest["files"][name])
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            errors.append(f"openssl-src: unapproved upstream source change: {name}")
+        if bool(path.stat().st_mode & 0o111) != (name in manifest["executableFiles"]):
+            errors.append(f"openssl-src: upstream executable mode differs: {name}")
+    try:
+        if hashlib.sha256((root / patch["patch"]).read_bytes()).hexdigest() != patch["patchSha256"]:
+            errors.append("openssl-src: reviewed ARM patch changed")
+        description = json.loads((root / "third-party/openssl-armcap-sve.json").read_bytes(),
+                                 object_pairs_hook=unique_object)
+        if (any(description.get(key) != value for key, value in patch.items())
+                or description.get("archiveSha256") != manifest["archiveSha256"]
+                or description.get("status") != "applied-to-workspace-source"):
+            errors.append("openssl-src: ARM patch metadata differs from reviewed source")
+        expected_attributes = {f"/{OPENSSL_SOURCE_PREFIX}{name} -whitespace"
+                               for name in manifest["gitWhitespaceExceptions"]}
+        attributes = {line for line in (root / ".gitattributes").read_text().splitlines()
+                      if line.strip() and not line.lstrip().startswith("#")
+                      and any(word == "-whitespace" or word.startswith("whitespace=")
+                              for word in line.split()[1:])}
+        if attributes != expected_attributes:
+            errors.append("openssl-src: Git whitespace exceptions differ from reviewed source")
+        selection = tomllib.loads((root / "Cargo.toml").read_text()).get("patch", {}).get("crates-io", {})
+        if selection.get("openssl-src") != {"path": OPENSSL_SOURCE_PREFIX.rstrip("/")}:
+            errors.append("openssl-src: workspace does not select the reviewed local patch")
+    except (OSError, ValueError) as error:
+        errors.append(f"openssl-src: cannot inspect source selection: {error}")
+    return errors
+
+
 def check_governance(root, files, documents):
     errors = []
+    errors.extend(check_openssl_patch(root, files, documents))
+    errors.extend(check_openssl_source(root, files))
 
     def require(condition, message):
         if not condition:
@@ -418,7 +526,8 @@ def check_governance(root, files, documents):
     if not isinstance(jobs, dict) or not all(isinstance(job, dict) for job in jobs.values()):
         errors.append("workflow: invalid jobs object")
         jobs = {}
-    require(set(jobs) == {"repo-hygiene", "candidate-quality"}, "workflow: update the reviewed component contract when adding jobs")
+    components = ["repo-hygiene", "core-quality", "mobile-quality"]
+    require(set(jobs) == {*components, "candidate-quality"}, "workflow: update the reviewed component contract when adding jobs")
     for job_id, job in jobs.items():
         timeout = job.get("timeout-minutes")
         require(type(timeout) is int and 0 < timeout <= 20, f"workflow {job_id}: finite timeout required")
@@ -432,7 +541,7 @@ def check_governance(root, files, documents):
             f"workflow {job_id}: steps cannot mask failures or skip checks",
         )
     hygiene = jobs.get("repo-hygiene", {})
-    require(hygiene.get("name") == "Repo Hygiene" and "if" not in hygiene, "workflow: Repo Hygiene cannot be skipped")
+    require(hygiene.get("name") == "Repo Hygiene" and "if" not in hygiene and "needs" not in hygiene, "workflow: Repo Hygiene must run independently")
     steps = hygiene.get("steps", [])
     if isinstance(steps, list) and len(steps) == 2 and all(isinstance(s, dict) for s in steps):
         checkout, check = steps
@@ -456,7 +565,7 @@ def check_governance(root, files, documents):
     candidate = jobs.get("candidate-quality", {})
     require(
         candidate.get("name") == "Candidate Quality" and candidate.get("if") == "always()"
-        and candidate.get("needs") == ["repo-hygiene"],
+        and candidate.get("needs") == components,
         "workflow: aggregate name / always / dependencies drift",
     )
     summary = candidate.get("steps", [])
@@ -466,6 +575,30 @@ def check_governance(root, files, documents):
         and summary[0].get("run") == AGGREGATE_RUN,
         "workflow: aggregate must reject every non-success component",
     )
+    rust_setup = "rustup toolchain install 1.96.0 --profile minimal"
+    language_checks = (
+        ("core-quality", "Core Quality", rust_setup + " --component rustfmt --component clippy", "./scripts/check-core.sh"),
+        ("mobile-quality", "Mobile Quality", rust_setup + "\npython3 -B scripts/setup-flutter-ci.py", "./scripts/check-mobile.sh"),
+    )
+    for job_id, name, setup_run, check_run in language_checks:
+        job = jobs.get(job_id, {})
+        require(
+            job.get("name") == name and job.get("runs-on") == "ubuntu-latest"
+            and "if" not in job and "needs" not in job,
+            f"workflow: {name} must run independently on Linux",
+        )
+        steps = job.get("steps", [])
+        if isinstance(steps, list) and len(steps) == 3 and all(isinstance(step, dict) for step in steps):
+            checkout, setup, check = steps
+            require(
+                checkout.get("uses") == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+                and checkout.get("with") == {"fetch-depth": 0, "persist-credentials": False},
+                f"workflow: {name} candidate checkout drift",
+            )
+            require(setup.get("run") == setup_run, f"workflow: {name} pinned toolchain drift")
+            require(check.get("run") == check_run, f"workflow: {name} must run its real check")
+        else:
+            errors.append(f"workflow: {name} must check out, prepare and run its real check")
 
     issue_config = object_at(".github/ISSUE_TEMPLATE/config.yml")
     contacts = issue_config.get("contact_links")
@@ -490,11 +623,30 @@ def check_governance(root, files, documents):
         name for name in files if Path(name).suffix in {".rs", ".go", ".dart"}
         or Path(name).name in {"Cargo.toml", "go.mod", "pubspec.yaml"}
     ]
+    covered = lambda name: (
+        name == "Cargo.toml" or name.startswith("crates/ledger-core/")
+        or name.startswith("crates/ledger-mobile/") or name.startswith("apps/m0_probe/")
+        # 两份完整来源另由专用哈希检查校验；Linux core-quality 实际编译这些依赖。
+        or name.startswith("third-party/openssl-sys/")
+        or name.startswith(OPENSSL_SOURCE_PREFIX)
+    ) and Path(name).suffix != ".go"
+    uncovered = [name for name in sources if not covered(name)]
     require(
-        not sources,
+        not uncovered,
         "language implementation has no quality component; add real checks before introducing: "
-        + ", ".join(sources[:5]),
+        + ", ".join(uncovered[:5]),
     )
+    for name in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "crates/ledger-core/Cargo.toml", "crates/ledger-mobile/Cargo.toml", "scripts/check-core.sh", "scripts/check-mobile.sh", "scripts/setup-flutter-ci.py", "apps/m0_probe/pubspec.yaml", "apps/m0_probe/pubspec.lock"):
+        require(name in files, f"core quality source missing: {name}")
+    if "Cargo.toml" in files:
+        try:
+            cargo = tomllib.loads((root / "Cargo.toml").read_text())
+            require(cargo.get("workspace", {}).get("package", {}).get("version") == version.get("productVersion"), "version: Cargo mirror drift")
+            require(cargo.get("workspace", {}).get("members") == ["crates/ledger-core", "crates/ledger-mobile"], "core: workspace inventory drift")
+            pub = object_at("apps/m0_probe/pubspec.yaml")
+            require(pub.get("version") == f"{version.get('productVersion')}+{version.get('flutterBuildNumber')}", "version: Flutter mirror drift")
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            errors.append(f"Cargo.toml: invalid manifest: {error}")
     return errors
 
 
@@ -556,9 +708,10 @@ def main():
             if args.base_ref:
                 errors.extend(commit_errors(root, args.base_ref, args.head_ref or "HEAD"))
             if not errors:
+                # 拒绝用例复制完整第三方源码到独立仓库；保留有界但足够的运行时间。
                 result = subprocess.run(
                     [sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_*.py"],
-                    cwd=root, timeout=60,
+                    cwd=root, timeout=180,
                 )
                 if result.returncode:
                     errors.append("repository checker regression tests failed")
