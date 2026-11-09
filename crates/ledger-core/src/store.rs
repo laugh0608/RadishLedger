@@ -499,7 +499,7 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_error)?;
         #[cfg(all(test, unix))]
-        snapshot_store::materialized::check_new_operation(&tx, &write.operation_id)?;
+        snapshot_store::materialized::check_new_write(&tx, write)?;
         let effect = apply_write(&tx, write, &mut observe)?;
         if effect == WriteEffect::Replayed {
             return Ok(effect);
@@ -806,7 +806,7 @@ fn validate_note_schema(tx: &Transaction<'_>, event: &Event) -> Result<()> {
         .map_err(db_error)?;
     let supports_notes = matches!(version, 2 | 3);
     #[cfg(all(test, unix))]
-    let supports_notes = supports_notes || version == snapshot_store::materialized::VERSION;
+    let supports_notes = supports_notes || snapshot_store::materialized::supports_version(version);
     if !event.note.is_empty() && !supports_notes {
         return Err(CoreError::new(
             "unsupported_schema",

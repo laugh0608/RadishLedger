@@ -43,11 +43,14 @@ struct Budget<'a> {
 
 impl Budget<'_> {
     fn row(&mut self) -> Result<()> {
+        self.rows(1)
+    }
+    fn rows(&mut self, count: usize) -> Result<()> {
         cancelled(self.cancel)?;
-        if self.rows == self.limits.rows {
+        if count > self.limits.rows - self.rows {
             return Err(limit());
         }
-        self.rows += 1;
+        self.rows += count;
         Ok(())
     }
     fn charge(&mut self, bytes: usize) -> Result<()> {
@@ -186,11 +189,15 @@ fn check_columns(connection: &Connection, table: &str, cancel: &AtomicBool) -> R
         "csv_undo_tasks" => "id,import_task_id,request,state,total,next_ordinal,batch_size",
         "csv_undo_rows" => "undo_id,ordinal,record,row_id,intent,outcome",
         "csv_undo_batches" => "undo_id,first_ordinal,last_ordinal,deleted",
+        #[cfg(all(test, unix))]
+        "archived_operations" | "archived_revisions" | "archived_events" => "id",
+        #[cfg(all(test, unix))]
+        "materialization" => "id,target,stage,history,digest,history_digest",
         _ => return Err(corrupt()),
     };
     let mut expected = columns.split(',');
     let mut statement = connection
-        .prepare(&format!("PRAGMA table_info({table})"))
+        .prepare(&format!("PRAGMA table_xinfo({table})"))
         .map_err(db_error)?;
     let mut rows = statement.query([]).map_err(db_error)?;
     while let Some(row) = rows.next().map_err(db_error)? {
@@ -235,6 +242,52 @@ fn selections(
             revision_id: text(r, 1, b)?,
         })
     })
+}
+
+fn revisions(connection: &Connection, budget: &mut Budget<'_>) -> Result<Vec<Revision>> {
+    collect(
+        connection,
+        "SELECT id,event_id,predecessor,payload FROM revisions ORDER BY id",
+        budget,
+        |r, b| {
+            Ok(Revision {
+                id: text(r, 0, b)?,
+                event_id: text(r, 1, b)?,
+                predecessor: optional_text(r, 2, b)?,
+                event: optional_text(r, 3, b)?.map(|s| json(&s)).transpose()?,
+            })
+        },
+    )
+}
+
+fn intents(connection: &Connection, budget: &mut Budget<'_>) -> Result<Vec<Write>> {
+    collect(
+        connection,
+        "SELECT operation_id,intent,revision_id FROM outbox ORDER BY operation_id",
+        budget,
+        |r, b| {
+            let operation = text(r, 0, b)?;
+            let intent: Write = json(&text(r, 1, b)?)?;
+            let revision = text(r, 2, b)?;
+            if operation != intent.operation_id || revision != intent.revision_id {
+                return Err(corrupt());
+            }
+            Ok(intent)
+        },
+    )
+}
+
+fn validate_months(months: &[String], cancel: &AtomicBool) -> Result<()> {
+    if months.len() > 120 {
+        return Err(limit());
+    }
+    for month in months {
+        cancelled(cancel)?;
+        if month.len() != 7 || crate::domain::validate_date(&format!("{month}-01")).is_err() {
+            return Err(CoreError::new("invalid_calendar_date", "统计月份无效"));
+        }
+    }
+    Ok(())
 }
 
 fn imports(
@@ -457,18 +510,10 @@ impl Store {
         mut observe: impl FnMut(CapturePoint) -> Result<()>,
     ) -> Result<LogicalSnapshot> {
         cancelled(cancel)?;
-        if !(1..=MAX_ROWS).contains(&limits.rows)
-            || !(1..=MAX_BYTES).contains(&limits.bytes)
-            || months.len() > 120
-        {
+        if !(1..=MAX_ROWS).contains(&limits.rows) || !(1..=MAX_BYTES).contains(&limits.bytes) {
             return Err(limit());
         }
-        for month in months {
-            cancelled(cancel)?;
-            if month.len() != 7 || crate::domain::validate_date(&format!("{month}-01")).is_err() {
-                return Err(CoreError::new("invalid_calendar_date", "统计月份无效"));
-            }
-        }
+        validate_months(months, cancel)?;
         let mut budget = Budget {
             limits,
             rows: 0,
@@ -511,19 +556,7 @@ impl Store {
             &mut budget,
         )?;
         observe(CapturePoint::References)?;
-        let revisions = collect(
-            &tx,
-            "SELECT id,event_id,predecessor,payload FROM revisions ORDER BY id",
-            &mut budget,
-            |r, b| {
-                Ok(Revision {
-                    id: text(r, 0, b)?,
-                    event_id: text(r, 1, b)?,
-                    predecessor: optional_text(r, 2, b)?,
-                    event: optional_text(r, 3, b)?.map(|s| json(&s)).transpose()?,
-                })
-            },
-        )?;
+        let revisions = revisions(&tx, &mut budget)?;
         observe(CapturePoint::Revisions)?;
         let selected = selections(
             &tx,
@@ -536,20 +569,7 @@ impl Store {
             &mut budget,
         )?;
         observe(CapturePoint::Selections)?;
-        let intent_history = collect(
-            &tx,
-            "SELECT operation_id,intent,revision_id FROM outbox ORDER BY operation_id",
-            &mut budget,
-            |r, b| {
-                let operation = text(r, 0, b)?;
-                let intent: Write = json(&text(r, 1, b)?)?;
-                let revision = text(r, 2, b)?;
-                if operation != intent.operation_id || revision != intent.revision_id {
-                    return Err(corrupt());
-                }
-                Ok(intent)
-            },
-        )?;
+        let intent_history = intents(&tx, &mut budget)?;
         observe(CapturePoint::Intents)?;
         let imports = if version >= 2 {
             Some(imports(&tx, version, &mut budget)?)

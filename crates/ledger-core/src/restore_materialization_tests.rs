@@ -18,6 +18,9 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+#[path = "restored_snapshot_tests.rs"]
+mod restored_snapshot_tests;
+
 const PASSWORD: &[u8] = b"public-materialization-test-password";
 
 fn flag() -> AtomicBool {
@@ -251,6 +254,36 @@ fn materialization_reopens_real_facts_and_preserves_the_later_original() {
     }
 }
 
+fn seed_csv(store: &mut Store, version: u8, bytes: &[u8]) {
+    let mapping = mapping();
+    store.add_account(&id(1), "cash", "合成现金").unwrap();
+    store.add_category(&id(5), "expense", "合成餐饮").unwrap();
+    let plan = prepare(store, bytes, &mapping, &flag()).unwrap();
+    let task = store
+        .save_csv_task(&id(900), &plan, &[Decision::Import; 3], 2, &flag())
+        .unwrap();
+    store
+        .publish_csv_batch(&task.target_id, &task.id, 1, &flag())
+        .unwrap();
+    store
+        .set_csv_cancelled(&task.target_id, &task.id, true)
+        .unwrap();
+    if version == 3 {
+        let undo = store
+            .preview_csv_undo(&task.target_id, &task.id, &flag())
+            .unwrap();
+        store
+            .save_csv_undo(&id(800), &undo, &[1, 2], 1, &flag())
+            .unwrap();
+        store
+            .publish_csv_undo_batch(&task.target_id, &id(800), 1, &flag())
+            .unwrap();
+        store
+            .set_csv_undo_cancelled(&task.target_id, &id(800), true)
+            .unwrap();
+    }
+}
+
 #[test]
 fn materialization_keeps_csv_dedupe_even_after_delete_and_history_cannot_run() {
     let _kdf = crate::crypto::KDF_TESTS.lock().unwrap();
@@ -261,34 +294,7 @@ fn materialization_keeps_csv_dedupe_even_after_delete_and_history_cannot_run() {
             ONE.replace("src-1", "src-2"),
             ONE.replace("src-1", "src-3")
         );
-        let fixture = Fixture::new(version, |store| {
-            store.add_account(&id(1), "cash", "合成现金").unwrap();
-            store.add_category(&id(5), "expense", "合成餐饮").unwrap();
-            let plan = prepare(store, text.as_bytes(), &mapping, &flag()).unwrap();
-            let task = store
-                .save_csv_task(&id(900), &plan, &[Decision::Import; 3], 2, &flag())
-                .unwrap();
-            store
-                .publish_csv_batch(&task.target_id, &task.id, 1, &flag())
-                .unwrap();
-            store
-                .set_csv_cancelled(&task.target_id, &task.id, true)
-                .unwrap();
-            if version == 3 {
-                let undo = store
-                    .preview_csv_undo(&task.target_id, &task.id, &flag())
-                    .unwrap();
-                store
-                    .save_csv_undo(&id(800), &undo, &[1, 2], 1, &flag())
-                    .unwrap();
-                store
-                    .publish_csv_undo_batch(&task.target_id, &id(800), 1, &flag())
-                    .unwrap();
-                store
-                    .set_csv_undo_cancelled(&task.target_id, &id(800), true)
-                    .unwrap();
-            }
-        });
+        let fixture = Fixture::new(version, |store| seed_csv(store, version, text.as_bytes()));
         let mut candidate = Candidate::new(&fixture.stage).unwrap();
         let ready = fixture.materialize(&mut candidate);
         let history = ready.facts.imports.as_ref().unwrap();

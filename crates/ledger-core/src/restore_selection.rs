@@ -303,6 +303,31 @@ impl Host<'_> {
         Ok(checkpoint)
     }
 
+    fn capture_restored(
+        &self,
+        origin: &Selection,
+        months: &[String],
+        limits: crate::archive_container::Limits,
+        cancel: &AtomicBool,
+        observe: impl FnMut(materialized::CapturePoint) -> Result<()>,
+    ) -> Result<materialized::RestoredSnapshot> {
+        cancelled(cancel)?;
+        let _gate = self.lock()?;
+        let active = self.settled()?;
+        if &active != origin {
+            return Err(CoreError::new(
+                "selection_stale",
+                "旧读取请求不属于当前活动选择",
+            ));
+        }
+        if active.target.materialization.is_none() {
+            return Err(mismatch());
+        }
+        let _target = self.lock_target(&active.target)?;
+        let store = self.read_store(&active)?;
+        materialized::capture(&store, months, limits, cancel, observe)
+    }
+
     fn confirm(&self, target: Target, cancel: &AtomicBool) -> Result<Confirmed> {
         let _gate = self.lock()?;
         let old = self.settled()?;

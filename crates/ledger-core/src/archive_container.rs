@@ -43,7 +43,7 @@ pub const CANDIDATE_LIMITS: Limits = Limits {
 };
 
 impl Limits {
-    fn validate(self) -> Result<()> {
+    pub(crate) fn validate(self) -> Result<()> {
         if !(1..=MAX_PAYLOAD).contains(&self.payload_bytes)
             || self.records > 100_000
             || !(1..=64).contains(&self.json_depth)

@@ -10,7 +10,22 @@ struct Index<'a> {
     revisions: BTreeMap<&'a str, &'a Revision>,
     intents: BTreeMap<&'a str, &'a Write>,
     sequence: i64,
-    schema: i64,
+    allows_notes: bool,
+}
+
+pub(super) struct LedgerView<'a> {
+    pub accounts: &'a [Reference],
+    pub categories: &'a [Reference],
+    pub revisions: &'a [Revision],
+    pub selected: &'a [Selection],
+    pub candidates: &'a [Selection],
+}
+
+pub(super) struct HistoryView<'a> {
+    pub source_schema: Option<i64>,
+    pub sequence: i64,
+    pub intents: &'a [Write],
+    pub imports: Option<&'a ImportHistory>,
 }
 
 fn identity(id: &str) -> Result<()> {
@@ -19,7 +34,7 @@ fn identity(id: &str) -> Result<()> {
 
 fn event(event: &Event, index: &Index<'_>) -> Result<()> {
     event.validate().map_err(|_| corrupt())?;
-    if index.schema == 1 && !event.note.is_empty() {
+    if !index.allows_notes && !event.note.is_empty() {
         return Err(corrupt());
     }
     for id in [
@@ -446,15 +461,41 @@ fn check_undos(
 }
 
 pub(crate) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> Result<Snapshot> {
+    verify_segments(
+        LedgerView {
+            accounts: &facts.accounts,
+            categories: &facts.categories,
+            revisions: &facts.revisions,
+            selected: &facts.selected,
+            candidates: &facts.candidates,
+        },
+        &[HistoryView {
+            source_schema: Some(facts.source_schema),
+            sequence: facts.sequence,
+            intents: &facts.intent_history,
+            imports: facts.imports.as_ref(),
+        }],
+        months,
+        cancel,
+    )
+}
+
+pub(super) fn verify_segments(
+    facts: LedgerView<'_>,
+    segments: &[HistoryView<'_>],
+    months: &[String],
+    cancel: &AtomicBool,
+) -> Result<Snapshot> {
+    let current = segments.last().ok_or_else(corrupt)?;
     let mut index = Index {
         accounts: BTreeMap::new(),
         categories: BTreeMap::new(),
         revisions: BTreeMap::new(),
         intents: BTreeMap::new(),
-        sequence: facts.sequence,
-        schema: facts.source_schema,
+        sequence: current.sequence,
+        allows_notes: current.source_schema != Some(1),
     };
-    for reference in &facts.accounts {
+    for reference in facts.accounts {
         cancelled(cancel)?;
         identity(&reference.id)?;
         if reference.name.len() > 256
@@ -470,7 +511,7 @@ pub(crate) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> R
             return Err(corrupt());
         }
     }
-    for reference in &facts.categories {
+    for reference in facts.categories {
         cancelled(cancel)?;
         identity(&reference.id)?;
         if reference.name.len() > 256
@@ -485,7 +526,7 @@ pub(crate) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> R
     }
     let mut event_ids = BTreeSet::new();
     let mut roots = BTreeSet::new();
-    for revision in &facts.revisions {
+    for revision in facts.revisions {
         cancelled(cancel)?;
         identity(&revision.id)?;
         identity(&revision.event_id)?;
@@ -510,25 +551,38 @@ pub(crate) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> R
         return Err(corrupt());
     }
     check_graph(&index, cancel)?;
-    for write in &facts.intent_history {
-        cancelled(cancel)?;
-        if index
-            .intents
-            .insert(write.operation_id.as_str(), write)
-            .is_some()
-        {
+    let mut operations = BTreeSet::new();
+    for segment in segments {
+        if segment.sequence < 0 {
             return Err(corrupt());
         }
-    }
-    for write in &facts.intent_history {
-        cancelled(cancel)?;
-        intent(write, &index, true)?;
+        index.sequence = segment.sequence;
+        index.allows_notes = segment.source_schema != Some(1);
+        index.intents.clear();
+        for write in segment.intents {
+            cancelled(cancel)?;
+            if index
+                .intents
+                .insert(write.operation_id.as_str(), write)
+                .is_some()
+                || (segments.len() > 1 && !operations.insert(write.operation_id.as_str()))
+            {
+                return Err(corrupt());
+            }
+        }
+        for write in segment.intents {
+            cancelled(cancel)?;
+            intent(write, &index, true)?;
+        }
+        if let Some(history) = segment.imports {
+            check_imports(history, &index, cancel)?;
+        }
     }
     let mut selected = BTreeMap::new();
     let mut active = BTreeSet::new();
     let mut deleted = BTreeSet::new();
     let mut selected_events = Vec::new();
-    for selection in &facts.selected {
+    for selection in facts.selected {
         cancelled(cancel)?;
         let revision = index
             .revisions
@@ -553,7 +607,7 @@ pub(crate) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> R
     }
     let mut candidates = BTreeSet::new();
     let mut groups = BTreeMap::<&str, BTreeSet<&str>>::new();
-    for candidate in &facts.candidates {
+    for candidate in facts.candidates {
         cancelled(cancel)?;
         let revision = index
             .revisions
@@ -573,9 +627,6 @@ pub(crate) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> R
         if group.len() < 2 || !group.contains(selected.get(event).ok_or_else(corrupt)?.as_str()) {
             return Err(corrupt());
         }
-    }
-    if let Some(history) = &facts.imports {
-        check_imports(history, &index, cancel)?;
     }
     let accounts = facts
         .accounts

@@ -157,4 +157,8 @@ Unix 父测试实际调度 11 个准备点和 7 个放弃 / 清理点的子进�
 
 ### M0-E 暂存物化宿主实验
 
-`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_materialization --jobs 4` 使用实际认证归档和 schema 1001 暂存生成独立 SQLCipher schema 1002 候选。覆盖原事实及历史保真、CSV 查重、原任务重试、条件选择、新本地写入与精确清理。Unix 父测试在四个物化边界调度实际 SIGKILL，合成钥仅经匿名 stdin，单 worker 等待上限 20 秒，结束回收本批 worker 和 tempfile。也由 `check-core.sh` 执行。原 Store 及快照入口拒绝新布局，设备解锁与再次归档需另验。见[宿主验收](../docs/validation/portability-cases.md#59-暂存物化宿主验收候选)。
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_materialization --jobs 4 -- --skip restored_snapshot_tests` 使用实际认证归档和 schema 1001 暂存生成独立 SQLCipher 候选。覆盖原事实及历史保真、CSV 查重、原任务重试、条件选择、新本地写入与精确清理。Unix 父测试在四个物化边界调度实际 SIGKILL，合成钥仅经匿名 stdin，单 worker 等待上限 20 秒，结束回收本批 worker 和 tempfile。也由 `check-core.sh` 执行。原 Store 及快照入口拒绝测试专用布局。见[宿主验收](../docs/validation/portability-cases.md#59-暂存物化宿主验收候选)。
+
+### M0-E 恢复库只读一致捕获
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restored_snapshot --jobs 4` 使用 Unix 测试专用 SQLCipher schema 1003，从实际已选恢复库取得内存快照。覆盖双连接并发、新旧观察序号、A04 删除后恢复、CSV 历史及待处理身份、预算 / 取消、未知字段和早期 1002 重开。也由 `check-core.sh` 执行。归档封装和独立回环需另验。见[宿主验收](../docs/validation/portability-cases.md#510-恢复后再次归档验收候选)。
