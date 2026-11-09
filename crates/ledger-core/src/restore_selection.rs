@@ -1,6 +1,9 @@
 //! E18 / E19 宿主候选。仅供合成账库实验，不接入应用 runtime。
+use super::{Ticket, files as restore_files, materialization};
+use crate::archive_container::CANDIDATE_LIMITS;
 use crate::bootstrap_files::{self as files, FaultStage};
 use crate::logical_snapshot::{Limits, cancelled};
+use crate::store::snapshot_store::materialized;
 use crate::store::{DbKey, Store};
 use crate::{CoreError, Result, random_id};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -11,6 +14,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use zeroize::Zeroizing;
 
+#[path = "restore_materialization_tests.rs"]
+mod restore_materialization_tests;
 #[path = "restore_selection_tests.rs"]
 mod tests;
 
@@ -45,6 +50,23 @@ struct Target {
     slot: Slot,
     vault: String,
     device: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    materialization: Option<Ticket>,
+}
+
+impl Target {
+    fn validate(&self) -> Result<()> {
+        for id in [&self.vault, &self.device] {
+            files::identity(id).map_err(|_| mismatch())?;
+        }
+        if let Some(ticket) = &self.materialization {
+            ticket.validate()?;
+            if self.slot != Slot::Candidate || ticket.target_id() != self.vault {
+                return Err(mismatch());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -68,10 +90,8 @@ impl Selection {
         if self.version != 1 {
             return Err(mismatch());
         }
-        for id in [&self.id, &self.target.vault, &self.target.device] {
-            files::identity(id).map_err(|_| mismatch())?;
-        }
-        Ok(())
+        files::identity(&self.id).map_err(|_| mismatch())?;
+        self.target.validate()
     }
 }
 
@@ -211,7 +231,22 @@ impl Host<'_> {
     }
 
     fn database(&self, target: &Target) -> PathBuf {
-        self.root.join(target.slot.database())
+        match &target.materialization {
+            Some(ticket) => materialization::directory(self.root, ticket).join("stage.db"),
+            None => self.root.join(target.slot.database()),
+        }
+    }
+
+    fn lock_target(&self, target: &Target) -> Result<Option<restore_files::Files>> {
+        let Some(ticket) = &target.materialization else {
+            return Ok(None);
+        };
+        let files = restore_files::Files::acquire(self.root, ticket, false)?;
+        files.require_preparing()?;
+        if !files.database_exists()? {
+            return Err(materialized::mismatch());
+        }
+        Ok(Some(files))
     }
 
     fn key(&self, target: &Target) -> Result<&DbKey> {
@@ -229,12 +264,24 @@ impl Host<'_> {
     fn read_store(&self, selection: &Selection) -> Result<Store> {
         let path = self.database(&selection.target);
         protected(&path, false)?;
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(mismatch)?;
         for suffix in ["wal", "shm"] {
-            let name = format!("{}-{suffix}", selection.target.slot.database());
-            let sidecar = self.root.join(name);
+            let sidecar = path.with_file_name(format!("{name}-{suffix}"));
             if files::exists(&sidecar)? {
                 protected(&sidecar, false)?;
             }
+        }
+        if let Some(ticket) = &selection.target.materialization {
+            return materialized::open(
+                &path,
+                self.key(&selection.target)?,
+                ticket,
+                &selection.target.device,
+                true,
+            );
         }
         let store = Store::open_readonly(&path, self.key(&selection.target)?)?;
         store.verify_bootstrap(&selection.target.vault, &selection.target.device)?;
@@ -243,6 +290,10 @@ impl Host<'_> {
 
     fn ready_checkpoint(&self, selection: &Selection, cancel: &AtomicBool) -> Result<[u8; 32]> {
         let store = self.read_store(selection)?;
+        if selection.target.materialization.is_some() {
+            let contents = materialized::inspect_ready(&store, CANDIDATE_LIMITS, cancel)?;
+            return materialized::digest(&contents, CANDIDATE_LIMITS, cancel);
+        }
         let checkpoint = checkpoint(&store, cancel)?;
         // 仅复用 bootstrap 合成库内的加密核对材料，控制文件不保存账务摘要。
         let expected = crate::crypto::hex(&checkpoint);
@@ -260,6 +311,7 @@ impl Host<'_> {
             new: Selection::new(target)?,
         };
         pending.validate()?;
+        let _target = self.lock_target(&pending.new.target)?;
         let old_checkpoint = checkpoint(&self.read_store(&pending.old)?, cancel)?;
         let new_checkpoint = self.ready_checkpoint(&pending.new, cancel)?;
         Ok(Confirmed {
@@ -282,9 +334,17 @@ impl Host<'_> {
                 "旧写入不属于当前活动选择",
             ));
         }
+        let _target = self.lock_target(&active.target)?;
         self.read_store(&active)?;
-        let mut store = Store::open(&self.database(&active.target), self.key(&active.target)?)?;
-        store.verify_bootstrap(&active.target.vault, &active.target.device)?;
+        let path = self.database(&active.target);
+        let key = self.key(&active.target)?;
+        let mut store = if let Some(ticket) = &active.target.materialization {
+            materialized::open(&path, key, ticket, &active.target.device, false)?
+        } else {
+            let store = Store::open(&path, key)?;
+            store.verify_bootstrap(&active.target.vault, &active.target.device)?;
+            store
+        };
         let result = operation(&mut store)?;
         Ok((active, result))
     }
@@ -330,19 +390,24 @@ impl Host<'_> {
                 "旧活动选择或账库已有变化，须重新确认",
             ));
         }
+        let target = self.lock_target(&pending.new.target)?;
         if self.ready_checkpoint(&pending.new, cancel)? != new_checkpoint {
             return Err(mismatch());
         }
-        let database = self.database(&pending.new.target);
-        File::open(&database)
-            .and_then(|db| db.sync_all())
-            .map_err(io_error)?;
-        let wal = self.root.join("candidate.db-wal");
-        if files::exists(&wal)? {
-            protected(&wal, false)?;
-            File::open(wal)
-                .and_then(|wal| wal.sync_all())
+        if let Some(target) = &target {
+            materialization::sync_database(&target.path)?;
+        } else {
+            let database = self.database(&pending.new.target);
+            File::open(database)
+                .and_then(|db| db.sync_all())
                 .map_err(io_error)?;
+            let wal = self.root.join("candidate.db-wal");
+            if files::exists(&wal)? {
+                protected(&wal, false)?;
+                File::open(wal)
+                    .and_then(|wal| wal.sync_all())
+                    .map_err(io_error)?;
+            }
         }
         files::sync(self.root)?;
         observe(Point::BeforePending)?;
@@ -369,11 +434,44 @@ impl Host<'_> {
     fn recover(&self) -> Result<Selection> {
         let _gate = self.lock()?;
         if let Some(pending) = self.pending()? {
+            let active = self.active()?;
+            if active != pending.old && active != pending.new {
+                return Err(mismatch());
+            }
+            let _target = self.lock_target(&active.target)?;
             return self.settle_pending(&pending, &mut |_| Ok(()));
         }
         let active = self.settled()?;
+        let _target = self.lock_target(&active.target)?;
         self.read_store(&active)?;
         Ok(active)
+    }
+
+    fn discard_materialized(&self, target: &Target) -> Result<()> {
+        target.validate()?;
+        let ticket = target.materialization.as_ref().ok_or_else(mismatch)?;
+        let _gate = self.lock()?;
+        let active = self.settled()?;
+        if self.database(&active.target) == self.database(target) {
+            return Err(CoreError::new("selection_in_use", "保留已选中的物化候选库"));
+        }
+        {
+            let _active_target = self.lock_target(&active.target)?;
+            self.read_store(&active)?;
+        }
+        if restore_files::already_absent(self.root, ticket)? {
+            return Ok(());
+        }
+        let mut target_files = restore_files::Files::acquire(self.root, ticket, false)?;
+        if !target_files.discarding() {
+            if !target_files.database_exists()? {
+                return Err(materialized::mismatch());
+            }
+            let path = target_files.path.join("stage.db");
+            materialized::open(&path, self.key(target)?, ticket, &target.device, true)?;
+        }
+        target_files.permit_discard()?;
+        target_files.discard(&mut |_| Ok(()))
     }
 
     fn settle_pending(

@@ -74,6 +74,16 @@ pub struct Store {
     connection: Connection,
 }
 
+const LEDGER_SCHEMA: &str = "
+    CREATE TABLE accounts (id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE categories (id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE revisions (id TEXT PRIMARY KEY, event_id TEXT NOT NULL, predecessor TEXT, payload TEXT);
+    CREATE TABLE selected (event_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL REFERENCES revisions(id));
+    CREATE TABLE outbox (operation_id TEXT PRIMARY KEY, intent TEXT NOT NULL, revision_id TEXT NOT NULL REFERENCES revisions(id));
+    CREATE TABLE candidates (revision_id TEXT PRIMARY KEY REFERENCES revisions(id), event_id TEXT NOT NULL);
+    CREATE TABLE metadata (id INTEGER PRIMARY KEY CHECK(id = 1), sequence INTEGER NOT NULL CHECK(typeof(sequence)='integer' AND sequence >= 0));
+    INSERT INTO metadata VALUES (1, 0);";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Write {
@@ -133,20 +143,15 @@ impl Store {
                 .map_err(|_| CoreError::new("permissions_failed", "账库文件权限设置失败"))?;
         }
         drop(file);
-        let store = Self::connect(path, key, false)?;
-        store.connection.execute_batch(
-            "BEGIN IMMEDIATE;
-            CREATE TABLE accounts (id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
-            CREATE TABLE categories (id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
-            CREATE TABLE revisions (id TEXT PRIMARY KEY, event_id TEXT NOT NULL, predecessor TEXT, payload TEXT);
-            CREATE TABLE selected (event_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL REFERENCES revisions(id));
-            CREATE TABLE outbox (operation_id TEXT PRIMARY KEY, intent TEXT NOT NULL, revision_id TEXT NOT NULL REFERENCES revisions(id));
-            CREATE TABLE candidates (revision_id TEXT PRIMARY KEY REFERENCES revisions(id), event_id TEXT NOT NULL);
-            CREATE TABLE metadata (id INTEGER PRIMARY KEY CHECK(id = 1), sequence INTEGER NOT NULL CHECK(typeof(sequence)='integer' AND sequence >= 0));
-            INSERT INTO metadata VALUES (1, 0);
-            PRAGMA user_version=1;
-            COMMIT;"
-        ).map_err(db_error)?;
+        let mut store = Self::connect(path, key, false)?;
+        let tx = store
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        tx.execute_batch(LEDGER_SCHEMA).map_err(db_error)?;
+        tx.pragma_update(None, "user_version", 1)
+            .map_err(db_error)?;
+        tx.commit().map_err(db_error)?;
         Ok(store)
     }
 
@@ -209,13 +214,18 @@ impl Store {
 
     pub(crate) fn bind_bootstrap(&self, vault: &str, device: &str) -> Result<()> {
         let tx = self.connection.unchecked_transaction().map_err(db_error)?;
+        Self::insert_bootstrap(&tx, vault, device)?;
+        tx.commit().map_err(db_error)
+    }
+
+    fn insert_bootstrap(tx: &Transaction<'_>, vault: &str, device: &str) -> Result<()> {
         tx.execute_batch("CREATE TABLE bootstrap_identity (id INTEGER PRIMARY KEY CHECK(id=1), vault TEXT NOT NULL, device TEXT NOT NULL); CREATE TABLE bootstrap_fixture (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL);").map_err(db_error)?;
         tx.execute(
             "INSERT INTO bootstrap_identity VALUES (1, ?1, ?2)",
             params![vault, device],
         )
         .map_err(db_error)?;
-        tx.commit().map_err(db_error)
+        Ok(())
     }
 
     pub(crate) fn verify_bootstrap(&self, vault: &str, device: &str) -> Result<()> {
@@ -488,6 +498,8 @@ impl Store {
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_error)?;
+        #[cfg(all(test, unix))]
+        snapshot_store::materialized::check_new_operation(&tx, &write.operation_id)?;
         let effect = apply_write(&tx, write, &mut observe)?;
         if effect == WriteEffect::Replayed {
             return Ok(effect);
@@ -792,7 +804,10 @@ fn validate_note_schema(tx: &Transaction<'_>, event: &Event) -> Result<()> {
     let version: i64 = tx
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(db_error)?;
-    if !event.note.is_empty() && !matches!(version, 2 | 3) {
+    let supports_notes = matches!(version, 2 | 3);
+    #[cfg(all(test, unix))]
+    let supports_notes = supports_notes || version == snapshot_store::materialized::VERSION;
+    if !event.note.is_empty() && !supports_notes {
         return Err(CoreError::new(
             "unsupported_schema",
             "备注写入需要 v2 或 v3 导入实验库，原库未升级",

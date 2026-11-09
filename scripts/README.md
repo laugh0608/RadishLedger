@@ -145,7 +145,7 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 
 ### M0-E 受保护暂存恢复
 
-`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_stage --jobs 4` 覆盖独立新 DB Key 的 SQLCipher 暂存、A11 / A06 / A04 与 v2 / v3 历史保真、重开 / 取消 / SQL 拒绝、归属 / 文件 / 预算与显式放弃。也由 `check-core.sh` 执行，无新依赖或迁移用户库。详细契约和未覆盖范围见[暂存宿主候选](../docs/validation/portability-cases.md#57-e-restore-受保护暂存宿主候选)。
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_stage::tests --jobs 4` 覆盖独立新 DB Key 的 SQLCipher 暂存、A11 / A06 / A04 与 v2 / v3 历史保真、重开 / 取消 / SQL 拒绝、归属 / 文件 / 预算与显式放弃。也由 `check-core.sh` 执行，无新依赖或迁移用户库。详细契约和未覆盖范围见[暂存宿主候选](../docs/validation/portability-cases.md#57-e-restore-受保护暂存宿主候选)。
 
 Unix 父测试实际调度 11 个准备点和 7 个放弃 / 清理点的子进程 SIGKILL。只向自己创建的 worker 匿名 stdin 传随机合成暂存钥。单 worker 最多等 20 秒，由父测试 Drop 回收；tempfile 回收本批合成文件。ignored worker 是内部入口，计数以父测试为准。完整批次包含多次 64 MiB KDF 并共用测试串行锁，整批耗时与单次 KDF 或真机性能分别衡量。
 
@@ -153,4 +153,8 @@ Unix 父测试实际调度 11 个准备点和 7 个放弃 / 清理点的子进�
 
 ### M0-E 活动条件发布宿主实验
 
-`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_selection --jobs 4` 使用两套真实 SQLCipher 合成库、独占 0700 目录、固定文件锁和原子替换。覆盖旧库变化与晚写、发布失败、取消、未定恢复、候选不可解锁及选择损坏。父测试只向自己启动的 worker 经 stdin 传合成钥，等待窗口 20 秒，结束回收 worker 和本批 tempfile。也由 `check-core.sh` 在 Unix 测试构建中执行。实际证据及生产前置见 [E18 / E19 宿主验收](../docs/validation/portability-cases.md#58-e18-与-e19-活动条件发布宿主验收候选)。
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_stage::restore_selection::tests --jobs 4` 使用两套真实 SQLCipher 合成库、独占 0700 目录、固定文件锁和原子替换。覆盖旧库变化与晚写、发布失败、取消、未定恢复、候选不可解锁及选择损坏。父测试只向自己启动的 worker 经 stdin 传合成钥，等待窗口 20 秒，结束回收 worker 和本批 tempfile。也由 `check-core.sh` 在 Unix 测试构建中执行。实际证据及生产前置见 [E18 / E19 宿主验收](../docs/validation/portability-cases.md#58-e18-与-e19-活动条件发布宿主验收候选)。
+
+### M0-E 暂存物化宿主实验
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_materialization --jobs 4` 使用实际认证归档和 schema 1001 暂存生成独立 SQLCipher schema 1002 候选。覆盖原事实及历史保真、CSV 查重、原任务重试、条件选择、新本地写入与精确清理。Unix 父测试在四个物化边界调度实际 SIGKILL，合成钥仅经匿名 stdin，单 worker 等待上限 20 秒，结束回收本批 worker 和 tempfile。也由 `check-core.sh` 执行。原 Store 及快照入口拒绝新布局，设备解锁与再次归档需另验。见[宿主验收](../docs/validation/portability-cases.md#59-暂存物化宿主验收候选)。

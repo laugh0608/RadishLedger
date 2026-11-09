@@ -85,14 +85,14 @@ fn expected(case_id: &str, step_id: &str) -> Value {
         .clone()
 }
 
-fn assert_expected(
-    snapshot: &LogicalSnapshot,
+pub(crate) fn assert_expected(
+    contents: &Contents,
     aliases: &BTreeMap<String, String>,
     case: &str,
     step: &str,
 ) {
     let actual = normalized(
-        serde_json::to_value(&snapshot.contents().verification).unwrap(),
+        serde_json::to_value(&contents.verification).unwrap(),
         aliases,
     );
     let expected = normalized(expected(case, step), &BTreeMap::new());
@@ -112,7 +112,7 @@ fn a11_preserves_every_revision_candidate_tombstone_and_original_intent() {
     let (directory, key, store, aliases) = fixture("A11", "conflict");
     let before = store.content_digest().unwrap();
     let snapshot = capture(&store);
-    assert_expected(&snapshot, &aliases, "A11", "conflict");
+    assert_expected(snapshot.contents(), &aliases, "A11", "conflict");
     let facts = &snapshot.contents().facts;
     assert_eq!(
         (
@@ -227,7 +227,7 @@ fn e09_a04_concurrent_restore_never_mixes_old_facts_with_new_projection() {
             })
             .unwrap();
         assert!(restored);
-        assert_expected(&old, &aliases, "A04", "delete");
+        assert_expected(old.contents(), &aliases, "A04", "delete");
         assert_eq!(old.contents().facts.sequence, original_sequence);
         assert_eq!(
             (
@@ -239,7 +239,7 @@ fn e09_a04_concurrent_restore_never_mixes_old_facts_with_new_projection() {
         let mut new_aliases = aliases.clone();
         new_aliases.insert(id(1001), "transfer-v4".into());
         let current = capture(&writer);
-        assert_expected(&current, &new_aliases, "A04", "restore");
+        assert_expected(current.contents(), &new_aliases, "A04", "restore");
         assert_eq!(
             (
                 current.contents().facts.revisions.len(),
@@ -254,7 +254,7 @@ fn e09_a04_concurrent_restore_never_mixes_old_facts_with_new_projection() {
 fn a06_archived_names_and_references_remain_valid_historical_content() {
     let (_dir, _key, store, aliases) = fixture("A06", "renamed");
     let snapshot = capture(&store);
-    assert_expected(&snapshot, &aliases, "A06", "renamed");
+    assert_expected(snapshot.contents(), &aliases, "A06", "renamed");
     assert_eq!(snapshot.contents().facts.accounts[0].name, "合成现金账户");
     assert_eq!(snapshot.contents().facts.categories[0].name, "合成餐饮分类");
     assert!(snapshot.contents().facts.accounts[0].archived);
@@ -807,6 +807,6 @@ fn all_common_accounting_cases_are_readable_with_their_original_expected_values(
         let snapshot = store
             .logical_snapshot(limits(), &requested, &no_cancel())
             .unwrap();
-        assert_expected(&snapshot, &aliases, case_id, step);
+        assert_expected(snapshot.contents(), &aliases, case_id, step);
     }
 }

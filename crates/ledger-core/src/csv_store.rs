@@ -54,12 +54,51 @@ pub(super) fn check_target(connection: &Connection, expected: &str) -> Result<()
     Ok(())
 }
 
+pub(super) const SOURCE_SCHEMA: &str = "
+    CREATE TABLE csv_sources (namespace TEXT NOT NULL, source_id TEXT NOT NULL, payload TEXT NOT NULL,
+        event_id TEXT NOT NULL, revision_id TEXT NOT NULL REFERENCES revisions(id), PRIMARY KEY(namespace,source_id));";
+
 fn source(
     connection: &Connection,
     namespace: &str,
     id: &str,
 ) -> Result<Option<(String, String, String)>> {
     connection.query_row("SELECT payload,event_id,revision_id FROM csv_sources WHERE namespace=?1 AND source_id=?2", params![namespace, id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(db_error)
+}
+
+pub(super) fn inspect_preview_sources(
+    connection: &Connection,
+    preview: &mut Preview,
+    namespace: &str,
+) -> Result<()> {
+    let sequence: i64 = connection
+        .query_row("SELECT sequence FROM metadata WHERE id=1", [], |r| r.get(0))
+        .map_err(db_error)?;
+    if sequence != preview.observed_sequence {
+        return Err(CoreError::new(
+            "stale_observation",
+            "预览期间账库已变化，请重新预览",
+        ));
+    }
+    for row in &mut preview.rows {
+        if let (Some(source_id), Some(candidate)) = (&row.source_id, &row.candidate)
+            && let Some((payload, event_id, revision_id)) =
+                source(connection, namespace, source_id)?
+        {
+            if payload == encode(&candidate.fact())? {
+                row.source_match = SourceMatch::PreviouslyImported {
+                    event_id,
+                    revision_id,
+                };
+            } else {
+                row.errors.push(CoreError::new(
+                    "csv_source_conflict",
+                    "来源身份已有不同内容，不能覆盖",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_source(
@@ -158,11 +197,10 @@ impl Store {
             CREATE TABLE csv_rows (task_id TEXT NOT NULL REFERENCES csv_tasks(id), record INTEGER NOT NULL,
                 row_id TEXT NOT NULL UNIQUE, source_id TEXT, intent TEXT, outcome TEXT NOT NULL CHECK(outcome IN ('pending','imported','skipped')),
                 PRIMARY KEY(task_id,record));
-            CREATE TABLE csv_sources (namespace TEXT NOT NULL, source_id TEXT NOT NULL, payload TEXT NOT NULL,
-                event_id TEXT NOT NULL, revision_id TEXT NOT NULL REFERENCES revisions(id), PRIMARY KEY(namespace,source_id));
             CREATE TABLE csv_batches (task_id TEXT NOT NULL REFERENCES csv_tasks(id), first_record INTEGER NOT NULL,
                 last_record INTEGER NOT NULL, imported INTEGER NOT NULL, skipped INTEGER NOT NULL, PRIMARY KEY(task_id,first_record));
             PRAGMA user_version=2;").map_err(db_error)?;
+        tx.execute_batch(SOURCE_SCHEMA).map_err(db_error)?;
         tx.execute(
             "INSERT INTO csv_context VALUES(1,?1)",
             [crate::random_id()?],
@@ -179,32 +217,7 @@ impl Store {
     ) -> Result<(String, Vec<String>)> {
         let tx = self.connection.unchecked_transaction().map_err(db_error)?;
         let id = target(&tx)?;
-        let sequence: i64 = tx
-            .query_row("SELECT sequence FROM metadata WHERE id=1", [], |r| r.get(0))
-            .map_err(db_error)?;
-        if sequence != preview.observed_sequence {
-            return Err(CoreError::new(
-                "stale_observation",
-                "预览期间账库已变化，请重新预览",
-            ));
-        }
-        for row in &mut preview.rows {
-            if let (Some(source_id), Some(candidate)) = (&row.source_id, &row.candidate)
-                && let Some((payload, event_id, revision_id)) = source(&tx, namespace, source_id)?
-            {
-                if payload == encode(&candidate.fact())? {
-                    row.source_match = SourceMatch::PreviouslyImported {
-                        event_id,
-                        revision_id,
-                    };
-                } else {
-                    row.errors.push(CoreError::new(
-                        "csv_source_conflict",
-                        "来源身份已有不同内容，不能覆盖",
-                    ));
-                }
-            }
-        }
+        inspect_preview_sources(&tx, preview, namespace)?;
         // 同文件即报告已有任务，映射改变也不隐藏历史导入范围。
         let history = tx
             .prepare("SELECT id FROM csv_tasks WHERE input_fingerprint=?1 ORDER BY id")

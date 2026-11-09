@@ -44,6 +44,7 @@ impl Fixture {
             slot,
             vault: random_id().unwrap(),
             device: random_id().unwrap(),
+            materialization: None,
         };
         let old = Selection::new(target(Slot::Original)).unwrap();
         let candidate = target(Slot::Candidate);
@@ -543,7 +544,7 @@ fn spawn(fixture: &Fixture, action: WorkerAction) -> Worker {
         Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "restore_selection::tests::selection_worker",
+                "restore_stage::restore_selection::tests::selection_worker",
                 "--ignored",
                 "--nocapture",
             ])

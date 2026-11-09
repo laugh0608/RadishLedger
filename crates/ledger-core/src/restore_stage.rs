@@ -14,12 +14,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[path = "restore_files.rs"]
 mod files;
+#[cfg(all(test, unix))]
+#[path = "restore_materialization.rs"]
+mod materialization;
+#[cfg(all(test, unix))]
+#[path = "restore_selection.rs"]
+mod restore_selection;
 #[cfg(test)]
 #[path = "restore_tests.rs"]
 mod tests;
 
 /// 非秘密恢复定位材料；路径不来自归档，密钥不进入本结构或磁盘进度。
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(all(test, unix), derive(Debug))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Ticket {
     task_id: String,
@@ -244,6 +251,18 @@ impl Task {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<VerifiedStage> {
+        self.inspect_locked(parent, input, password, limits, cancel, Ok)
+    }
+
+    fn inspect_locked<T>(
+        &self,
+        parent: &Path,
+        input: &[u8],
+        password: &[u8],
+        limits: Limits,
+        cancel: &AtomicBool,
+        checked: impl FnOnce(VerifiedStage) -> Result<T>,
+    ) -> Result<T> {
         let opened = self.authenticate(input, password, limits, cancel)?;
         let files = files::Files::acquire(parent, &self.ticket, false)?;
         files.require_preparing()?;
@@ -251,7 +270,7 @@ impl Task {
         let db = StageDb::open_readonly(&files.path.join("stage.db"), &self.key, &self.ticket)?;
         let contents = db.verify(opened.contents(), limits, cancel)?;
         check_cancel(cancel)?;
-        Ok(VerifiedStage {
+        checked(VerifiedStage {
             ticket: self.ticket.clone(),
             contents,
         })

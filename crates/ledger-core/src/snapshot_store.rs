@@ -7,9 +7,12 @@ use rusqlite::types::ValueRef;
 use serde::de::DeserializeOwned;
 use std::sync::atomic::AtomicBool;
 
+#[cfg(all(test, unix))]
+#[path = "materialized_store.rs"]
+pub(crate) mod materialized;
 #[cfg(test)]
 #[path = "snapshot_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 #[path = "snapshot_validate.rs"]
 pub(crate) mod validate;
 
