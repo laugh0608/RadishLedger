@@ -150,3 +150,7 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 Unix 父测试实际调度 11 个准备点和 7 个放弃 / 清理点的子进程 SIGKILL。只向自己创建的 worker 匿名 stdin 传随机合成暂存钥。单 worker 最多等 20 秒，由父测试 Drop 回收；tempfile 回收本批合成文件。ignored worker 是内部入口，计数以父测试为准。完整批次包含多次 64 MiB KDF 并共用测试串行锁，整批耗时与单次 KDF 或真机性能分别衡量。
 
 暂存 schema 1001 是内部未发布候选，原 schema 1–3 沿用原打开方式。Task / Ticket 保留在内存和合成定位材料，新钥尚无平台保存。覆盖首次未建库继续、已建库后缺库 / 零长度替换拒绝、v1 owner 兼容、旧 discard 撤除后继续清理及清理无归属时停止。结果限于宿主暂存，活动切换、旧队列运行、空白设备恢复和生产备份保存需另验。
+
+### M0-E 活动条件发布宿主实验
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_selection --jobs 4` 使用两套真实 SQLCipher 合成库、独占 0700 目录、固定文件锁和原子替换。覆盖旧库变化与晚写、发布失败、取消、未定恢复、候选不可解锁及选择损坏。父测试只向自己启动的 worker 经 stdin 传合成钥，等待窗口 20 秒，结束回收 worker 和本批 tempfile。也由 `check-core.sh` 在 Unix 测试构建中执行。实际证据及生产前置见 [E18 / E19 宿主验收](../docs/validation/portability-cases.md#58-e18-与-e19-活动条件发布宿主验收候选)。

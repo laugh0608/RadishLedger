@@ -10,6 +10,8 @@ pub mod csv_undo;
 pub mod domain;
 pub mod logical_snapshot;
 pub mod probe;
+#[cfg(all(test, unix))]
+mod restore_selection;
 pub mod restore_stage;
 pub mod store;
 pub mod validation;

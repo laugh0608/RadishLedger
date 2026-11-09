@@ -195,7 +195,7 @@ pub(crate) fn publish(path: &Path, bytes: &[u8], replace: bool) -> Result<()> {
     publish_with_fault(path, bytes, replace, None)
 }
 
-fn publish_with_fault(
+pub(crate) fn publish_with_fault(
     path: &Path,
     bytes: &[u8],
     replace: bool,
