@@ -20,6 +20,9 @@ mod materialization;
 #[cfg(all(test, unix))]
 #[path = "restore_selection.rs"]
 mod restore_selection;
+#[cfg(all(test, unix))]
+#[path = "restore_roundtrip.rs"]
+mod roundtrip;
 #[cfg(test)]
 #[path = "restore_tests.rs"]
 mod tests;
@@ -161,6 +164,16 @@ impl Task {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<OpenedArchive> {
+        self.check_input(input, cancel)?;
+        let opened = archive_container::open(input, password, limits, cancel)?;
+        if *opened.archive_id() != self.ticket.archive_id {
+            return Err(mismatch());
+        }
+        restore_store::check_payload(opened.contents(), limits, cancel)?;
+        Ok(opened)
+    }
+
+    fn check_input(&self, input: &[u8], cancel: &AtomicBool) -> Result<()> {
         self.ticket.validate()?;
         check_cancel(cancel)?;
         if input.len() > archive_container::MAX_PAYLOAD + 328
@@ -168,12 +181,14 @@ impl Task {
         {
             return Err(mismatch());
         }
-        let opened = archive_container::open(input, password, limits, cancel)?;
-        if *opened.archive_id() != self.ticket.archive_id {
-            return Err(mismatch());
-        }
-        restore_store::check_payload(opened.contents(), limits, cancel)?;
-        Ok(opened)
+        Ok(())
+    }
+
+    fn claim(&self, parent: &Path) -> Result<files::Files> {
+        let mut allow_create = self.allow_create.lock().map_err(|_| mismatch())?;
+        let files = files::Files::acquire(parent, &self.ticket, *allow_create)?;
+        *allow_create = false;
+        Ok(files)
     }
 
     pub fn prepare(
@@ -198,12 +213,7 @@ impl Task {
     ) -> Result<VerifiedStage> {
         let opened = self.authenticate(input, password, limits, cancel)?;
         // 全部认证 / 业务校验成功后才创建或修改本任务的暂存目录。
-        let mut files = {
-            let mut allow_create = self.allow_create.lock().map_err(|_| mismatch())?;
-            let files = files::Files::acquire(parent, &self.ticket, *allow_create)?;
-            *allow_create = false;
-            files
-        };
+        let mut files = self.claim(parent)?;
         files.require_preparing()?;
         observe(Point::Owned)?;
         check_cancel(cancel)?;
@@ -284,7 +294,18 @@ impl Task {
     fn abandon_observed(
         &self,
         parent: &Path,
+        observe: impl FnMut(CleanupPoint) -> Result<()>,
+    ) -> Result<()> {
+        self.abandon_checked(parent, observe, |path, can_initialize| {
+            StageDb::check_abandon(path, &self.key, &self.ticket, can_initialize)
+        })
+    }
+
+    fn abandon_checked(
+        &self,
+        parent: &Path,
         mut observe: impl FnMut(CleanupPoint) -> Result<()>,
+        check: impl FnOnce(&Path, bool) -> Result<()>,
     ) -> Result<()> {
         *self.allow_create.lock().map_err(|_| mismatch())? = false;
         if files::already_absent(parent, &self.ticket)? {
@@ -292,12 +313,7 @@ impl Task {
         }
         let mut files = files::Files::acquire(parent, &self.ticket, false)?;
         if !files.discarding() && files.database_exists()? {
-            StageDb::check_abandon(
-                &files.path.join("stage.db"),
-                &self.key,
-                &self.ticket,
-                files.can_initialize(),
-            )?;
+            check(&files.path.join("stage.db"), files.can_initialize())?;
         }
         files.permit_discard()?;
         observe(CleanupPoint::Permitted)?;

@@ -7,7 +7,10 @@ fn select(host: &Host<'_>, candidate: &Candidate) -> Selection {
         .unwrap()
 }
 
-fn snapshot(host: &Host<'_>, selected: &Selection) -> Result<materialized::RestoredSnapshot> {
+fn snapshot(
+    host: &Host<'_>,
+    selected: &Selection,
+) -> Result<crate::archive_container::restored::RestoredContents> {
     host.capture_restored(
         selected,
         &["2026-01".into()],
@@ -83,32 +86,35 @@ fn restored_snapshot_keeps_independent_observations_under_a_concurrent_sql_commi
         )
         .unwrap();
     drop(other);
-    assert_eq!(before.inherited.source_schema, 1);
-    assert_eq!(before.inherited.committed.sequence, 9);
+    assert_eq!(before.facts.history[0].view().source_schema, Some(1));
+    assert_eq!(before.facts.history[0].view().sequence, 9);
     assert_eq!(
-        before.inherited.committed.intents,
+        before.facts.history[0].view().intents,
         fixture.snapshot.contents().facts.intent_history
     );
     assert!(
-        before
-            .inherited
-            .committed
+        before.facts.history[0]
+            .view()
             .intents
             .iter()
             .any(|write| write.expected_sequence == Some(8))
     );
-    assert_eq!(before.current.sequence, 1);
-    assert_eq!(before.current.intents, std::slice::from_ref(&first));
+    assert_eq!(before.facts.history.last().unwrap().view().sequence, 1);
+    assert_eq!(
+        before.facts.history.last().unwrap().view().intents,
+        std::slice::from_ref(&first)
+    );
     assert_eq!(
         (
-            before.ledger.revisions.len(),
-            before.ledger.selected.len(),
-            before.ledger.candidates.len()
+            before.facts.ledger.revisions.len(),
+            before.facts.ledger.selected.len(),
+            before.facts.ledger.candidates.len()
         ),
         (10, 6, 2)
     );
     assert!(
         !before
+            .facts
             .ledger
             .accounts
             .iter()
@@ -123,12 +129,16 @@ fn restored_snapshot_keeps_independent_observations_under_a_concurrent_sql_commi
     );
 
     let after = snapshot(&host, &selected).unwrap();
-    assert_eq!(after.current.sequence, 2);
-    assert_eq!(after.current.intents, [first, second]);
+    assert_eq!(after.facts.history.last().unwrap().view().sequence, 2);
+    assert_eq!(
+        after.facts.history.last().unwrap().view().intents,
+        [first, second]
+    );
     assert_eq!(after.verification.projection.balances_minor[&cash], "8053");
     assert_eq!(after.verification.projection.balances_minor[&id(725)], "0");
     assert!(
         after
+            .facts
             .ledger
             .accounts
             .iter()
@@ -168,13 +178,17 @@ fn restored_snapshot_keeps_the_a04_delete_revision_after_a_local_restore() {
     .unwrap();
     let restored = snapshot(&host, &selected).unwrap();
     let tombstone = restored
+        .facts
         .ledger
         .revisions
         .iter()
         .find(|r| r.id == delete_revision)
         .unwrap();
     assert!(tombstone.event.is_none());
-    assert_eq!(restored.current.intents, std::slice::from_ref(&restore));
+    assert_eq!(
+        restored.facts.history.last().unwrap().view().intents,
+        std::slice::from_ref(&restore)
+    );
     assert_eq!(
         restored.verification.selected_revision_ids[&event_id],
         restore.revision_id
@@ -238,17 +252,19 @@ fn restored_snapshot_checks_csv_history_and_reserved_ids_after_new_writes() {
         })
         .unwrap();
         let captured = snapshot(&host, &selected).unwrap();
-        assert_eq!(captured.current.intents, [write]);
-        assert_eq!(captured.current.sequence, 1);
         assert_eq!(
-            serde_json::to_value(captured.inherited.imports.as_ref().unwrap()).unwrap(),
+            captured.facts.history.last().unwrap().view().intents,
+            [write]
+        );
+        assert_eq!(captured.facts.history.last().unwrap().view().sequence, 1);
+        assert_eq!(
+            serde_json::to_value(captured.facts.history[0].view().imports.unwrap()).unwrap(),
             serde_json::to_value(imports).unwrap(),
         );
         assert_eq!(
-            captured
-                .inherited
+            captured.facts.history[0]
+                .view()
                 .imports
-                .as_ref()
                 .unwrap()
                 .undo_tasks
                 .len(),
@@ -312,8 +328,8 @@ fn restored_snapshot_checks_limits_cancellation_and_history_without_reusing_the_
     })
     .unwrap();
     let before = snapshot(&host, &selected).unwrap();
-    assert_eq!(before.current.sequence, 0);
-    assert_eq!(before.ledger.accounts.len(), 2);
+    assert_eq!(before.facts.history.last().unwrap().view().sequence, 0);
+    assert_eq!(before.facts.ledger.accounts.len(), 2);
     for limits in [
         crate::archive_container::Limits {
             records: 1,
@@ -341,7 +357,15 @@ fn restored_snapshot_checks_limits_cancellation_and_history_without_reusing_the_
         ),
         "cancelled",
     );
-    assert_eq!(snapshot(&host, &selected).unwrap().ledger.accounts.len(), 2);
+    assert_eq!(
+        snapshot(&host, &selected)
+            .unwrap()
+            .facts
+            .ledger
+            .accounts
+            .len(),
+        2
+    );
     let path = host.database(&selected.target);
     restore_store::test_sql(
         &path,

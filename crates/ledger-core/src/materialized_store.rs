@@ -1,15 +1,20 @@
 //! Unix 测试专用布局。活动事实共用 Store，原意图与任务只作历史。
 use super::*;
-use crate::archive_container::{Limits as ArchiveLimits, json::scan};
+use crate::archive_container::{Limits as ArchiveLimits, json::scan, restored::History as Segment};
 use crate::restore_stage::Ticket;
 use sha2::{Digest, Sha256};
 
 #[path = "restored_snapshot.rs"]
 mod restored_snapshot;
-pub(crate) use restored_snapshot::{CapturePoint, RestoredSnapshot, capture};
+pub(crate) use restored_snapshot::{CapturePoint, capture};
+#[path = "materialized_roundtrip.rs"]
+mod materialized_roundtrip;
+use materialized_roundtrip::{check_segment_indexes, read_segments};
+pub(crate) use materialized_roundtrip::{inspect_restored_ready, prepare_restored, write_restored};
 
 const LEGACY_VERSION: i64 = 1002;
 const CAPTURE_VERSION: i64 = 1003;
+const RESTORED_VERSION: i64 = 1005;
 const SCHEMA: &str = "
     CREATE TABLE materialization (
         id INTEGER PRIMARY KEY CHECK(id=1), target TEXT NOT NULL, stage TEXT NOT NULL,
@@ -29,6 +34,18 @@ const CONTENT_TABLES: [&str; 8] = [
     "csv_sources",
     "archived_operations",
 ];
+
+fn check_capture_columns(connection: &Connection, cancel: &AtomicBool) -> Result<()> {
+    for table in CONTENT_TABLES.into_iter().chain([
+        "metadata",
+        "materialization",
+        "archived_revisions",
+        "archived_events",
+    ]) {
+        check_columns(connection, table, cancel)?;
+    }
+    Ok(())
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -56,7 +73,11 @@ fn version(connection: &Connection) -> Result<i64> {
 }
 
 pub(crate) fn supports_version(version: i64) -> bool {
-    matches!(version, LEGACY_VERSION | CAPTURE_VERSION)
+    version == LEGACY_VERSION || has_history_digest(version)
+}
+
+fn has_history_digest(version: i64) -> bool {
+    matches!(version, CAPTURE_VERSION | RESTORED_VERSION)
 }
 
 fn bounded<T: Serialize>(
@@ -99,7 +120,7 @@ fn binding(store: &Store, ticket: &Ticket, device: &str) -> Result<()> {
         "bootstrap_fixture",
         "materialization",
     ]);
-    if version == CAPTURE_VERSION {
+    if has_history_digest(version) {
         expected.extend(["archived_revisions", "archived_events"]);
     }
     let mut statement = connection
@@ -142,6 +163,26 @@ pub(crate) fn prepare(
     stage: &Ticket,
     can_initialize: bool,
 ) -> Result<Store> {
+    prepare_layout(
+        path,
+        key,
+        ticket,
+        device,
+        stage,
+        can_initialize,
+        CAPTURE_VERSION,
+    )
+}
+
+fn prepare_layout(
+    path: &Path,
+    key: &DbKey,
+    ticket: &Ticket,
+    device: &str,
+    stage: &Ticket,
+    can_initialize: bool,
+    layout: i64,
+) -> Result<Store> {
     let mut store = Store::connect(path, key, false)?;
     if version(&store.connection)? == 0 && can_initialize {
         let tx = store
@@ -165,11 +206,15 @@ pub(crate) fn prepare(
             params![json_text(ticket)?, json_text(stage)?],
         )
         .map_err(db_error)?;
-        tx.pragma_update(None, "user_version", CAPTURE_VERSION)
+        tx.pragma_update(None, "user_version", layout)
             .map_err(db_error)?;
         tx.commit().map_err(db_error)?;
     }
     binding(&store, ticket, device)?;
+    let actual = version(&store.connection)?;
+    if actual != layout && !(layout == CAPTURE_VERSION && actual == LEGACY_VERSION) {
+        return Err(mismatch());
+    }
     let recorded_stage: String = store
         .connection
         .query_row(
@@ -278,7 +323,7 @@ pub(crate) fn check_new_write(connection: &Connection, write: &Write) -> Result<
             ));
         }
     }
-    if version == CAPTURE_VERSION {
+    if has_history_digest(version) {
         let reserved: bool = connection
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM archived_revisions WHERE id=?1)
@@ -308,93 +353,7 @@ pub(crate) fn write(
     cancel: &AtomicBool,
     before_commit: impl FnOnce() -> Result<()>,
 ) -> Result<bool> {
-    let tx = store
-        .connection
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(db_error)?;
-    let written: bool = tx
-        .query_row(
-            "SELECT history IS NOT NULL FROM materialization WHERE id=1",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(db_error)?;
-    if written {
-        return Ok(false);
-    }
-    let capture_layout = version(&tx)? == CAPTURE_VERSION;
-    for table in CONTENT_TABLES {
-        let has_rows: bool = tx
-            .query_row(&format!("SELECT EXISTS(SELECT 1 FROM {table})"), [], |r| {
-                r.get(0)
-            })
-            .map_err(db_error)?;
-        if has_rows {
-            return Err(mismatch());
-        }
-    }
     let facts = &source.facts;
-    for (table, values) in [
-        ("accounts", &facts.accounts),
-        ("categories", &facts.categories),
-    ] {
-        for value in values {
-            cancelled(cancel)?;
-            tx.execute(
-                &format!("INSERT INTO {table} VALUES(?1,?2,?3,?4)"),
-                params![value.id, value.kind, value.name, value.archived],
-            )
-            .map_err(db_error)?;
-        }
-    }
-    for revision in &facts.revisions {
-        cancelled(cancel)?;
-        tx.execute(
-            "INSERT INTO revisions VALUES(?1,?2,?3,?4)",
-            params![
-                revision.id,
-                revision.event_id,
-                revision.predecessor,
-                revision.event.as_ref().map(json_text).transpose()?
-            ],
-        )
-        .map_err(db_error)?;
-    }
-    for value in &facts.selected {
-        cancelled(cancel)?;
-        tx.execute(
-            "INSERT INTO selected VALUES(?1,?2)",
-            params![value.event_id, value.revision_id],
-        )
-        .map_err(db_error)?;
-    }
-    for value in &facts.candidates {
-        cancelled(cancel)?;
-        tx.execute(
-            "INSERT INTO candidates VALUES(?1,?2)",
-            params![value.revision_id, value.event_id],
-        )
-        .map_err(db_error)?;
-    }
-    for source in facts.imports.iter().flat_map(|i| &i.sources) {
-        cancelled(cancel)?;
-        tx.execute(
-            "INSERT INTO csv_sources VALUES(?1,?2,?3,?4,?5)",
-            params![
-                source.namespace,
-                source.source_id,
-                json_text(&source.event)?,
-                source.event_id,
-                source.revision_id
-            ],
-        )
-        .map_err(db_error)?;
-    }
-    for id in archived_operations(&facts.intent_history, facts.imports.as_ref()) {
-        cancelled(cancel)?;
-        tx.execute("INSERT INTO archived_operations VALUES(?1)", [id])
-            .map_err(db_error)?;
-    }
     let history = History {
         source_schema: facts.source_schema,
         sequence: facts.sequence,
@@ -409,15 +368,93 @@ pub(crate) fn write(
         imports: &facts.imports,
     };
     let encoded = bounded(&history, limits, cancel)?;
-    let encoded = std::str::from_utf8(&encoded).map_err(|_| mismatch())?;
+    write_records(
+        store,
+        Materialization {
+            ledger: validate::LedgerView {
+                accounts: &facts.accounts,
+                categories: &facts.categories,
+                revisions: &facts.revisions,
+                selected: &facts.selected,
+                candidates: &facts.candidates,
+            },
+            imports: facts.imports.as_ref(),
+            operations: archived_operations(&facts.intent_history, facts.imports.as_ref()),
+            history: std::str::from_utf8(&encoded).map_err(|_| mismatch())?,
+            digest: crate::crypto::hex(&digest(source, limits, cancel)?),
+        },
+        cancel,
+        before_commit,
+    )
+}
+
+struct Materialization<'a> {
+    ledger: validate::LedgerView<'a>,
+    imports: Option<&'a ImportHistory>,
+    operations: BTreeSet<&'a str>,
+    history: &'a str,
+    digest: String,
+}
+
+fn write_records(
+    store: &mut Store,
+    records: Materialization<'_>,
+    cancel: &AtomicBool,
+    before_commit: impl FnOnce() -> Result<()>,
+) -> Result<bool> {
+    let tx = store
+        .connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    let written: bool = tx
+        .query_row(
+            "SELECT history IS NOT NULL FROM materialization WHERE id=1",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(db_error)?;
+    if written {
+        return Ok(false);
+    }
+    let capture_layout = has_history_digest(version(&tx)?);
+    for table in CONTENT_TABLES {
+        let has_rows: bool = tx
+            .query_row(&format!("SELECT EXISTS(SELECT 1 FROM {table})"), [], |r| {
+                r.get(0)
+            })
+            .map_err(db_error)?;
+        if has_rows {
+            return Err(mismatch());
+        }
+    }
+    write_ledger(&tx, records.ledger, cancel)?;
+    for source in records.imports.iter().flat_map(|i| &i.sources) {
+        cancelled(cancel)?;
+        tx.execute(
+            "INSERT INTO csv_sources VALUES(?1,?2,?3,?4,?5)",
+            params![
+                source.namespace,
+                source.source_id,
+                json_text(&source.event)?,
+                source.event_id,
+                source.revision_id
+            ],
+        )
+        .map_err(db_error)?;
+    }
+    for id in records.operations {
+        cancelled(cancel)?;
+        tx.execute("INSERT INTO archived_operations VALUES(?1)", [id])
+            .map_err(db_error)?;
+    }
     if capture_layout {
-        for (table, ids) in reserved_ids(facts.imports.as_ref()) {
-            let count: bool = tx
+        for (table, ids) in reserved_ids(records.imports) {
+            let has_rows: bool = tx
                 .query_row(&format!("SELECT EXISTS(SELECT 1 FROM {table})"), [], |r| {
                     r.get(0)
                 })
                 .map_err(db_error)?;
-            if count {
+            if has_rows {
                 return Err(mismatch());
             }
             for id in ids {
@@ -428,22 +465,73 @@ pub(crate) fn write(
         }
         tx.execute(
             "UPDATE materialization SET history_digest=?1 WHERE id=1",
-            [history_digest(encoded)],
+            [history_digest(records.history)],
         )
         .map_err(db_error)?;
     }
     tx.execute(
         "UPDATE materialization SET history=?1,digest=?2 WHERE id=1",
-        params![
-            encoded,
-            crate::crypto::hex(&digest(source, limits, cancel)?)
-        ],
+        params![records.history, records.digest],
     )
     .map_err(db_error)?;
     before_commit()?;
     cancelled(cancel)?;
     tx.commit().map_err(db_error)?;
     Ok(true)
+}
+
+fn write_ledger(
+    connection: &Connection,
+    facts: validate::LedgerView<'_>,
+    cancel: &AtomicBool,
+) -> Result<()> {
+    for (table, values) in [
+        ("accounts", facts.accounts),
+        ("categories", facts.categories),
+    ] {
+        for value in values {
+            cancelled(cancel)?;
+            connection
+                .execute(
+                    &format!("INSERT INTO {table} VALUES(?1,?2,?3,?4)"),
+                    params![value.id, value.kind, value.name, value.archived],
+                )
+                .map_err(db_error)?;
+        }
+    }
+    for revision in facts.revisions {
+        cancelled(cancel)?;
+        connection
+            .execute(
+                "INSERT INTO revisions VALUES(?1,?2,?3,?4)",
+                params![
+                    revision.id,
+                    revision.event_id,
+                    revision.predecessor,
+                    revision.event.as_ref().map(json_text).transpose()?
+                ],
+            )
+            .map_err(db_error)?;
+    }
+    for value in facts.selected {
+        cancelled(cancel)?;
+        connection
+            .execute(
+                "INSERT INTO selected VALUES(?1,?2)",
+                params![value.event_id, value.revision_id],
+            )
+            .map_err(db_error)?;
+    }
+    for value in facts.candidates {
+        cancelled(cancel)?;
+        connection
+            .execute(
+                "INSERT INTO candidates VALUES(?1,?2)",
+                params![value.revision_id, value.event_id],
+            )
+            .map_err(db_error)?;
+    }
+    Ok(())
 }
 
 fn history_digest(history: &str) -> String {
@@ -456,7 +544,17 @@ fn read_history(
     limits: ArchiveLimits,
     budget: &mut Budget<'_>,
 ) -> Result<(StoredHistory, String)> {
-    let sql = if layout == CAPTURE_VERSION {
+    let (history, digest) = history_record(connection, layout, limits, budget)?;
+    Ok((json(&history)?, digest))
+}
+
+fn history_record(
+    connection: &Connection,
+    layout: i64,
+    limits: ArchiveLimits,
+    budget: &mut Budget<'_>,
+) -> Result<(Zeroizing<String>, String)> {
+    let sql = if has_history_digest(layout) {
         "SELECT history,digest,history_digest FROM materialization WHERE id=1"
     } else {
         "SELECT history,digest FROM materialization WHERE id=1"
@@ -469,11 +567,11 @@ fn read_history(
     if expected.len() != 64 {
         return Err(mismatch());
     }
-    if layout == CAPTURE_VERSION && text(row, 2, budget)? != history_digest(&history) {
+    if has_history_digest(layout) && text(row, 2, budget)? != history_digest(&history) {
         return Err(mismatch());
     }
     scan(history.as_bytes(), limits, budget.cancel)?;
-    Ok((json(&history)?, expected))
+    Ok((history, expected))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -530,15 +628,7 @@ pub(crate) fn inspect_ready(
     cancel: &AtomicBool,
 ) -> Result<Contents> {
     let tx = store.connection.unchecked_transaction().map_err(db_error)?;
-    let sequence: i64 = tx
-        .query_row("SELECT sequence FROM metadata WHERE id=1", [], |r| r.get(0))
-        .map_err(db_error)?;
-    let queued: bool = tx
-        .query_row("SELECT EXISTS(SELECT 1 FROM outbox)", [], |r| r.get(0))
-        .map_err(db_error)?;
-    if sequence != 0 || queued {
-        return Err(mismatch());
-    }
+    require_empty_queue(&tx)?;
     let layout = version(&tx)?;
     let (history, expected) = read_history(
         &tx,
@@ -576,6 +666,23 @@ pub(crate) fn inspect_ready(
     Ok(contents)
 }
 
+fn require_empty_queue(connection: &Connection) -> Result<()> {
+    let sequence: i64 = connection
+        .query_row("SELECT sequence FROM metadata WHERE id=1", [], |r| r.get(0))
+        .map_err(db_error)?;
+    let queued: bool = connection
+        .query_row("SELECT EXISTS(SELECT 1 FROM outbox)", [], |r| r.get(0))
+        .map_err(db_error)?;
+    if sequence != 0 || queued {
+        return Err(mismatch());
+    }
+    Ok(())
+}
+
+pub(crate) fn has_restored_history(store: &Store) -> Result<bool> {
+    Ok(version(&store.connection)? == RESTORED_VERSION)
+}
+
 fn check_ids(
     connection: &Connection,
     table: &str,
@@ -606,15 +713,32 @@ fn check_indexes(
     budget: &mut Budget<'_>,
 ) -> Result<()> {
     let imports = history.imports.as_ref();
-    let operations = archived_operations(&history.intents, imports);
-    check_ids(connection, "archived_operations", &operations, budget)?;
+    check_identity_indexes(
+        connection,
+        layout,
+        imports,
+        &archived_operations(&history.intents, imports),
+        local,
+        budget,
+    )
+}
+
+fn check_identity_indexes(
+    connection: &Connection,
+    layout: i64,
+    imports: Option<&ImportHistory>,
+    operations: &BTreeSet<&str>,
+    local: &[Write],
+    budget: &mut Budget<'_>,
+) -> Result<()> {
+    check_ids(connection, "archived_operations", operations, budget)?;
     if local
         .iter()
         .any(|intent| operations.contains(intent.operation_id.as_str()))
     {
         return Err(mismatch());
     }
-    if layout == CAPTURE_VERSION {
+    if has_history_digest(layout) {
         let [(revisions_table, revisions), (events_table, events)] = reserved_ids(imports);
         check_ids(connection, revisions_table, &revisions, budget)?;
         check_ids(connection, events_table, &events, budget)?;

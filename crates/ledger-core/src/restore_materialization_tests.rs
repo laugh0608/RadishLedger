@@ -18,6 +18,8 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+#[path = "restore_roundtrip_tests.rs"]
+mod restore_roundtrip_tests;
 #[path = "restored_snapshot_tests.rs"]
 mod restored_snapshot_tests;
 

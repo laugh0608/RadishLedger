@@ -6,6 +6,10 @@ use crate::restore_stage::{Point, Ticket, check_cancel, mismatch};
 use serde::de::DeserializeOwned;
 use std::sync::atomic::AtomicBool;
 
+#[cfg(all(test, unix))]
+#[path = "restore_roundtrip_db.rs"]
+pub(crate) mod roundtrip;
+
 const VERSION: i64 = 1001;
 const SCHEMA: [(&str, &str); 14] = [
     (

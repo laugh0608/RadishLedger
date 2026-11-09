@@ -1,24 +1,6 @@
-//! 已选择恢复库的单事务捕获。类型只在内存中使用，暂无归档编码。
+//! 已选择恢复库的单事务捕获。
 use super::*;
-use validate::{HistoryView, LedgerView};
-
-pub(crate) struct LocalHistory {
-    pub sequence: i64,
-    pub intents: Vec<Write>,
-}
-
-pub(crate) struct InheritedHistory {
-    pub source_schema: i64,
-    pub committed: LocalHistory,
-    pub imports: Option<ImportHistory>,
-}
-
-pub(crate) struct RestoredSnapshot {
-    pub ledger: LedgerRows,
-    pub inherited: InheritedHistory,
-    pub current: LocalHistory,
-    pub verification: Snapshot,
-}
+use crate::archive_container::restored::{History as Segment, RestoredContents};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CapturePoint {
@@ -32,12 +14,13 @@ pub(crate) fn capture(
     limits: ArchiveLimits,
     cancel: &AtomicBool,
     mut observe: impl FnMut(CapturePoint) -> Result<()>,
-) -> Result<RestoredSnapshot> {
+) -> Result<RestoredContents> {
     cancelled(cancel)?;
     limits.validate()?;
     validate_months(months, cancel)?;
     let tx = store.connection.unchecked_transaction().map_err(db_error)?;
-    if version(&tx)? != CAPTURE_VERSION {
+    let layout = version(&tx)?;
+    if !has_history_digest(layout) {
         return Err(CoreError::new(
             "unsupported_snapshot_schema",
             "此物化布局未登记独立历史核对材料",
@@ -54,107 +37,54 @@ pub(crate) fn capture(
         return Err(mismatch());
     };
     observe(CapturePoint::Established)?;
-    for table in CONTENT_TABLES.into_iter().chain([
-        "metadata",
-        "materialization",
-        "archived_revisions",
-        "archived_events",
-    ]) {
-        check_columns(&tx, table, cancel)?;
-    }
-    let (history, _) = read_history(&tx, CAPTURE_VERSION, limits, &mut budget)?;
-    check_inherited(&history, &mut budget)?;
+    check_capture_columns(&tx, cancel)?;
+    let mut segments = read_segments(&tx, layout, limits, &mut budget)?.segments;
+    charge_segments(&segments, &mut budget)?;
     let ledger = read_ledger(&tx, &mut budget)?;
-    let current = LocalHistory {
-        sequence: *sequence,
-        intents: intents(&tx, &mut budget)?,
-    };
-    if current.sequence < i64::try_from(current.intents.len()).map_err(|_| limit())?
-        || current.intents.iter().any(|intent| {
-            intent
-                .expected_sequence
-                .is_some_and(|expected| expected >= current.sequence)
-        })
+    let local = intents(&tx, &mut budget)?;
+    check_segment_indexes(&tx, &segments, &local, &mut budget)?;
+
+    // 参考资料的变化已体现在当前事实中。重复恢复时不累计无写入的尾段。
+    if matches!(segments.last(), Some(Segment::Restored { sequence: 0, intent_history }) if intent_history.is_empty())
     {
-        return Err(mismatch());
+        segments.pop();
     }
-    check_indexes(
-        &tx,
-        CAPTURE_VERSION,
-        &history,
-        &current.intents,
-        &mut budget,
-    )?;
-    let inherited = InheritedHistory {
-        source_schema: history.source_schema,
-        committed: LocalHistory {
-            sequence: history.sequence,
-            intents: history.intents,
-        },
-        imports: history.imports,
-    };
-    let verification = validate::verify_segments(
-        LedgerView {
-            accounts: &ledger.accounts,
-            categories: &ledger.categories,
-            revisions: &ledger.revisions,
-            selected: &ledger.selected,
-            candidates: &ledger.candidates,
-        },
-        &[
-            HistoryView {
-                source_schema: Some(inherited.source_schema),
-                sequence: inherited.committed.sequence,
-                intents: &inherited.committed.intents,
-                imports: inherited.imports.as_ref(),
-            },
-            HistoryView {
-                source_schema: None,
-                sequence: current.sequence,
-                intents: &current.intents,
-                imports: None,
-            },
-        ],
-        months,
-        cancel,
-    )?;
+    budget.row()?;
+    segments.push(Segment::Restored {
+        sequence: *sequence,
+        intent_history: local,
+    });
+    let contents =
+        RestoredContents::from_rows(ledger, segments, months, cancel).map_err(|error| {
+            if error.code == "invalid_archive_payload" {
+                mismatch()
+            } else {
+                error
+            }
+        })?;
     observe(CapturePoint::BeforeFinish)?;
     cancelled(cancel)?;
     tx.commit().map_err(db_error)?;
-    Ok(RestoredSnapshot {
-        ledger,
-        inherited,
-        current,
-        verification,
-    })
+    Ok(contents)
 }
 
-fn check_inherited(history: &StoredHistory, budget: &mut Budget<'_>) -> Result<()> {
-    if !matches!(history.source_schema, 1..=3)
-        || (history.source_schema >= 2) != history.imports.is_some()
-        || (history.source_schema == 2
-            && history.imports.as_ref().is_some_and(|imports| {
-                !imports.undo_tasks.is_empty()
-                    || !imports.undo_rows.is_empty()
-                    || !imports.undo_batches.is_empty()
-            }))
-    {
-        return Err(mismatch());
-    }
-    budget.rows(history.intents.len())?;
-    // 历史所在的 SQL 行、两个段及继承 CSV 记录共用读取预算。
-    budget.rows(3)?;
-    if let Some(imports) = &history.imports {
-        for count in [
-            imports.tasks.len(),
-            imports.rows.len(),
-            imports.sources.len(),
-            imports.batches.len(),
-            imports.undo_tasks.len(),
-            imports.undo_rows.len(),
-            imports.undo_batches.len(),
-        ] {
-            budget.rows(count)?;
+pub(super) fn charge_segments(segments: &[Segment], budget: &mut Budget<'_>) -> Result<()> {
+    budget.rows(segments.len().checked_add(1).ok_or_else(limit)?)?;
+    for segment in segments {
+        let view = segment.view();
+        budget.rows(view.intents.len())?;
+        if let Some(imports) = view.imports {
+            for count in [
+                imports.tasks.len(),
+                imports.rows.len(),
+                imports.sources.len(),
+                imports.batches.len(),
+                imports.undo_tasks.len(),
+                imports.undo_rows.len(),
+                imports.undo_batches.len(),
+            ] {
+                budget.rows(count)?;
+            }
         }
     }
     Ok(())

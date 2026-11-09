@@ -291,6 +291,11 @@ impl Host<'_> {
     fn ready_checkpoint(&self, selection: &Selection, cancel: &AtomicBool) -> Result<[u8; 32]> {
         let store = self.read_store(selection)?;
         if selection.target.materialization.is_some() {
+            if materialized::has_restored_history(&store)? {
+                let (_, digest) =
+                    materialized::inspect_restored_ready(&store, CANDIDATE_LIMITS, cancel)?;
+                return Ok(digest);
+            }
             let contents = materialized::inspect_ready(&store, CANDIDATE_LIMITS, cancel)?;
             return materialized::digest(&contents, CANDIDATE_LIMITS, cancel);
         }
@@ -310,7 +315,7 @@ impl Host<'_> {
         limits: crate::archive_container::Limits,
         cancel: &AtomicBool,
         observe: impl FnMut(materialized::CapturePoint) -> Result<()>,
-    ) -> Result<materialized::RestoredSnapshot> {
+    ) -> Result<crate::archive_container::restored::RestoredContents> {
         cancelled(cancel)?;
         let _gate = self.lock()?;
         let active = self.settled()?;

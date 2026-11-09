@@ -4,7 +4,7 @@ use crate::logical_snapshot::{ImportHistory, RemoteKnowledge, encode_contents};
 use crate::store::{
     Snapshot, Write,
     snapshot_store::{
-        materialized::{LedgerRows, RestoredSnapshot, archived_operations, reserved_ids},
+        materialized::{LedgerRows, archived_operations, reserved_ids},
         validate::{HistoryView, LedgerView, verify_segments},
     },
 };
@@ -55,7 +55,7 @@ fn nullable_imports<'de, D: serde::Deserializer<'de>>(
 }
 
 impl History {
-    fn view(&self) -> HistoryView<'_> {
+    pub(crate) fn view(&self) -> HistoryView<'_> {
         match self {
             Self::Legacy {
                 source_schema,
@@ -217,47 +217,75 @@ fn verify(facts: &RestoredFacts, months: &[String], cancel: &AtomicBool) -> Resu
     )
 }
 
-fn decode(payload: &[u8], limits: Limits, cancel: &AtomicBool) -> Result<RestoredContents> {
+pub(crate) fn decode(
+    payload: &[u8],
+    limits: Limits,
+    cancel: &AtomicBool,
+) -> Result<RestoredContents> {
     json::scan(payload, limits, cancel)?;
-    let wire: Wire = serde_json::from_slice(payload).map_err(|_| payload_error())?;
+    let mut wire: Wire = serde_json::from_slice(payload).map_err(|_| payload_error())?;
     let verification = json::checked_projection(&wire.verification, cancel, |months| {
         verify(&wire.facts, months, cancel)
     })?;
+    let ledger = &mut wire.facts.ledger;
+    ledger.accounts.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    ledger.categories.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    ledger.revisions.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    ledger
+        .selected
+        .sort_unstable_by(|a, b| a.event_id.cmp(&b.event_id));
+    ledger
+        .candidates
+        .sort_unstable_by(|a, b| a.revision_id.cmp(&b.revision_id));
     Ok(RestoredContents {
         facts: wire.facts,
         verification,
     })
 }
 
-pub(crate) fn seal(
-    snapshot: RestoredSnapshot,
-    password: &[u8],
-    limits: Limits,
-    cancel: &AtomicBool,
-) -> Result<SealedArchive> {
-    let legacy = snapshot.inherited;
-    let contents = RestoredContents {
-        facts: RestoredFacts {
+impl RestoredContents {
+    pub(crate) fn from_rows(
+        ledger: LedgerRows,
+        history: Vec<History>,
+        months: &[String],
+        cancel: &AtomicBool,
+    ) -> Result<Self> {
+        let facts = RestoredFacts {
             profile: PROFILE.into(),
             currency: "CNY".into(),
             minor_unit_scale: 2,
             remote_knowledge: RemoteKnowledge::Unknown,
-            ledger: snapshot.ledger,
-            history: vec![
-                History::Legacy {
-                    source_schema: legacy.source_schema,
-                    sequence: legacy.committed.sequence,
-                    intent_history: legacy.committed.intents,
-                    imports: legacy.imports,
-                },
-                History::Restored {
-                    sequence: snapshot.current.sequence,
-                    intent_history: snapshot.current.intents,
-                },
-            ],
-        },
-        verification: snapshot.verification,
-    };
+            ledger,
+            history,
+        };
+        let verification = verify(&facts, months, cancel)?;
+        Ok(Self {
+            facts,
+            verification,
+        })
+    }
+
+    pub(crate) fn encode(&self, limits: Limits, cancel: &AtomicBool) -> Result<Zeroizing<Vec<u8>>> {
+        let bytes = Zeroizing::new(encode_contents(self, limits.payload_bytes, cancel).map_err(
+            |error| {
+                if error.code == "snapshot_limit" {
+                    limit()
+                } else {
+                    error
+                }
+            },
+        )?);
+        json::scan(&bytes, limits, cancel)?;
+        Ok(bytes)
+    }
+}
+
+pub(crate) fn seal(
+    contents: RestoredContents,
+    password: &[u8],
+    limits: Limits,
+    cancel: &AtomicBool,
+) -> Result<SealedArchive> {
     seal_with(
         &contents,
         password,
@@ -279,16 +307,7 @@ fn seal_with(
     limits.validate()?;
     cancelled(cancel)?;
     crypto::validate_password(password)?;
-    let payload = Zeroizing::new(
-        encode_contents(contents, limits.payload_bytes, cancel).map_err(|error| {
-            if error.code == "snapshot_limit" {
-                limit()
-            } else {
-                error
-            }
-        })?,
-    );
-    json::scan(&payload, limits, cancel)?;
+    let payload = contents.encode(limits, cancel)?;
     let manifest = manifest_for(&contents.facts, &payload, limits)?;
     seal_payload(
         Version::Restored,

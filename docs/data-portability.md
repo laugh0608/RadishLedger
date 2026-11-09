@@ -373,9 +373,13 @@ mkdir 后未发布 owner、未知临时发布文件或不一致定位材料保�
 | `facts.history[0]` | `kind` 为 `legacy`，必有整数 `sourceSchema`（1–3）、非负 i64 `sequence`、数组 `intentHistory` 和 `imports`。schema 1 的 `imports` 明确为 `null`；schema 2、3 使用原导入结构，schema 2 的撤销数组为空。 |
 | `facts.history[1..]` | 至少一段，每段仅有 `kind`（`restored`）、非负 i64 `sequence` 和 `intentHistory`。已提交意图数量不超过该段 sequence；存在的 `expectedSequence` 小于本段 sequence，继承首段仍按 `0.1` 校验。跨段操作 ID 唯一，新段也不能占用已记录或保留的修订 / 计划身份。 |
 
-意图、账务对象、CSV 与统计的子字段沿用既有逻辑快照类型。解析拒绝重复键、未知字段与预算外的数组 / 字符串 / 嵌套成员。写端保留历史段的顺序，以紧凑 UTF-8 JSON 编码；已认证输入可以使用 JSON 定义的空白和不同对象键顺序。新容器只交付认证后的内存事实，暂存和物化入口仍读取 `0.1`。独立非空输入含原期初 100 分、恢复后新增 37 分、各自观察序号和 137 分核对余额。见[公开输入](validation/archive-restored-review-input.json)及[独立 Go 向量](validation/archive-restored-review-vector.json)。
+意图、账务对象、CSV 与统计的子字段沿用既有逻辑快照类型。解析拒绝重复键、未知字段与预算外的数组 / 字符串 / 嵌套成员。写端保留历史段的顺序，以紧凑 UTF-8 JSON 编码。已认证输入可以使用 JSON 定义的空白和不同对象键顺序，账务对象按稳定身份排序后核对。独立非空输入含原期初 100 分、恢复后新增 37 分、各自观察序号和 137 分核对余额。见[公开输入](validation/archive-restored-review-input.json)及[独立 Go 向量](validation/archive-restored-review-vector.json)。
 
-多段历史的暂存与候选布局、跨代恢复回环、公开备份格式、生产 schema 和平台解锁仍需各自证据。宿主结果及剩余验收见[再次归档验收](validation/portability-cases.md#510-恢复后再次归档验收候选)。
+**跨代恢复宿主切片。** `0.2` 入口在认证、预算和关系检查完成后创建独立 SQLCipher 暂存，使用新的随机 DB Key。schema 1004 的 `restore_bundle` 只保存任务绑定和有界规范化载荷，载荷在同一事务从空变为完整。任务 Ticket 绑定归档身份和完整密文摘要。登记已建库后，缺库即拒绝。续作时重新认证同一输入，以独立暂存钥重开，并比较实际载荷与认证输入的规范化摘要，再解码核对业务关系。取消或写入中断保持已登记目标，错误口令在登记前拒绝。
+
+schema 1005 候选使用另一独立随机钥和目标身份。复用账务表、原 CSV 来源索引、保留身份及写入事务。所有继承段只登记为历史，源操作 ID 纳入防重索引。候选重开后从实际表行重建事实与统计，并核对完整摘要后才能进入原条件选择门禁。新目标从 sequence 0 与空 outbox 开始。以后再归档时保留有内容的历史段，只替换上一份档案中 sequence 为 0 且无意图的尾段。已有 `0.1` 暂存与候选保持各自版本和读写规则。
+
+该回环使用 Unix 测试入口、合成目录和口令。归档文件保存、公开备份格式、生产 schema、设备密钥和掉电仍需各自证据。见[跨代恢复验收](validation/portability-cases.md#510-恢复后再次归档验收候选)。
 
 ### 4.2 业务身份与同步身份
 
