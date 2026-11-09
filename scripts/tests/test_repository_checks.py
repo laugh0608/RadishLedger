@@ -246,13 +246,14 @@ class RepositoryChecksTest(unittest.TestCase):
         self.write(CHECKS.WORKFLOW_FILE, path.read_text(encoding="utf-8") + "on: push\n")
         self.assertTrue(any("generated YAML drift" in error for error in self.inspect()[1]))
 
-    def test_core_component_cannot_be_skipped_or_replaced_by_success(self):
+    def test_language_components_must_run_real_checks_independently(self):
         files, _, _, documents = self.inspect()
         mutations = (
             lambda w: w["jobs"]["core-quality"].update(**{"if": "false"}),
             lambda w: w["jobs"]["core-quality"]["steps"][2].update(run="exit 0"),
-            lambda w: w["jobs"]["core-quality"]["steps"][3].update(run="exit 0"),
-            lambda w: w["jobs"]["candidate-quality"].update(needs=["repo-hygiene"]),
+            lambda w: w["jobs"]["mobile-quality"]["steps"][2].update(run="exit 0"),
+            lambda w: w["jobs"]["mobile-quality"].update(needs=["core-quality"]),
+            lambda w: w["jobs"]["candidate-quality"].update(needs=["repo-hygiene", "core-quality"]),
         )
         for mutate in mutations:
             changed = copy.deepcopy(documents)
@@ -291,10 +292,16 @@ class RepositoryChecksTest(unittest.TestCase):
     def test_actual_aggregate_rejects_failure_cancel_skip_missing(self):
         workflow = json.loads((ROOT / CHECKS.WORKFLOW_SOURCE).read_text())
         script = workflow["jobs"]["candidate-quality"]["steps"][0]["run"]
-        cases = [({"repo-hygiene": {"result": "success"}, "core-quality": {"result": "success"}}, 0), ({}, 1)]
-        cases += [({"repo-hygiene": {"result": value}}, 1) for value in ("failure", "cancelled", "skipped")]
-        cases += [({"repo-hygiene": {}}, 1), ({"repo-hygiene": {"result": "success"}, "extra": {"result": "failure"}}, 1)]
-        cases += [({"repo-hygiene": {"result": "success"}, "core-quality": {"result": value}}, 1) for value in ("failure", "cancelled", "skipped")]
+        success = {
+            name: {"result": "success"}
+            for name in ("repo-hygiene", "core-quality", "mobile-quality")
+        }
+        cases = [(success, 0), ({}, 1), ({**success, "extra": {"result": "success"}}, 1)]
+        for name in success:
+            cases.append(({key: item for key, item in success.items() if key != name}, 1))
+            cases.append(({**success, name: {}}, 1))
+            for result in ("failure", "cancelled", "skipped"):
+                cases.append(({**success, name: {"result": result}}, 1))
         for results, expected in cases:
             with self.subTest(results=results):
                 env = dict(os.environ, NEEDS_JSON=json.dumps(results))

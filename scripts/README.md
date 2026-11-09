@@ -43,7 +43,7 @@ Issue 表单继续使用 JSON-compatible YAML，按 JSON 完整解析。其他�
 
 `PR Checks` 在合并候选执行 `check-repo`，提交检查不把 GitHub 合成 merge commit 当作用户提交。真实 merge commit 根据父提交数量豁免 Conventional Commits；单父提交即使以 `Merge` 开头也不能绕过检查。PR 范围拒绝已知 AI 的 `Co-authored-by` 署名。
 
-workflow 的聚合必须 `always()` 等待 `Repo Hygiene` 与 `Core Quality`，只接受全体 `success`。后者使用 `rust-toolchain.toml` 的 Rust 和 [setup-flutter-ci.py](setup-flutter-ci.py) 的固定 Flutter revision，复用两个真实语言入口。设置脚本只接受 GitHub Actions 环境，在 RUNNER_TEMP 准备 SDK，不用于修改开发机工具链。检查器验证聚合脚本、依赖、权限、凭据、Action pin 与触发契约；负向回归实际执行聚合脚本，证明任一组件失败、取消、跳过或缺失都会拒绝。
+workflow 在独立 runner 并行运行 `Repo Hygiene`、`Core Quality` 和 `Mobile Quality`。`Core Quality` 使用 `rust-toolchain.toml` 对应的 Rust 执行 `check-core`，`Mobile Quality` 使用同版 Rust 与 [setup-flutter-ci.py](setup-flutter-ci.py) 固定的 Flutter revision 执行 `check-mobile`。设置脚本只接受 GitHub Actions 环境，在 RUNNER_TEMP 准备 SDK。`Candidate Quality` 必须 `always()` 等待三项，只接受三项全部 `success`。检查器验证组件与聚合、权限、凭据、Action pin 和触发契约。负向回归实际执行聚合脚本，覆盖任一组件失败、取消、跳过或缺失。
 
 [`Cargo.toml`](../Cargo.toml) 在 Cargo `test` profile 中优化 `argon2` 和实例化缓冲区泛型清零的 `radishledger-core`。`check-core` 继续执行同一套真实密码向量、归档认证和进程恢复测试，使用原 KDF 参数及 debug 断言。
 

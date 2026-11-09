@@ -231,7 +231,7 @@ iOS 未签名 App 是真机目标构建产物，不能直接安装或当作真�
 
 ## 5. 检查与资源生命周期
 
-`check-core` 执行真实 Rust fmt / test / clippy 及 C header 检查；`check-mobile` 执行锁定 pub、Dart 格式、分析、宿主 native 加载与错误 / UI 测试。PR 的 `Core Quality` 在 Linux 验证宿主复用这些入口，`Candidate Quality` 严格汇总它与 `Repo Hygiene`；CI 没有宣称覆盖移动端、真机或密码评审。实际命令与边界见[检查说明](../../scripts/README.md)。
+`check-core` 执行真实 Rust fmt / test / clippy 及 C header 检查。`check-mobile` 执行锁定 pub、Dart 格式、分析、宿主 native 加载与错误 / UI 测试。PR 的 `Core Quality` 与 `Mobile Quality` 在独立 Linux runner 分别运行这两个入口，`Candidate Quality` 同时汇总这两项和 `Repo Hygiene`。移动目标、真机和密码评审按对应验收入口执行。实际命令与边界见[检查说明](../../scripts/README.md)。
 
 后续直接复用现有 Android / iOS 模拟器，不默认创建项目专用设备或下载额外系统镜像。实验数据限定在本项目 App 沙盒；如验证确需新系统版本、干净设备或破坏性操作，先说明具体原因与影响再确认范围。
 

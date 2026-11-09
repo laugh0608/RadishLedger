@@ -55,9 +55,10 @@ OPENSSL_SOURCE_MANIFEST_SHA256 = "cf19919264f45b1ffab02f34087f21db1967e7b107c2a1
 AGGREGATE_RUN = """python3 - <<'PY'
 import json, os, sys
 results = json.loads(os.environ['NEEDS_JSON'])
-for name, result in results.items():
-    print(name + ': ' + result.get('result', 'missing'))
-sys.exit(0 if results and all(item.get('result') == 'success' for item in results.values()) else 1)
+expected = {'repo-hygiene', 'core-quality', 'mobile-quality'}
+for name in sorted(expected | results.keys()):
+    print(name + ': ' + results.get(name, {}).get('result', 'missing'))
+sys.exit(0 if results.keys() == expected and all(item.get('result') == 'success' for item in results.values()) else 1)
 PY"""
 CHECK_RUN = """if [[ -n "${PR_BASE_SHA}" ]]; then
   ./scripts/check-repo.sh --base-ref "${PR_BASE_SHA}" --head-ref "${PR_HEAD_SHA}"
@@ -525,7 +526,8 @@ def check_governance(root, files, documents):
     if not isinstance(jobs, dict) or not all(isinstance(job, dict) for job in jobs.values()):
         errors.append("workflow: invalid jobs object")
         jobs = {}
-    require(set(jobs) == {"repo-hygiene", "core-quality", "candidate-quality"}, "workflow: update the reviewed component contract when adding jobs")
+    components = ["repo-hygiene", "core-quality", "mobile-quality"]
+    require(set(jobs) == {*components, "candidate-quality"}, "workflow: update the reviewed component contract when adding jobs")
     for job_id, job in jobs.items():
         timeout = job.get("timeout-minutes")
         require(type(timeout) is int and 0 < timeout <= 20, f"workflow {job_id}: finite timeout required")
@@ -539,7 +541,7 @@ def check_governance(root, files, documents):
             f"workflow {job_id}: steps cannot mask failures or skip checks",
         )
     hygiene = jobs.get("repo-hygiene", {})
-    require(hygiene.get("name") == "Repo Hygiene" and "if" not in hygiene, "workflow: Repo Hygiene cannot be skipped")
+    require(hygiene.get("name") == "Repo Hygiene" and "if" not in hygiene and "needs" not in hygiene, "workflow: Repo Hygiene must run independently")
     steps = hygiene.get("steps", [])
     if isinstance(steps, list) and len(steps) == 2 and all(isinstance(s, dict) for s in steps):
         checkout, check = steps
@@ -563,7 +565,7 @@ def check_governance(root, files, documents):
     candidate = jobs.get("candidate-quality", {})
     require(
         candidate.get("name") == "Candidate Quality" and candidate.get("if") == "always()"
-        and candidate.get("needs") == ["repo-hygiene", "core-quality"],
+        and candidate.get("needs") == components,
         "workflow: aggregate name / always / dependencies drift",
     )
     summary = candidate.get("steps", [])
@@ -573,15 +575,30 @@ def check_governance(root, files, documents):
         and summary[0].get("run") == AGGREGATE_RUN,
         "workflow: aggregate must reject every non-success component",
     )
-    core = jobs.get("core-quality", {})
-    core_steps = core.get("steps", [])
-    require(core.get("name") == "Core Quality" and "if" not in core, "workflow: Core Quality cannot be skipped")
-    if isinstance(core_steps, list) and len(core_steps) == 4 and all(isinstance(step, dict) for step in core_steps):
-        require(core_steps[0].get("uses") == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" and core_steps[0].get("with") == {"fetch-depth": 0, "persist-credentials": False}, "workflow: core candidate checkout drift")
-        require(core_steps[1].get("run") == "rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy\npython3 -B scripts/setup-flutter-ci.py", "workflow: pinned core toolchain drift")
-        require([step.get("run") for step in core_steps[2:]] == ["./scripts/check-core.sh", "./scripts/check-mobile.sh"], "workflow: real core and mobile checks required")
-    else:
-        errors.append("workflow: Core Quality must execute real core and mobile checks")
+    rust_setup = "rustup toolchain install 1.96.0 --profile minimal"
+    language_checks = (
+        ("core-quality", "Core Quality", rust_setup + " --component rustfmt --component clippy", "./scripts/check-core.sh"),
+        ("mobile-quality", "Mobile Quality", rust_setup + "\npython3 -B scripts/setup-flutter-ci.py", "./scripts/check-mobile.sh"),
+    )
+    for job_id, name, setup_run, check_run in language_checks:
+        job = jobs.get(job_id, {})
+        require(
+            job.get("name") == name and job.get("runs-on") == "ubuntu-latest"
+            and "if" not in job and "needs" not in job,
+            f"workflow: {name} must run independently on Linux",
+        )
+        steps = job.get("steps", [])
+        if isinstance(steps, list) and len(steps) == 3 and all(isinstance(step, dict) for step in steps):
+            checkout, setup, check = steps
+            require(
+                checkout.get("uses") == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+                and checkout.get("with") == {"fetch-depth": 0, "persist-credentials": False},
+                f"workflow: {name} candidate checkout drift",
+            )
+            require(setup.get("run") == setup_run, f"workflow: {name} pinned toolchain drift")
+            require(check.get("run") == check_run, f"workflow: {name} must run its real check")
+        else:
+            errors.append(f"workflow: {name} must check out, prepare and run its real check")
 
     issue_config = object_at(".github/ISSUE_TEMPLATE/config.yml")
     contacts = issue_config.get("contact_links")
