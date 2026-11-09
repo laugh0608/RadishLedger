@@ -14,7 +14,7 @@ fn forged(facts: &Facts, payload: &[u8], mutate: impl FnOnce(&mut [u8])) -> Vec<
             .unwrap(),
     ))
     .unwrap();
-    let h = Header::new(payload.len(), &e);
+    let h = Header::new(payload.len(), &e, Version::Legacy);
     let mut body = buffer(payload.len() + BODY_OVERHEAD + 16).unwrap();
     body.extend_from_slice(&(MANIFEST as u32).to_be_bytes());
     body.extend_from_slice(&manifest(facts, payload, CANDIDATE_LIMITS).unwrap());

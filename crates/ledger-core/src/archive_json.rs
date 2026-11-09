@@ -47,6 +47,9 @@ impl Budget<'_> {
 enum Context {
     Root,
     Facts,
+    Ledger,
+    History,
+    Segment,
     Imports,
     Records,
     Other,
@@ -97,10 +100,14 @@ impl<'de> Visitor<'de> for Seed<'_, '_> {
         while let Some(()) = sequence.next_element_seed(Seed {
             budget: self.budget,
             depth: self.depth + 1,
-            context: Context::Other,
+            context: if matches!(self.context, Context::History) {
+                Context::Segment
+            } else {
+                Context::Other
+            },
         })? {
             self.budget.entry()?;
-            if matches!(self.context, Context::Records) {
+            if matches!(self.context, Context::Records | Context::History) {
                 if self.budget.records == self.budget.limits.records {
                     return Err(self.budget.fail(limit()));
                 }
@@ -120,12 +127,14 @@ impl<'de> Visitor<'de> for Seed<'_, '_> {
             self.budget.entry()?;
             let context = match (self.context, key.as_str()) {
                 (Context::Root, "facts") => Context::Facts,
-                (Context::Facts, "imports") => Context::Imports,
+                (Context::Facts, "ledger") => Context::Ledger,
+                (Context::Facts, "history") => Context::History,
+                (Context::Facts | Context::Segment, "imports") => Context::Imports,
                 (
-                    Context::Facts,
-                    "accounts" | "categories" | "revisions" | "selected" | "candidates"
-                    | "intentHistory",
+                    Context::Facts | Context::Ledger,
+                    "accounts" | "categories" | "revisions" | "selected" | "candidates",
                 )
+                | (Context::Facts | Context::Segment, "intentHistory")
                 | (
                     Context::Imports,
                     "tasks" | "rows" | "sources" | "batches" | "undoTasks" | "undoRows"
@@ -230,8 +239,21 @@ pub(super) fn decode(input: &[u8], limits: Limits, cancel: &AtomicBool) -> Resul
     {
         return Err(payload_error());
     }
-    let reports = wire
-        .verification
+    let verification = checked_projection(&wire.verification, cancel, |months| {
+        crate::store::snapshot_store::validate::verify(&facts, months, cancel)
+    })?;
+    Ok(Contents {
+        facts,
+        verification,
+    })
+}
+
+pub(super) fn checked_projection(
+    input: &Value,
+    cancel: &AtomicBool,
+    verify: impl FnOnce(&[String]) -> Result<crate::store::Snapshot>,
+) -> Result<crate::store::Snapshot> {
+    let reports = input
         .get("monthlyReports")
         .and_then(Value::as_object)
         .ok_or_else(payload_error)?;
@@ -249,20 +271,16 @@ pub(super) fn decode(input: &[u8], limits: Limits, cancel: &AtomicBool) -> Resul
         }
         months.push(month.clone());
     }
-    let verification = crate::store::snapshot_store::validate::verify(&facts, &months, cancel)
-        .map_err(|e| {
-            if e.code == "cancelled" {
-                e
-            } else {
-                payload_error()
-            }
-        })?;
+    let verification = verify(&months).map_err(|e| {
+        if e.code == "cancelled" {
+            e
+        } else {
+            payload_error()
+        }
+    })?;
     cancelled(cancel)?;
-    if serde_json::to_value(&verification).map_err(|_| payload_error())? != wire.verification {
+    if serde_json::to_value(&verification).map_err(|_| payload_error())? != *input {
         return Err(payload_error());
     }
-    Ok(Contents {
-        facts,
-        verification,
-    })
+    Ok(verification)
 }

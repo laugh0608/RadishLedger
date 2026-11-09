@@ -135,13 +135,15 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 
 ### M0-E 认证容器评审材料
 
-`python3.14 -B scripts/check-archive-review.py`（Python 3.11+ 标准库）只读[公开合成输入](../docs/validation/archive-container-review-inputs.json)，独立检查固定偏移、长度、SHA、AAD 和 11 个预检调度，复核 R01–R24 映射及材料版本 2 的独立 Go 输出 / 源码指纹；它不运行 KDF / AEAD 或产品 codec。该[已批准宿主候选](../docs/data-portability.md#321-e-container-首个宿主候选与实施边界)的真实认证与业务验证由 Cargo 执行；材料脚本未新增 CI job，不能据此关闭 E10–E12 / E15–E16。
+`python3.14 -B scripts/check-archive-review.py`（Python 3.11+ 标准库）只读公开合成材料，独立检查 `0.1` 的固定偏移、长度、SHA、AAD、11 个预检调度与 R01–R24 映射，以及 `0.2` 的版本、清单、长度和向量指纹。真实 KDF / AEAD 与业务验证由 Cargo 执行。见[旧版材料](../docs/validation/archive-container-review-inputs.json)和[恢复后归档向量](../docs/validation/archive-restored-review-vector.json)。
 
 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core archive_container --jobs 4` 定向运行内存 seal / open：独立完整密文、预检、认证分层、非法认证载荷、资源、取消、原库保全及 A11 / v2 / v3 保真。也由 `check-core.sh` 自动发现。固定 64 MiB KDF 共用执行名额，测试显式串行昂贵部分；整个定向批次约两分钟，并非单次 KDF 或设备耗时结论。使用 tempfile 合成库，结束自动回收；无端口、长期进程、移动安装、文件恢复或系统密钥项。范围与未覆盖证据见[宿主实验](../docs/validation/portability-cases.md#56-e-container-宿主内存封装与有界解封)。
 
 独立公开向量复现入口为 `python3.14 -B scripts/archive-vector-oracle.py --work-dir "$PWD/local-evidence/m0-e/container-oracle-new"`，输出目录必须不存在。需要已安装 Go 1.26+（本批 1.26.3）及固定缓存 `~/go/pkg/mod/golang.org/x/crypto@v0.50.0`、`x/sys@v0.43.0`，缺失即停止；不自动安装 / 下载。Go 使用原模块 Argon2id / XChaCha 和标准库 HKDF，独立从 baseInput 重建字节，不消费 Rust encoder / framingExpected。The Go Authors 的 BSD-3-Clause 来源与许可指纹在材料 provenance 中；脚本未复制第三方源码进仓库，也未引入产品 Go 依赖。
 
 脚本只接受仓库公开合成 fixture，显式禁用 GOPROXY / GOSUMDB、工具链自动获取和遥测，build 限两路 / 120 秒、oracle 限 20 秒，无端口或后台任务。`main.go` / `go.mod` / 二进制 / 专属 cache / 输出与 provenance 保留在排他忽略目录；结束后无运行资源，材料可按本批精确目录另行清理。模块指纹只覆盖 `.go` 源文件及 LICENSE，不代表汇编、编译器或完整供应链已审计。复现后的 `outputs.json` 应逐项匹配 `cryptoExpected`（除 provenance）；原材料 SHA 记录生成时的版本 1 输入，版本 2 加入输出后文件自身 SHA 随之变化，不能误称原文件指纹等于现版本。
+
+在向量命令添加 `--restored` 并使用新的排他目录，可从[公开双段输入](../docs/validation/archive-restored-review-input.json)复现 `0.2` 向量。独立 Go 入口和既有密码 helper 共用相同的离线工具与模块；复现比对已登记向量的 `output`。源码指纹覆盖生成的 `main.go`、一个 NUL 分隔字节及 `restored.go` 的拼接。Cargo 的 `archive_container::restored` 与 `restored_snapshot_checks_csv_history` 定向用例分别覆盖独立向量、版本 / 预算与真实恢复库封装；暂存和跨代恢复另验。
 
 ### M0-E 受保护暂存恢复
 

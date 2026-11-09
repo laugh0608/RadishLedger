@@ -245,8 +245,46 @@ fn restored_snapshot_checks_csv_history_and_reserved_ids_after_new_writes() {
             serde_json::to_value(imports).unwrap(),
         );
         assert_eq!(
-            captured.inherited.imports.unwrap().undo_tasks.len(),
+            captured
+                .inherited
+                .imports
+                .as_ref()
+                .unwrap()
+                .undo_tasks
+                .len(),
             usize::from(version == 3)
+        );
+        let archive =
+            crate::archive_container::restored::seal(captured, PASSWORD, CANDIDATE_LIMITS, &flag())
+                .unwrap();
+        let crate::archive_container::restored::Opened::Restored(opened) =
+            crate::archive_container::restored::open(
+                archive.as_bytes(),
+                PASSWORD,
+                CANDIDATE_LIMITS,
+                &flag(),
+            )
+            .unwrap()
+        else {
+            panic!("expected 0.2 archive");
+        };
+        let [
+            crate::archive_container::restored::History::Legacy {
+                imports: Some(archived),
+                ..
+            },
+            ..,
+        ] = opened.contents.facts.history.as_slice()
+        else {
+            panic!("missing inherited CSV history");
+        };
+        assert_eq!(
+            serde_json::to_value(archived).unwrap(),
+            serde_json::to_value(imports).unwrap()
+        );
+        assert_eq!(
+            opened.contents.facts.ledger.revisions.len(),
+            ready.facts.revisions.len() + 1
         );
         let path = host.database(&selected.target);
         if version == 2 {

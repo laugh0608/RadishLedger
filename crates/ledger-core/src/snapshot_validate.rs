@@ -13,7 +13,7 @@ struct Index<'a> {
     allows_notes: bool,
 }
 
-pub(super) struct LedgerView<'a> {
+pub(crate) struct LedgerView<'a> {
     pub accounts: &'a [Reference],
     pub categories: &'a [Reference],
     pub revisions: &'a [Revision],
@@ -21,7 +21,7 @@ pub(super) struct LedgerView<'a> {
     pub candidates: &'a [Selection],
 }
 
-pub(super) struct HistoryView<'a> {
+pub(crate) struct HistoryView<'a> {
     pub source_schema: Option<i64>,
     pub sequence: i64,
     pub intents: &'a [Write],
@@ -480,7 +480,7 @@ pub(crate) fn verify(facts: &Facts, months: &[String], cancel: &AtomicBool) -> R
     )
 }
 
-pub(super) fn verify_segments(
+pub(crate) fn verify_segments(
     facts: LedgerView<'_>,
     segments: &[HistoryView<'_>],
     months: &[String],

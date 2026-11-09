@@ -212,7 +212,7 @@ pub(crate) fn digest(
     Ok(Sha256::digest(bounded(&canonical, limits, cancel)?.as_slice()).into())
 }
 
-fn archived_operations<'a>(
+pub(crate) fn archived_operations<'a>(
     intents: &'a [Write],
     imports: Option<&'a ImportHistory>,
 ) -> BTreeSet<&'a str> {
@@ -232,7 +232,7 @@ fn archived_operations<'a>(
         .collect()
 }
 
-fn reserved_ids(imports: Option<&ImportHistory>) -> [(&'static str, BTreeSet<&str>); 2] {
+pub(crate) fn reserved_ids(imports: Option<&ImportHistory>) -> [(&'static str, BTreeSet<&str>); 2] {
     let pending_imports = imports
         .iter()
         .flat_map(|history| &history.rows)
@@ -476,6 +476,8 @@ fn read_history(
     Ok((json(&history)?, expected))
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct LedgerRows {
     pub accounts: Vec<Reference>,
     pub categories: Vec<Reference>,

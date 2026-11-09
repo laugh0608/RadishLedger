@@ -23,14 +23,14 @@ def unique_object(pairs: list[tuple[str, object]]) -> dict:
     return result
 
 
-def preflight(prefix: bytes, actual_length: int) -> str:
+def preflight(prefix: bytes, actual_length: int, *, expected_minor: int = 1) -> str:
     """独立解读已给定的 128 字节公开前缀，不接受文件 / 密文或执行解密。"""
     if len(prefix) != 128 or prefix[:8] != b"RLM0E001":
         return "invalid_archive"
     major, minor, header_size, suite, profile, flags = struct.unpack_from(
         ">HHIHHI", prefix, 8
     )
-    if (major, minor) != (0, 1) or suite != 1 or flags != 0:
+    if (major, minor) != (0, expected_minor) or suite != 1 or flags != 0:
         return "unsupported_archive"
     if header_size != 176:
         return "invalid_archive"
@@ -173,17 +173,55 @@ def check(material: dict) -> None:
     require(checked == 11, "preflight case coverage drift")
 
 
+def read_material(path: Path) -> dict:
+    with path.open("rb") as source:
+        raw = source.read(65537)
+    require(len(raw) <= 65536, "review material too large")
+    return json.loads(raw, object_pairs_hook=unique_object)
+
+
+def check_restored(path: Path) -> None:
+    material = path / "archive-restored-review-input.json"
+    data = read_material(material)
+    artifact = read_material(path / "archive-restored-review-vector.json")
+    base, output, provenance = data["baseInput"], artifact["output"], artifact["provenance"]
+    require(data["dataOrigin"] == "synthetic-public-restored-review-inputs", "restored origin drift")
+    require(output["status"] == "independent_go_oracle", "restored vector provenance drift")
+    payload = base["payloadUtf8"].encode("utf-8")
+    archive = bytes.fromhex(output["archiveHex"])
+    prefix = archive[:128]
+    require(preflight(prefix, len(archive)) == "unsupported_archive", "legacy version drift")
+    require(preflight(prefix, len(archive), expected_minor=2) == "framing_only", "restored header drift")
+    require(len(archive) == len(payload) + 328, "restored archive size drift")
+    for field, start, end in [("archiveIdHex", 24, 40), ("saltHex", 40, 56),
+                              ("wrapNonceHex", 72, 96), ("contentNonceHex", 96, 120)]:
+        require(prefix[start:end] == bytes.fromhex(base[field]), "restored entropy drift")
+    manifest = bytes.fromhex(output["manifestHex"])
+    expected = b"RLM0MAN1" + struct.pack(">HHIQ13IQ", 1, 2, 2, 1,
+                                        1, 0, 2, 2, 0, 2, *([0] * 7), len(payload))
+    require(manifest == expected + hashlib.sha256(payload).digest(), "restored manifest drift")
+    body = struct.pack(">I", 116) + manifest + struct.pack(">Q", len(payload)) + payload + b"RLM0END1"
+    require(hashlib.sha256(body).hexdigest() == output["plaintextSha256"], "restored plaintext drift")
+    require(hashlib.sha256(archive).hexdigest() == output["archiveSha256"], "restored archive digest drift")
+    require(hashlib.sha256(material.read_bytes()).hexdigest() == provenance["materialSha256"], "restored material drift")
+    oracle = Path(__file__).with_name("archive-vector-oracle.py")
+    sources = runpy.run_path(str(oracle))
+    legacy = sources["SOURCE"].replace("func main() {", "func legacyMain() {", 1)
+    source = legacy + "\0" + sources["RESTORED_SOURCE"]
+    require(hashlib.sha256(source.encode()).hexdigest() == provenance["sourceSha256"], "restored oracle source drift")
+    output_bytes = (json.dumps(output, sort_keys=True, indent=2) + "\n").encode()
+    require(hashlib.sha256(output_bytes).hexdigest() == provenance["outputsSha256"], "restored oracle output drift")
+
+
 def main() -> int:
-    path = Path(__file__).resolve().parents[1] / "docs/validation/archive-container-review-inputs.json"
+    path = Path(__file__).resolve().parents[1] / "docs/validation"
     try:
-        with path.open("rb") as source:
-            raw = source.read(65537)
-        require(len(raw) <= 65536, "review material too large")
-        check(json.loads(raw, object_pairs_hook=unique_object))
+        check(read_material(path / "archive-container-review-inputs.json"))
+        check_restored(path)
     except (OSError, ValueError, KeyError, TypeError, struct.error):
         print("archive review: material validation failed", file=sys.stderr)
         return 1
-    print("archive review: framing, offsets, SHA, 11 preflight schedules and 24 case declarations checked")
+    print("archive review: 0.1 / 0.2 framing, offsets, SHA, 11 preflight schedules and 24 case declarations checked")
     print("independent Go crypto outputs and source pinned; this check does not run KDF / AEAD / restore")
     return 0
 

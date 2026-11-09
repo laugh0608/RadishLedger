@@ -9,6 +9,9 @@ use zeroize::Zeroizing;
 
 #[path = "archive_json.rs"]
 pub(crate) mod json;
+#[cfg(all(test, unix))]
+#[path = "archive_restored.rs"]
+pub(crate) mod restored;
 #[cfg(test)]
 #[path = "archive_tests.rs"]
 mod tests;
@@ -172,14 +175,23 @@ fn decrypt(
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
+enum Version {
+    Legacy = 1,
+    #[cfg(all(test, unix))]
+    Restored = 2,
+}
+
 struct Header {
     prefix: [u8; 128],
+    version: Version,
 }
 impl Header {
-    fn new(n: usize, entropy: &Entropy) -> Self {
+    fn new(n: usize, entropy: &Entropy, version: Version) -> Self {
         let mut p = [0_u8; 128];
         p[..8].copy_from_slice(b"RLM0E001");
-        p[10..12].copy_from_slice(&1_u16.to_be_bytes());
+        p[10..12].copy_from_slice(&(version as u16).to_be_bytes());
         p[12..16].copy_from_slice(&(HEADER as u32).to_be_bytes());
         p[16..18].copy_from_slice(&1_u16.to_be_bytes());
         p[18..20].copy_from_slice(&1_u16.to_be_bytes());
@@ -191,23 +203,29 @@ impl Header {
         p[72..96].copy_from_slice(&entropy.wrap_nonce);
         p[96..120].copy_from_slice(&entropy.body_nonce);
         p[120..128].copy_from_slice(&((n + 152) as u64).to_be_bytes());
-        Self { prefix: p }
+        Self { prefix: p, version }
     }
 
-    fn read(input: &[u8], limits: Limits) -> Result<Self> {
+    fn read(input: &[u8], limits: Limits, max_version: Version) -> Result<Self> {
         if input.len() < HEADER || &input[..8] != b"RLM0E001" {
             return Err(invalid());
         }
         let p: [u8; 128] = input[..128].try_into().map_err(|_| invalid())?;
-        if u16::from_be_bytes(p[8..10].try_into().map_err(|_| invalid())?) != 0
-            || u16::from_be_bytes(p[10..12].try_into().map_err(|_| invalid())?) != 1
-            || u16::from_be_bytes(p[16..18].try_into().map_err(|_| invalid())?) != 1
+        let unsupported =
+            || CoreError::new("unsupported_archive", "归档版本、算法或 flags 不受支持");
+        let minor = u16::from_be_bytes([p[10], p[11]]);
+        let version = match minor {
+            1 => Version::Legacy,
+            #[cfg(all(test, unix))]
+            2 if max_version == Version::Restored => Version::Restored,
+            _ => return Err(unsupported()),
+        };
+        if minor > max_version as u16
+            || p[8..10] != [0; 2]
+            || p[16..18] != 1_u16.to_be_bytes()
             || p[20..24] != [0; 4]
         {
-            return Err(CoreError::new(
-                "unsupported_archive",
-                "归档版本、算法或 flags 不受支持",
-            ));
+            return Err(unsupported());
         }
         if u32::from_be_bytes(p[12..16].try_into().map_err(|_| invalid())?) != HEADER as u32 {
             return Err(invalid());
@@ -233,7 +251,7 @@ impl Header {
         if total != input.len() as u64 {
             return Err(invalid());
         }
-        Ok(Self { prefix: p })
+        Ok(Self { prefix: p, version })
     }
     fn id(&self) -> [u8; 16] {
         self.prefix[24..40].try_into().expect("fixed header field")
@@ -287,6 +305,18 @@ impl Entropy {
     }
 }
 
+fn import_counts(i: &crate::logical_snapshot::ImportHistory) -> [usize; 7] {
+    [
+        i.tasks.len(),
+        i.rows.len(),
+        i.sources.len(),
+        i.batches.len(),
+        i.undo_tasks.len(),
+        i.undo_rows.len(),
+        i.undo_batches.len(),
+    ]
+}
+
 fn counts(f: &Facts, limits: Limits) -> Result<[u32; 13]> {
     let mut sizes = [
         f.accounts.len(),
@@ -304,19 +334,15 @@ fn counts(f: &Facts, limits: Limits) -> Result<[u32; 13]> {
         0,
     ];
     if let Some(i) = &f.imports {
-        sizes[6..].copy_from_slice(&[
-            i.tasks.len(),
-            i.rows.len(),
-            i.sources.len(),
-            i.batches.len(),
-            i.undo_tasks.len(),
-            i.undo_rows.len(),
-            i.undo_batches.len(),
-        ]);
+        sizes[6..].copy_from_slice(&import_counts(i));
     }
+    checked_counts(sizes, 0, limits)
+}
+
+fn checked_counts(sizes: [usize; 13], extra: usize, limits: Limits) -> Result<[u32; 13]> {
     let total = sizes
         .iter()
-        .try_fold(0_usize, |n, value| n.checked_add(*value))
+        .try_fold(extra, |n, value| n.checked_add(*value))
         .ok_or_else(limit)?;
     if total > limits.records {
         return Err(limit());
@@ -329,33 +355,54 @@ fn counts(f: &Facts, limits: Limits) -> Result<[u32; 13]> {
 }
 
 fn manifest(facts: &Facts, payload: &[u8], limits: Limits) -> Result<[u8; MANIFEST]> {
+    Ok(build_manifest(
+        Version::Legacy,
+        facts.source_schema as u32,
+        facts.sequence as u64,
+        counts(facts, limits)?,
+        payload,
+    ))
+}
+
+fn build_manifest(
+    version: Version,
+    source: u32,
+    sequence: u64,
+    counts: [u32; 13],
+    payload: &[u8],
+) -> [u8; MANIFEST] {
     let mut output = [0_u8; MANIFEST];
     output[..8].copy_from_slice(b"RLM0MAN1");
     output[8..10].copy_from_slice(&1_u16.to_be_bytes());
-    output[10..12].copy_from_slice(&1_u16.to_be_bytes());
-    output[12..16].copy_from_slice(&(facts.source_schema as u32).to_be_bytes());
-    output[16..24].copy_from_slice(&(facts.sequence as u64).to_be_bytes());
-    for (n, value) in counts(facts, limits)?.iter().enumerate() {
+    output[10..12].copy_from_slice(&(version as u16).to_be_bytes());
+    output[12..16].copy_from_slice(&source.to_be_bytes());
+    output[16..24].copy_from_slice(&sequence.to_be_bytes());
+    for (n, value) in counts.iter().enumerate() {
         output[24 + 4 * n..28 + 4 * n].copy_from_slice(&value.to_be_bytes());
     }
     output[76..84].copy_from_slice(&(payload.len() as u64).to_be_bytes());
     output[84..].copy_from_slice(&Sha256::digest(payload));
-    Ok(output)
+    output
 }
 
-fn check_manifest(bytes: &[u8], payload: &[u8], limits: Limits) -> Result<()> {
+fn check_manifest(version: Version, bytes: &[u8], payload: &[u8], limits: Limits) -> Result<()> {
     if bytes.len() != MANIFEST
         || &bytes[..8] != b"RLM0MAN1"
         || bytes[8..10] != 1_u16.to_be_bytes()
-        || bytes[10..12] != 1_u16.to_be_bytes()
-        || !matches!(read_u32(bytes, 12)?, 1..=3)
+        || bytes[10..12] != (version as u16).to_be_bytes()
         || read_u64(bytes, 16)? > i64::MAX as u64
         || read_u64(bytes, 76)? != payload.len() as u64
         || bytes[84..] != Sha256::digest(payload)[..]
     {
         return Err(payload_error());
     }
-    let mut total = 0_usize;
+    let source = read_u32(bytes, 12)?;
+    let mut total: usize = match version {
+        Version::Legacy if matches!(source, 1..=3) => 0,
+        #[cfg(all(test, unix))]
+        Version::Restored if source >= 2 => source as usize,
+        _ => return Err(payload_error()),
+    };
     for n in 0..13 {
         total = total
             .checked_add(read_u32(bytes, 24 + 4 * n)? as usize)
@@ -409,7 +456,7 @@ fn seal_with(
     limits: Limits,
     cancel: &AtomicBool,
     entropy: &Entropy,
-    mut observe: impl FnMut(Point) -> Result<()>,
+    observe: impl FnMut(Point) -> Result<()>,
 ) -> Result<SealedArchive> {
     limits.validate()?;
     cancelled(cancel)?;
@@ -425,13 +472,33 @@ fn seal_with(
     )?);
     json::scan(&payload, limits, cancel)?;
     let m = manifest(&snapshot.contents().facts, &payload, limits)?;
+    seal_payload(
+        Version::Legacy,
+        &payload,
+        &m,
+        password,
+        cancel,
+        entropy,
+        observe,
+    )
+}
+
+fn seal_payload(
+    version: Version,
+    payload: &[u8],
+    manifest: &[u8; MANIFEST],
+    password: &[u8],
+    cancel: &AtomicBool,
+    entropy: &Entropy,
+    mut observe: impl FnMut(Point) -> Result<()>,
+) -> Result<SealedArchive> {
     let mut body = buffer(payload.len() + BODY_OVERHEAD + 16)?;
     body.extend_from_slice(&(MANIFEST as u32).to_be_bytes());
-    body.extend_from_slice(&m);
+    body.extend_from_slice(manifest);
     body.extend_from_slice(&(payload.len() as u64).to_be_bytes());
-    body.extend_from_slice(&payload);
+    body.extend_from_slice(payload);
     body.extend_from_slice(b"RLM0END1");
-    let header = Header::new(payload.len(), entropy);
+    let header = Header::new(payload.len(), entropy, version);
     let wrap_key = key(password, &header, cancel, &mut observe)?;
     let mut wrapped = copy(entropy.key.as_ref(), 16)?;
     encrypt(
@@ -475,13 +542,40 @@ fn open_observed(
     cancel: &AtomicBool,
     mut observe: impl FnMut(Point) -> Result<()>,
 ) -> Result<OpenedArchive> {
+    let (header, body) = open_payload(
+        input,
+        password,
+        limits,
+        cancel,
+        Version::Legacy,
+        &mut observe,
+    )?;
+    let contents = decode_legacy(&body, limits, cancel)?;
+    observe(Point::AfterJson)?;
+    cancelled(cancel)?;
+    observe(Point::Complete)?;
+    cancelled(cancel)?;
+    Ok(OpenedArchive {
+        id: header.id(),
+        contents,
+    })
+}
+
+fn open_payload(
+    input: &[u8],
+    password: &[u8],
+    limits: Limits,
+    cancel: &AtomicBool,
+    max_version: Version,
+    observe: &mut impl FnMut(Point) -> Result<()>,
+) -> Result<(Header, Zeroizing<Vec<u8>>)> {
     limits.validate()?;
     cancelled(cancel)?;
     if input.len() > limits.payload_bytes + OVERHEAD {
         return Err(limit());
     }
-    let header = Header::read(input, limits)?;
-    let wrap_key = key(password, &header, cancel, &mut observe)?;
+    let header = Header::read(input, limits, max_version)?;
+    let wrap_key = key(password, &header, cancel, observe)?;
     let mut wrapped = copy(&input[128..HEADER], 0)?;
     decrypt(
         &wrap_key,
@@ -517,17 +611,15 @@ fn open_observed(
         return Err(payload_error());
     }
     let payload = &body[128..128 + n];
-    check_manifest(&body[4..120], payload, limits)?;
+    check_manifest(header.version, &body[4..120], payload, limits)?;
+    Ok((header, body))
+}
+
+fn decode_legacy(body: &[u8], limits: Limits, cancel: &AtomicBool) -> Result<Contents> {
+    let payload = &body[128..body.len() - 8];
     let contents = json::decode(payload, limits, cancel)?;
     if body[4..120] != manifest(&contents.facts, payload, limits)? {
         return Err(payload_error());
     }
-    observe(Point::AfterJson)?;
-    cancelled(cancel)?;
-    observe(Point::Complete)?;
-    cancelled(cancel)?;
-    Ok(OpenedArchive {
-        id: header.id(),
-        contents,
-    })
+    Ok(contents)
 }
