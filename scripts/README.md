@@ -147,6 +147,6 @@ Unix 宿主的 `check-core.sh` 还执行 `store::pager_tests`：独占子进程�
 
 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restore_stage --jobs 4` 覆盖独立新 DB Key 的 SQLCipher 暂存、A11 / A06 / A04 与 v2 / v3 历史保真、重开 / 取消 / SQL 拒绝、归属 / 文件 / 预算与显式放弃。也由 `check-core.sh` 执行，无新依赖或迁移用户库。详细契约和未覆盖范围见[暂存宿主候选](../docs/validation/portability-cases.md#57-e-restore-受保护暂存宿主候选)。
 
-Unix 父测试实际调度 10 个准备点和数据库删除后的子进程 SIGKILL；只向自己创建的 worker 匿名 stdin 传随机合成暂存钥，参数 / 文件 / 日志不存钥。单 worker 最多等 20 秒，由父测试 Drop 回收进程；tempfile 回收本批原库 / 归档 / 暂存 / 明文扫描正向对照，未使用固定真实目录、端口、设备或系统项。ignored worker 是内部入口，父测试已覆盖它；不得单独当成未执行的业务能力或重复通过数。完整批次包含多次 64 MiB KDF 且共用测试串行锁，约数分钟，不等于单次 KDF / 真机性能。
+Unix 父测试实际调度 11 个准备点和 7 个放弃 / 清理点的子进程 SIGKILL。只向自己创建的 worker 匿名 stdin 传随机合成暂存钥。单 worker 最多等 20 秒，由父测试 Drop 回收；tempfile 回收本批合成文件。ignored worker 是内部入口，计数以父测试为准。完整批次包含多次 64 MiB KDF 并共用测试串行锁，整批耗时与单次 KDF 或真机性能分别衡量。
 
-暂存 schema 1001 是内部未发布候选，原 schema 1–3 不升级；Task / Ticket 保留在内存和合成定位材料，新钥尚无平台保存。结果只表示完整核对后的未发布目标，不代表活动切换、原队列可继续、空白设备恢复或生产备份文件保存。未知临时文件 / 缺 owner、目录仍在但 stage.db 缺失的阶段判定、discard 撤除后的终结窗口及最终定位材料删除异常均保留为缺口；现有原任务重试证据不覆盖这些窗口，不递归清理来制造成功。
+暂存 schema 1001 是内部未发布候选，原 schema 1–3 沿用原打开方式。Task / Ticket 保留在内存和合成定位材料，新钥尚无平台保存。覆盖首次未建库继续、已建库后缺库 / 零长度替换拒绝、v1 owner 兼容、旧 discard 撤除后继续清理及清理无归属时停止。结果限于宿主暂存，活动切换、旧队列运行、空白设备恢复和生产备份保存需另验。

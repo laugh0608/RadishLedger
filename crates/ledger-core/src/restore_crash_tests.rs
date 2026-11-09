@@ -5,6 +5,16 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+const CLEANUP_POINTS: [CleanupPoint; 7] = [
+    CleanupPoint::Permitted,
+    CleanupPoint::PayloadRemoved("stage.db"),
+    CleanupPoint::PayloadSynced,
+    CleanupPoint::LegacyPermitRemoved,
+    CleanupPoint::OwnerRemoved,
+    CleanupPoint::LockRemoved,
+    CleanupPoint::DirectoryRemoved,
+];
+
 fn reached(directory: &Path) {
     let mut marker = fs::OpenOptions::new()
         .write(true)
@@ -31,9 +41,9 @@ fn restore_crash_worker() {
     let ticket: Ticket =
         serde_json::from_slice(&fs::read(directory.join("ticket.json")).unwrap()).unwrap();
     let task = Task::resume(ticket, key).unwrap();
-    if point == POINTS.len() {
-        task.abandon_observed(&directory, |name| {
-            if name == "stage.db" {
+    if let Some(index) = point.checked_sub(POINTS.len()) {
+        task.abandon_observed(&directory, |point| {
+            if point == CLEANUP_POINTS[index] {
                 reached(&directory);
             }
             Ok(())
@@ -126,9 +136,15 @@ fn killed_staging_recovers_only_registered_or_whole_facts_and_retries_same_ident
                 "SELECT count(*) FROM restore_revisions",
             )
             .unwrap();
-            assert_eq!(visible, if n >= 7 { 8 } else { 0 });
+            let complete = matches!(point, Point::Written | Point::Verified | Point::Marked);
+            assert_eq!(visible, if complete { 8 } else { 0 });
         }
         kill(&mut worker);
+        let task = Task::resume(
+            task.ticket.clone(),
+            DbKey::from_secret(secret.as_ref()).unwrap(),
+        )
+        .unwrap();
         let target_id = task.ticket.target_id.clone();
         let result = task
             .prepare(
@@ -147,39 +163,74 @@ fn killed_staging_recovers_only_registered_or_whole_facts_and_retries_same_ident
 }
 
 #[test]
-fn killed_discard_keeps_permit_and_finishes_without_reopening_deleted_database() {
+fn killed_discard_resumes_only_while_ownership_can_be_proved() {
     let _guard = crate::crypto::KDF_TESTS.lock().unwrap();
-    let (dir, _key, _store, snapshot) = source("A11", "conflict");
+    let (source_dir, _key, store, snapshot) = source("A11", "conflict");
+    let original = store.content_digest().unwrap();
     let archive = seal(&snapshot, PASSWORD, CANDIDATE_LIMITS, &flag()).unwrap();
-    let mut task = Task::new(archive.as_bytes()).unwrap();
-    let secret = crate::crypto::random::<32>().unwrap();
-    task.key = DbKey::from_secret(secret.as_ref()).unwrap();
-    task.prepare(
-        dir.path(),
-        archive.as_bytes(),
-        PASSWORD,
-        CANDIDATE_LIMITS,
-        &flag(),
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("ticket.json"),
-        serde_json::to_vec(task.ticket()).unwrap(),
-    )
-    .unwrap();
-    let mut worker = spawn(dir.path(), POINTS.len(), secret.as_ref());
-    kill(&mut worker);
-    assert!(!path(dir.path(), task.ticket()).exists());
-    task.abandon(dir.path()).unwrap();
-    task.abandon(dir.path()).unwrap();
-    assert_eq!(
-        code(task.prepare(
+    for (index, point) in CLEANUP_POINTS.into_iter().enumerate() {
+        let dir = tempfile::tempdir_in(source_dir.path()).unwrap();
+        let mut task = Task::new(archive.as_bytes()).unwrap();
+        let secret = crate::crypto::random::<32>().unwrap();
+        task.key = DbKey::from_secret(secret.as_ref()).unwrap();
+        let other = Task::new(archive.as_bytes()).unwrap();
+        drop(files::Files::acquire(dir.path(), other.ticket(), true).unwrap());
+        let other_owner = path(dir.path(), other.ticket()).with_file_name("owner");
+        let other_marker = fs::read(&other_owner).unwrap();
+        task.prepare(
             dir.path(),
             archive.as_bytes(),
             PASSWORD,
             CANDIDATE_LIMITS,
-            &flag()
-        )),
-        "restore_io"
-    );
+            &flag(),
+        )
+        .unwrap();
+        let db = path(dir.path(), task.ticket());
+        let folder = db.parent().unwrap();
+        if point == CleanupPoint::LegacyPermitRemoved {
+            let marker = legacy_marker(task.ticket());
+            fs::write(folder.join("owner"), &marker).unwrap();
+            crate::bootstrap_files::publish(&folder.join("discard"), &marker, false).unwrap();
+        }
+        fs::write(
+            dir.path().join("ticket.json"),
+            serde_json::to_vec(task.ticket()).unwrap(),
+        )
+        .unwrap();
+        let mut worker = spawn(dir.path(), POINTS.len() + index, secret.as_ref());
+        kill(&mut worker);
+        assert_eq!(db.exists(), point == CleanupPoint::Permitted);
+        let (ticket, key) = task.into_parts();
+        let resumed = Task::resume(ticket, key).unwrap();
+        let expected = match point {
+            CleanupPoint::OwnerRemoved | CleanupPoint::LockRemoved => "restore_owner_missing",
+            CleanupPoint::DirectoryRemoved => "restore_io",
+            _ => "restore_discarding",
+        };
+        assert_eq!(
+            code(resumed.prepare(
+                dir.path(),
+                archive.as_bytes(),
+                PASSWORD,
+                CANDIDATE_LIMITS,
+                &flag()
+            )),
+            expected
+        );
+        if expected == "restore_owner_missing" {
+            assert_eq!(code(resumed.abandon(dir.path())), expected);
+            assert!(folder.is_dir());
+            assert_eq!(
+                folder.join("lock").exists(),
+                point == CleanupPoint::OwnerRemoved
+            );
+        } else {
+            resumed.abandon(dir.path()).unwrap();
+            resumed.abandon(dir.path()).unwrap();
+            assert!(!folder.exists());
+        }
+        assert!(!db.exists());
+        assert_eq!(store.content_digest().unwrap(), original);
+        assert_eq!(fs::read(other_owner).unwrap(), other_marker);
+    }
 }

@@ -14,7 +14,26 @@ const MEMBERS: [&str; 6] = [
     "stage.db-shm",
     "discard",
 ];
-const PREFIX: &[u8] = b"RadishLedger M0-E protected restore v1\n";
+const DATABASE_FILES: [&str; 3] = ["stage.db-wal", "stage.db-shm", "stage.db"];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Legacy,
+    Pending,
+    Initialized,
+    Discarding,
+}
+
+impl Phase {
+    fn prefix(self) -> &'static [u8] {
+        match self {
+            Self::Legacy => b"RadishLedger M0-E protected restore v1\n",
+            Self::Pending => b"RadishLedger M0-E protected restore v2 pending\n",
+            Self::Initialized => b"RadishLedger M0-E protected restore v2 initialized\n",
+            Self::Discarding => b"RadishLedger M0-E protected restore v2 discarding\n",
+        }
+    }
+}
 
 pub(super) fn file_error(error: CoreError) -> CoreError {
     let mut result = CoreError::new(
@@ -33,9 +52,9 @@ fn os_error(error: std::io::Error) -> CoreError {
     result.os_code = error.raw_os_error();
     result
 }
-fn marker(ticket: &Ticket) -> Result<Vec<u8>> {
-    let mut bytes = PREFIX.to_vec();
-    bytes.extend_from_slice(&serde_json::to_vec(ticket).map_err(|_| mismatch())?);
+fn marker(ticket: &Ticket, phase: Phase) -> Result<Vec<u8>> {
+    let mut bytes = phase.prefix().to_vec();
+    serde_json::to_writer(&mut bytes, ticket).map_err(|_| mismatch())?;
     bytes.push(b'\n');
     Ok(bytes)
 }
@@ -57,6 +76,8 @@ pub(super) struct Files {
     pub path: PathBuf,
     parent: PathBuf,
     ticket: Ticket,
+    phase: Phase,
+    legacy_discard: bool,
     _lock: File,
 }
 impl Files {
@@ -70,36 +91,67 @@ impl Files {
         }
         let parent = parent.canonicalize().map_err(os_error)?;
         let path = parent.join(format!("restore-{}", ticket.task_id));
-        match fs::symlink_metadata(&path) {
-            Ok(_) => {}
+        let created = match fs::symlink_metadata(&path) {
+            Ok(_) => false,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && allow_create => {
                 let mut builder = fs::DirBuilder::new();
                 #[cfg(unix)]
                 builder.mode(0o700);
                 builder.create(&path).map_err(os_error)?;
-                io::sync(&parent).map_err(file_error)?;
-                io::publish(&path.join("owner"), &marker(ticket)?, false).map_err(file_error)?;
+                true
             }
             Err(error) => return Err(os_error(error)),
-        }
+        };
         protected(&path, true)?;
-        protected(&path.join("owner"), false)?;
-        if io::read(&path.join("owner"), 4096).map_err(file_error)? != marker(ticket)? {
-            return Err(mismatch());
+        let owner = path.join("owner");
+        let lock_path = path.join("lock");
+        if !created {
+            if !io::exists(&owner).map_err(file_error)? {
+                return Err(CoreError::new(
+                    "restore_owner_missing",
+                    "恢复暂存缺少归属凭据，停止并保留目录",
+                ));
+            }
+            protected(&owner, false)?;
+            protected(&lock_path, false)?;
         }
-        Self::check_members(&path)?;
         let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
+        options.read(true).write(true).create_new(created);
         #[cfg(unix)]
         options.mode(0o600);
-        let lock = options.open(path.join("lock")).map_err(os_error)?;
-        protected(&path.join("lock"), false)?;
+        let lock = options.open(&lock_path).map_err(os_error)?;
         io::exclusive_lock(&lock).map_err(file_error)?;
+        if created {
+            io::sync(&parent).map_err(file_error)?;
+            io::publish(&owner, &marker(ticket, Phase::Pending)?, false).map_err(file_error)?;
+        }
         Self::check_members(&path)?;
+        let bytes = io::read(&owner, 4096).map_err(file_error)?;
+        let legacy_marker = marker(ticket, Phase::Legacy)?;
+        let expected = &legacy_marker[Phase::Legacy.prefix().len()..];
+        let phase = [
+            Phase::Pending,
+            Phase::Initialized,
+            Phase::Discarding,
+            Phase::Legacy,
+        ]
+        .into_iter()
+        .find(|phase| bytes.strip_prefix(phase.prefix()) == Some(expected))
+        .ok_or_else(mismatch)?;
+        let discard_path = path.join("discard");
+        let legacy_discard = io::exists(&discard_path).map_err(file_error)?;
+        if legacy_discard
+            && (!matches!(phase, Phase::Legacy | Phase::Discarding)
+                || io::read(&discard_path, 4096).map_err(file_error)? != legacy_marker)
+        {
+            return Err(mismatch());
+        }
         Ok(Self {
             path,
             parent,
             ticket: ticket.clone(),
+            phase,
+            legacy_discard,
             _lock: lock,
         })
     }
@@ -114,18 +166,11 @@ impl Files {
         }
         Ok(())
     }
-    pub fn discarding(&self) -> Result<bool> {
-        if !io::exists(&self.path.join("discard")).map_err(file_error)? {
-            return Ok(false);
-        }
-        if io::read(&self.path.join("discard"), 4096).map_err(file_error)? != marker(&self.ticket)?
-        {
-            return Err(mismatch());
-        }
-        Ok(true)
+    pub fn discarding(&self) -> bool {
+        self.phase == Phase::Discarding || self.legacy_discard
     }
     pub fn require_preparing(&self) -> Result<()> {
-        if self.discarding()? {
+        if self.discarding() {
             return Err(CoreError::new(
                 "restore_discarding",
                 "暂存正在放弃，只能继续原任务清理",
@@ -133,23 +178,89 @@ impl Files {
         }
         Ok(())
     }
-    pub fn permit_discard(&self) -> Result<()> {
-        io::publish(&self.path.join("discard"), &marker(&self.ticket)?, false).map_err(file_error)
+
+    pub fn can_initialize(&self) -> bool {
+        self.phase == Phase::Pending
     }
-    pub fn discard(self, after_remove: &mut impl FnMut(&str) -> Result<()>) -> Result<()> {
+
+    pub fn database_exists(&self) -> Result<bool> {
+        match fs::symlink_metadata(self.path.join("stage.db")) {
+            Ok(metadata) => {
+                if !metadata.is_file() || (!self.can_initialize() && metadata.len() == 0) {
+                    return Err(mismatch());
+                }
+                return Ok(true);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(os_error(error)),
+        }
+        if !self.can_initialize() {
+            return Err(CoreError::new(
+                "restore_stage_missing",
+                "恢复暂存数据库缺失，停止并保留原任务现场",
+            ));
+        }
+        for name in ["stage.db-wal", "stage.db-shm"] {
+            if io::exists(&self.path.join(name)).map_err(file_error)? {
+                return Err(mismatch());
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn create_database(&self) -> Result<()> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        options.open(self.path.join("stage.db")).map_err(os_error)?;
+        Ok(())
+    }
+
+    fn persist_phase(&mut self, phase: Phase) -> Result<()> {
+        if self.phase == phase {
+            // 前一次发布可能在替换后、目录同步前返回结果未定。
+            return io::sync(&self.path).map_err(file_error);
+        }
+        io::publish(
+            &self.path.join("owner"),
+            &marker(&self.ticket, phase)?,
+            true,
+        )
+        .map_err(file_error)?;
+        self.phase = phase;
+        Ok(())
+    }
+
+    pub fn mark_initialized(&mut self) -> Result<()> {
+        self.persist_phase(Phase::Initialized)
+    }
+
+    pub fn permit_discard(&mut self) -> Result<()> {
+        self.persist_phase(Phase::Discarding)
+    }
+
+    pub fn discard(self, observe: &mut impl FnMut(CleanupPoint) -> Result<()>) -> Result<()> {
         Self::check_members(&self.path)?;
-        for name in ["stage.db-wal", "stage.db-shm", "stage.db"] {
+        for name in DATABASE_FILES {
             if io::exists(&self.path.join(name)).map_err(file_error)? {
                 fs::remove_file(self.path.join(name)).map_err(os_error)?;
-                after_remove(name)?;
+                observe(CleanupPoint::PayloadRemoved(name))?;
             }
         }
         io::sync(&self.path).map_err(file_error)?;
-        // 删除数据完成后才移除定位材料；最后目录操作失败仍保留真实失败。
-        fs::remove_file(self.path.join("discard")).map_err(os_error)?;
-        fs::remove_file(self.path.join("lock")).map_err(os_error)?;
+        observe(CleanupPoint::PayloadSynced)?;
+        if self.legacy_discard {
+            fs::remove_file(self.path.join("discard")).map_err(os_error)?;
+            observe(CleanupPoint::LegacyPermitRemoved)?;
+        }
+        // owner 保留到载荷和旧许可均已删除。先撤除归属，再释放锁路径。
         fs::remove_file(self.path.join("owner")).map_err(os_error)?;
+        observe(CleanupPoint::OwnerRemoved)?;
+        fs::remove_file(self.path.join("lock")).map_err(os_error)?;
+        observe(CleanupPoint::LockRemoved)?;
         fs::remove_dir(&self.path).map_err(os_error)?;
+        observe(CleanupPoint::DirectoryRemoved)?;
         io::sync(&self.parent).map_err(file_error)
     }
 }

@@ -9,6 +9,7 @@ use crate::{CoreError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[path = "restore_files.rs"]
@@ -51,7 +52,7 @@ impl Ticket {
 pub struct Task {
     ticket: Ticket,
     key: DbKey,
-    allow_create: AtomicBool,
+    allow_create: Mutex<bool>,
 }
 
 /// 每次从实际暂存记录重建的结果；并非 Store、运行权限或可发布选择。
@@ -71,6 +72,7 @@ impl VerifiedStage {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Point {
     Owned,
+    Bound,
     Schema,
     References,
     Revisions,
@@ -80,6 +82,17 @@ pub(crate) enum Point {
     Written,
     Verified,
     Marked,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CleanupPoint {
+    Permitted,
+    PayloadRemoved(&'static str),
+    PayloadSynced,
+    LegacyPermitRemoved,
+    OwnerRemoved,
+    LockRemoved,
+    DirectoryRemoved,
 }
 
 pub(crate) fn mismatch() -> CoreError {
@@ -114,7 +127,7 @@ impl Task {
                 input_sha256: crate::crypto::hex(&Sha256::digest(input)),
             },
             key: DbKey::random()?,
-            allow_create: AtomicBool::new(true),
+            allow_create: Mutex::new(true),
         })
     }
 
@@ -124,7 +137,7 @@ impl Task {
         Ok(Self {
             ticket,
             key,
-            allow_create: AtomicBool::new(false),
+            allow_create: Mutex::new(false),
         })
     }
     pub fn ticket(&self) -> &Ticket {
@@ -178,28 +191,37 @@ impl Task {
     ) -> Result<VerifiedStage> {
         let opened = self.authenticate(input, password, limits, cancel)?;
         // 全部认证 / 业务校验成功后才创建或修改本任务的暂存目录。
-        let files = files::Files::acquire(
-            parent,
-            &self.ticket,
-            self.allow_create.load(Ordering::Relaxed),
-        )?;
-        self.allow_create.store(false, Ordering::Relaxed);
+        let mut files = {
+            let mut allow_create = self.allow_create.lock().map_err(|_| mismatch())?;
+            let files = files::Files::acquire(parent, &self.ticket, *allow_create)?;
+            *allow_create = false;
+            files
+        };
         files.require_preparing()?;
         observe(Point::Owned)?;
         check_cancel(cancel)?;
+        if !files.database_exists()? {
+            files.create_database()?;
+        }
+        let database = files.path.join("stage.db");
         let mut db = StageDb::prepare(
-            &files.path.join("stage.db"),
+            &database,
             &self.key,
             &self.ticket,
             opened.contents(),
+            files.can_initialize(),
             cancel,
         )?;
+        observe(Point::Bound)?;
+        check_cancel(cancel)?;
+        // 事实写入前先持久登记数据库已建立，缺库时才能拒绝重建。
+        files.mark_initialized()?;
         observe(Point::Schema)?;
         check_cancel(cancel)?;
         db.write(opened.contents(), cancel, &mut observe)?;
         // 关闭写连接，再从实际加密目标重开，不以写端内存对象代替落盘核对。
         drop(db);
-        let db = StageDb::open(&files.path.join("stage.db"), &self.key, &self.ticket)?;
+        let db = StageDb::open(&database, &self.key, &self.ticket)?;
         let contents = db.verify(opened.contents(), limits, cancel)?;
         observe(Point::Verified)?;
         check_cancel(cancel)?;
@@ -225,6 +247,7 @@ impl Task {
         let opened = self.authenticate(input, password, limits, cancel)?;
         let files = files::Files::acquire(parent, &self.ticket, false)?;
         files.require_preparing()?;
+        files.database_exists()?;
         let db = StageDb::open_readonly(&files.path.join("stage.db"), &self.key, &self.ticket)?;
         let contents = db.verify(opened.contents(), limits, cancel)?;
         check_cancel(cancel)?;
@@ -234,7 +257,7 @@ impl Task {
         })
     }
 
-    /// 只删除本任务已核对的固定文件；失败保留 discard 许可供原任务重试。
+    /// 只删除本任务已核对的固定文件；重试须仍有归属或目录已不存在。
     pub fn abandon(&self, parent: &Path) -> Result<()> {
         self.abandon_observed(parent, |_| Ok(()))
     }
@@ -242,21 +265,23 @@ impl Task {
     fn abandon_observed(
         &self,
         parent: &Path,
-        mut after_remove: impl FnMut(&str) -> Result<()>,
+        mut observe: impl FnMut(CleanupPoint) -> Result<()>,
     ) -> Result<()> {
-        self.allow_create.store(false, Ordering::Relaxed);
+        *self.allow_create.lock().map_err(|_| mismatch())? = false;
         if files::already_absent(parent, &self.ticket)? {
             return Ok(());
         }
-        let files = files::Files::acquire(parent, &self.ticket, false)?;
-        if !files.discarding()? {
-            if crate::bootstrap_files::exists(&files.path.join("stage.db"))
-                .map_err(files::file_error)?
-            {
-                StageDb::check_abandon(&files.path.join("stage.db"), &self.key, &self.ticket)?;
-            }
-            files.permit_discard()?;
+        let mut files = files::Files::acquire(parent, &self.ticket, false)?;
+        if !files.discarding() && files.database_exists()? {
+            StageDb::check_abandon(
+                &files.path.join("stage.db"),
+                &self.key,
+                &self.ticket,
+                files.can_initialize(),
+            )?;
         }
-        files.discard(&mut after_remove)
+        files.permit_discard()?;
+        observe(CleanupPoint::Permitted)?;
+        files.discard(&mut observe)
     }
 }

@@ -163,29 +163,16 @@ impl StageDb {
         key: &DbKey,
         ticket: &Ticket,
         source: &Contents,
+        can_initialize: bool,
         cancel: &AtomicBool,
     ) -> Result<Self> {
         check_cancel(cancel)?;
-        if !path.exists() {
-            let mut options = std::fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            options.open(path).map_err(|error| {
-                let mut e = CoreError::new("restore_io", "无法创建独占暂存数据库");
-                e.os_code = error.raw_os_error();
-                e
-            })?;
-        }
         let store = Store::connect(path, key, false)?;
         let version: i64 = store
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(db_error)?;
-        if version == 0 {
+        if version == 0 && can_initialize {
             let count: i64 = store
                 .connection
                 .query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))
@@ -227,13 +214,18 @@ impl StageDb {
         binding(&store.connection, ticket)?;
         Ok(Self { store })
     }
-    pub fn check_abandon(path: &Path, key: &DbKey, ticket: &Ticket) -> Result<()> {
-        let store = Store::connect(path, key, false)?;
+    pub fn check_abandon(
+        path: &Path,
+        key: &DbKey,
+        ticket: &Ticket,
+        can_initialize: bool,
+    ) -> Result<()> {
+        let store = Store::connect(path, key, true)?;
         let version: i64 = store
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(db_error)?;
-        if version == 0 {
+        if version == 0 && can_initialize {
             let count: i64 = store
                 .connection
                 .query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))

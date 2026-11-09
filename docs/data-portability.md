@@ -280,18 +280,26 @@ S 为无 BOM 的单个 UTF-8 JSON 文本，可含 JSON 定义的前后空白；�
 
 本切片落实新独占 SQLCipher 目标、完整事实核对与原任务继续 / 放弃；不是第 4.1 节的活动发布、平台钥准备或空白设备交付。实验实现入口为 `restore_stage::Task`，具体验证与剩余门槛见[共同案例第 5.7 节](validation/portability-cases.md#57-e-restore-受保护暂存宿主候选)，顺位仅维护在 current。容器 profile 与生产支持范围不因暂存实现而冻结。
 
-- `Task::new` 在暂存 IO 前生成独立随机 DB Key、task_id 与 target_id，绑定归档 ID 和完整密文 SHA-256。Ticket 是非秘密定位材料，既不是恢复钥，也不是生产 Book / runtime / 同步身份；口令、Archive Key、DB Key、原设备钥不进入 Ticket / owner / 进度。新任务不能注入旧 DB Key；`resume` 不新建任务目录，需调用方重新提供暂存钥；目录内 stage.db 缺失时的当前行为与限制见本节末段。本宿主切片只在内存 / 测试匿名管道持有该钥，尚无平台封装 / 保存。
+- `Task::new` 在暂存 IO 前生成独立随机 DB Key、task_id 与 target_id，绑定归档 ID 和完整密文 SHA-256。Ticket 是非秘密定位材料，既不是恢复钥，也不是生产 Book / runtime / 同步身份；口令、Archive Key、DB Key、原设备钥不进入 Ticket / owner / 进度。新任务不能注入旧 DB Key；`resume` 不新建任务目录，需调用方重新提供暂存钥。库文件缺失按下述 owner 阶段判定。本宿主切片只在内存 / 测试匿名管道持有该钥，尚无平台封装 / 保存。
 - `prepare` 每次重检密文 fingerprint、重新认证原归档并校验业务内容，然后才创建 / 使用调用方指定父目录下的固定 `restore-<task_id>`。归档不能提供路径；目录 / 文件使用 Unix 0700 / 0600，owner、普通文件 / 单硬链接及独占锁约束精确目标。owner、输入、目录类型 / 权限、未知成员或 schema 不符即停止；不扫描猜测其他可打开目标。
 - 暂存使用独立实验 schema `user_version=1001`：账户、分类、修订、所选与候选为实际表行，顺序位置显式保留；原意图和导入 / 撤销各集合进入独立 `restore_*` 历史表。没有 outbox、可执行 CSV 任务、bootstrap、会话 / cursor 或可发送 envelope。源 schema 1–3 与 sequence、原导入目标仅作加密的来源证据，新 target_id 与其分开；普通 `Store::open` 拒绝暂存版本。该编号是内部实验隔离，不是生产账务升级或格式承诺。
 - schema / 绑定先原子登记；全部事实、历史和 written 状态再同一事务提交。未提交失败保留 registered 空目标，已提交后取消 / 丢响应保留完整 written 内容；再次 prepare 沿原身份核对，不对非空暂存 upsert、不顺序重放旧编辑、不为统计另造余额。关闭写连接后从实际目标重开，用原关系验证 / 投影重建逐项比较全部内容，才登记 verified；`inspect` 也重新认证源并从单一读取事务重建，不信任裸 verified 标志。异常不自动重建覆盖差异。
 - 暂存读取复用容器预算与快照有界编码，并重检实际记录 / 字节、嵌套 JSON 与完整关系。资源预算不是设备内存峰值承诺；SQLCipher 配置复用原核心，MEMORY 临时策略不变。取消只表示本次准备停止、原活动库保留，不保证已提交暂存被回滚或被擦除。
-- `abandon` 核对 owner / 目标及已建立的加密绑定，再持久写入固定 discard 许可，只逐一删除本任务 DB / WAL / SHM。在 DB / WAL / SHM 删除阶段失败或中断时，许可与定位材料仍在，原任务可继续清理；discard 仍存在时不允许重新 prepare。最终移除许可 / 定位材料后的中断另属未关闭窗口。目标目录已不存在时可重试同步父目录，不能据此扫描或删除其他目录。未知文件、链接、错误钥或归属漂移保留现场，不执行递归删除。
+- `abandon` 核对 owner / 目标及已建立的加密绑定，先持久登记放弃，再逐一删除本任务 DB / WAL / SHM 并同步目录。归属凭据撤除前可按原任务重试。旧版 `discard` 许可先转为 owner 的放弃阶段，再移除旧许可，期间禁止重新 prepare。清理只涉及明确归属的固定路径。未知文件、链接、错误钥或归属漂移保留现场。
 
 返回的 `VerifiedStage` 只提供核对后的 Contents 与 Ticket；没有日常记账、旧队列续发或活动选择写入能力。旧库在暂存期间继续变化时，暂存仍代表归档捕获点，不能据此丢弃旧库新增事实。旧活动身份 / 核对点、停止旧写与在途操作、平台 bootstrap / 系统项及选择记录条件发布须在下一切片实现，不能从本宿主目标推导已切换。
 
-日终静态对照进一步限定两处行为：`Task::resume` 只禁止新建任务目录；owner 已匹配而 stage.db 缺失时，`StageDb::prepare` 仍会新建数据库并从重新认证源填入。当前 owner 仅保存 Ticket，不能独立区分首次尚未建库与 written / verified 后丢库。清理在数据删除后依次移除 discard、lock、owner 和目录；discard 已移除而 owner / 目录尚在的中断窗口，也未证明重开不会被当作可 prepare 的目标。这两项是代码审阅发现，未新增故障运行证据；目录缺失 / discard 仍在的现有拒绝测试不能覆盖它们。
+owner v2 将阶段与原 Ticket 绑定，使用已有原子发布及目录同步。阶段在独占文件锁内核对。数据库内部的 registered / written / verified 仍由 SQL 事务记录，owner 只负责文件级边界。
 
-owner / discard 原子发布复用已有文件原语，但尚未逐 IO 覆盖 mkdir 至 owner 发布、临时发布文件残留、最终定位材料删除 / 目录同步失败的所有中断。遇到缺 owner、未知临时文件或不一致定位材料时停止并保留；本切片不承诺自动清理这些现场。文件逐点真实 IO / 掉电、容量预留、平台保护 / 备份排除、真机 KDF / 峰值 / UI 和暂存钥跨设备保护仍缺证据。完整 E17–E20、E-RESTORE、M0-E 与 M0 不因此关闭。
+| 文件状态 | 重开行为 |
+| --- | --- |
+| `pending` | 创建并锁定固定 lock、同步父目录后发布 owner。重开若 DB、WAL 和 SHM 均未出现，可沿原身份排他创建 DB；已有 DB 则核对空 schema 或原加密绑定。 |
+| `initialized` | 加密 schema / 绑定建立后、事实写入前持久登记；重开时缺库报告 `restore_stage_missing`，零长度替代文件拒绝。重试仍验证绑定、来源和实际事实。 |
+| v1 owner | 有可核对的已绑定 DB 时可重开；重新认证归档并核对 schema、Ticket 和来源后可升级文件阶段。缺库时保留现场。旧 `discard` 仅与原 Ticket 匹配时接受。 |
+| `discarding` | 只允许继续原任务清理。载荷删除并同步后，依次撤除旧 discard（若有）、owner、lock 和任务目录，最后同步父目录。 |
+| 缺 owner 或目录已移除 | 目录仍在但无 owner 时报告 `restore_owner_missing` 并保留余项；目录已不存在时，放弃重试仅同步父目录。 |
+
+mkdir 后未发布 owner、未知临时发布文件或不一致定位材料保留现场，按可核对证据决定后续处理。仍缺 owner 原子替换内部的逐 IO 证据、实际目录同步失败、真实容量 / IO / 掉电、平台保护 / 备份排除和真机 KDF / 峰值 / UI 证据。完整 E17–E20、E-RESTORE、M0-E 与 M0 仍待验收。
 
 ### 4.2 业务身份与同步身份
 

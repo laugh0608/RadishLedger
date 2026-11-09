@@ -8,8 +8,9 @@ use std::fs;
 use std::sync::atomic::Ordering;
 
 const PASSWORD: &[u8] = b"public-restore-stage-test-password";
-const POINTS: [Point; 10] = [
+const POINTS: [Point; 11] = [
     Point::Owned,
+    Point::Bound,
     Point::Schema,
     Point::References,
     Point::Revisions,
@@ -60,6 +61,12 @@ fn assert_contents(actual: &Contents, expected: &Contents) {
 }
 fn code<T>(result: Result<T>) -> &'static str {
     result.err().unwrap().code
+}
+fn legacy_marker(ticket: &Ticket) -> Vec<u8> {
+    let mut bytes = b"RadishLedger M0-E protected restore v1\n".to_vec();
+    serde_json::to_writer(&mut bytes, ticket).unwrap();
+    bytes.push(b'\n');
+    bytes
 }
 fn public_archive() -> Vec<u8> {
     let material: Value = serde_json::from_str(include_str!(
@@ -462,6 +469,121 @@ fn owner_wrong_key_unknown_schema_busy_links_and_unknown_files_are_rejected() {
 }
 
 #[test]
+fn resumed_verified_stage_with_missing_database_preserves_the_task_and_source() {
+    let _guard = crate::crypto::KDF_TESTS.lock().unwrap();
+    let (dir, _key, store, snapshot) = source("A11", "conflict");
+    let original = store.content_digest().unwrap();
+    let archive = seal(&snapshot, PASSWORD, CANDIDATE_LIMITS, &flag()).unwrap();
+    let task = Task::new(archive.as_bytes()).unwrap();
+    let prepared = task
+        .prepare(
+            dir.path(),
+            archive.as_bytes(),
+            PASSWORD,
+            CANDIDATE_LIMITS,
+            &flag(),
+        )
+        .unwrap();
+    assert_contents(prepared.contents(), snapshot.contents());
+    let db = path(dir.path(), task.ticket());
+    let owner = db.with_file_name("owner");
+    let owner_bytes = fs::read(&owner).unwrap();
+    let saved = dir.path().join("detached-stage.db");
+    fs::rename(&db, &saved).unwrap();
+    let (ticket, key) = task.into_parts();
+    let resumed = Task::resume(ticket, key).unwrap();
+    assert_eq!(
+        code(resumed.prepare(
+            dir.path(),
+            archive.as_bytes(),
+            PASSWORD,
+            CANDIDATE_LIMITS,
+            &flag()
+        )),
+        "restore_stage_missing"
+    );
+    assert_eq!(code(resumed.abandon(dir.path())), "restore_stage_missing");
+    assert!(!db.exists());
+    assert!(saved.is_file());
+    assert_eq!(fs::read(&owner).unwrap(), owner_bytes);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(&db).unwrap();
+    assert_eq!(
+        code(resumed.prepare(
+            dir.path(),
+            archive.as_bytes(),
+            PASSWORD,
+            CANDIDATE_LIMITS,
+            &flag()
+        )),
+        "restore_mismatch"
+    );
+    assert_eq!(fs::metadata(&db).unwrap().len(), 0);
+    assert_eq!(fs::read(owner).unwrap(), owner_bytes);
+    assert_eq!(store.content_digest().unwrap(), original);
+}
+
+#[test]
+fn legacy_owner_requires_an_existing_bound_database_before_upgrade() {
+    let _guard = crate::crypto::KDF_TESTS.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let input = public_archive();
+    let task = Task::new(&input).unwrap();
+    task.prepare(
+        dir.path(),
+        &input,
+        PUBLIC_PASSWORD,
+        CANDIDATE_LIMITS,
+        &flag(),
+    )
+    .unwrap();
+    let db = path(dir.path(), task.ticket());
+    let owner = db.with_file_name("owner");
+    let legacy = legacy_marker(task.ticket());
+    fs::write(&owner, &legacy).unwrap();
+    let saved = dir.path().join("legacy-stage.db");
+    fs::rename(&db, &saved).unwrap();
+    let (ticket, key) = task.into_parts();
+    let resumed = Task::resume(ticket, key).unwrap();
+    assert_eq!(
+        code(resumed.prepare(
+            dir.path(),
+            &input,
+            PUBLIC_PASSWORD,
+            CANDIDATE_LIMITS,
+            &flag()
+        )),
+        "restore_stage_missing"
+    );
+    assert!(!db.exists());
+    assert_eq!(fs::read(&owner).unwrap(), legacy);
+    fs::rename(saved, &db).unwrap();
+    let result = resumed
+        .prepare(
+            dir.path(),
+            &input,
+            PUBLIC_PASSWORD,
+            CANDIDATE_LIMITS,
+            &flag(),
+        )
+        .unwrap();
+    assert_eq!(result.ticket().target_id(), resumed.ticket().target_id());
+    assert!(result.contents().facts.revisions.is_empty());
+    assert!(
+        fs::read(&owner)
+            .unwrap()
+            .starts_with(b"RadishLedger M0-E protected restore v2 initialized\n")
+    );
+    resumed.abandon(dir.path()).unwrap();
+}
+
+#[test]
 fn discard_failure_retains_exact_permit_and_retry_cannot_resurrect_target() {
     let _guard = crate::crypto::KDF_TESTS.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -475,8 +597,8 @@ fn discard_failure_retains_exact_permit_and_retry_cannot_resurrect_target() {
         &flag(),
     )
     .unwrap();
-    let result = task.abandon_observed(dir.path(), |name| {
-        if name == "stage.db" {
+    let result = task.abandon_observed(dir.path(), |point| {
+        if point == CleanupPoint::PayloadRemoved("stage.db") {
             Err(CoreError::new("injected_cleanup", "合成删除后失败"))
         } else {
             Ok(())
@@ -484,7 +606,11 @@ fn discard_failure_retains_exact_permit_and_retry_cannot_resurrect_target() {
     });
     assert_eq!(code(result), "injected_cleanup");
     let folder = path(dir.path(), task.ticket()).parent().unwrap().to_owned();
-    assert!(folder.join("owner").exists() && folder.join("discard").exists());
+    assert!(
+        fs::read(folder.join("owner"))
+            .unwrap()
+            .starts_with(b"RadishLedger M0-E protected restore v2 discarding\n")
+    );
     assert!(!folder.join("stage.db").exists());
     assert_eq!(
         code(task.prepare(
@@ -694,7 +820,7 @@ fn unregistered_orphan_and_unknown_publication_file_are_preserved_for_review() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&folder, fs::Permissions::from_mode(0o700)).unwrap();
     }
-    assert_eq!(code(task.abandon(dir.path())), "restore_io");
+    assert_eq!(code(task.abandon(dir.path())), "restore_owner_missing");
     assert!(folder.exists());
     // 缺 owner 不按路径名推断归属；原任务材料重新建立后仍拒绝未知临时文件。
     fs::remove_dir(&folder).unwrap();
