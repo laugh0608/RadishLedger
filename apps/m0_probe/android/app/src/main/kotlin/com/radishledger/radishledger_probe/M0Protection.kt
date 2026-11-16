@@ -114,8 +114,9 @@ class M0Protection(private val activity: Activity, private val channel: MethodCh
         }
         if (call.method == "cancel") { cancel(); result.success(null); return }
         if (call.method == "capabilities") { result.success(capabilities()); return }
-        if (call.method == "storage") {
-            try { result.success(storage("m0-c").absolutePath) }
+        if (call.method == "storage" || call.method == "internalLedgerStorage") {
+            val directory = if (call.method == "storage") "m0-c" else "internal-ledger"
+            try { result.success(storage(directory).absolutePath) }
             catch (error: Exception) { val failure = mapped(error); result.error(failure.code, "实验私有目录不可用", mapOf("platformCode" to failure.platformCode)) }
             return
         }

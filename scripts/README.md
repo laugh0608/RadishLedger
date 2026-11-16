@@ -172,3 +172,7 @@ Unix 父测试实际调度 11 个准备点和 7 个放弃 / 清理点的子进�
 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core --lib e15_ --jobs 4` 验证 Unix 宿主私有目录上的有界文件写入、回读认证、无覆盖发布、未定结果复核及独立 SQLCipher 暂存恢复。`restore_roundtrip` 在宿主机上从实际保存的 `0.2` 文件开始第一代独立恢复。两组都由 `check-core.sh` 执行。
 
 E15 的父测试在发布前后强杀自己启动的 worker，单 worker 等待上限为 20 秒。密文经匿名 stdin 传入，使用固定公开测试口令。父测试核对残留后回收本次独占 tempfile，复核入口保留未确认归属的临时文件。实际覆盖范围见 [E15 宿主文件验收](../docs/validation/portability-cases.md#511-e15-宿主新建归档文件)。
+
+### M0 Android 内部账簿创建与重开
+
+Android 的 `lib/main.dart` 使用 `--dart-define=RADISH_INTERNAL_LEDGER=true` 选择内部账簿页面。按既有设备授权范围取实际运行证据，使用合成口令与恢复材料。宿主可在 `apps/m0_probe` 执行 `flutter test --no-pub test/internal_ledger_test.dart`，验证实际薄 C ABI、SQLCipher、创建与重开及窄屏行为。仓库根的 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core --test bootstrap_process --jobs 4` 补充实际子进程创建中断与待恢复 WAL 重开。保护替身与宿主 PID 证据分别记录。[实现与失败边界](../docs/development/mobile-core-prototype.md#8-android-内部账簿的创建与重开)

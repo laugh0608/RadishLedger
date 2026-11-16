@@ -252,7 +252,7 @@ pub(crate) fn publish_with_fault(
 }
 
 impl Files {
-    pub fn acquire(directory: &Path, run: &str, create: bool) -> Result<Self> {
+    fn path(directory: &Path, run: &str) -> Result<(PathBuf, PathBuf)> {
         identity(run)?;
         if !directory.is_absolute()
             || !directory.is_dir()
@@ -262,6 +262,20 @@ impl Files {
         }
         let directory = directory.canonicalize().map_err(io_error)?;
         let path = directory.join(format!("m0c-{run}"));
+        Ok((directory, path))
+    }
+
+    pub fn locate(directory: &Path, run: &str) -> Result<Option<Self>> {
+        let (_, path) = Self::path(directory, run)?;
+        match fs::symlink_metadata(path) {
+            Ok(_) => Self::acquire(directory, run, false).map(Some),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(io_error(error)),
+        }
+    }
+
+    pub fn acquire(directory: &Path, run: &str, create: bool) -> Result<Self> {
+        let (directory, path) = Self::path(directory, run)?;
         if create {
             let mut builder = fs::DirBuilder::new();
             #[cfg(unix)]

@@ -624,3 +624,13 @@ macOS 可运行 `sh scripts/check-ios-file-protection.sh`：现有 Swift 工具�
 Android 当前返回 `unsupportedPlatform`，iOS Simulator 返回 `unsupportedSimulator`；仍可进行重新解锁 / 账务复核，但两者不产生锁屏拒绝证据。所有报告维持 `hardwareVerified=false` / `acceptance=not-assessed`。基线仅存在当前页面进程内，重开页或新 PID 明确显示没有基线，不能宣称跨 PID 已比较；原 selection 与独立恢复流程继续可用。
 
 [宿主恢复测试](../../apps/m0_probe/test/bootstrap_lock_review_test.dart)通过 thin / FRB 真实 Rust / SQLCipher 核心验证前后 Inspect、错误材料保全、系统解锁适配、取消后重试与清理失败重试；认证 / 文件状态使用替身，不算系统保护实测。[页面测试](../../apps/m0_probe/test/bootstrap_lock_review_widget_test.dart)验证后台清除、晚结果隔离、取消、摘要不符、重开页缺失基线及窄屏两倍字号可滚动操作。Swift 定向检查验证真实合成文件的缺失 / 空 sidecar、链接拒绝、原内容保留和独立写对照，状态拒绝仍为注入。目标构建、移动 UI / 生命周期和真机证据分别记 current / devlog，不用宿主测试或包构建替代设备操作。
+
+## 8. Android 内部账簿的创建与重开
+
+Android 主入口可通过 `--dart-define=RADISH_INTERNAL_LEDGER=true` 打开合成账簿页面。平台通过既有保护通道返回独立的 `noBackupFilesDir/internal-ledger`，与 M0-C 诊断目录隔离。该目录内使用固定定位槽，Rust 为账簿与设备分别生成随机身份。页面通过薄 C ABI / Dart FFI 使用原加密核心，创建后要求用户明确确认其保存的独立恢复材料。[内部体验范围](../design/mobile-experience.md#13-受限内部本地流程) · [桥接决策](../adr/0005-android-internal-bridge.md)
+
+启动使用 `locate` 在归属锁下读取本地定位状态。空槽可显式创建。已有有效封装且数据库尚未登记启动时，凭原口令或恢复材料继续初始化。已经登记启动但缺库、目录归属不明或封装损坏时，停止并保留现场。定位元数据只供导航，原库身份、恢复材料确认和完整事实仍经认证与 SQLCipher 核对。内部流程为既有账库动作携带 `expected_identity`，Rust 在原锁内先核对账簿与设备身份，再解锁或执行写入。
+
+关闭或退后台时，界面清除输入、恢复材料及已打开状态。停止等待立即使正在执行的结果失效，直到核心退出并重新核对磁盘定位才允许再次操作。未确认且无账务的账簿可按原封装流程用口令重新签发恢复材料。系统认证不可用时显示平台能力状态，独立本地口令和恢复材料由用户选择。设备认证注册与日常解锁走后续平台验收。
+
+宿主验证使用真实 Rust / SQLCipher 与薄桥接。Flutter 在窄屏双倍字号下运行创建、确认、错误口令、切后台丢弃晚结果以及重新打开，系统能力使用替身。Rust 父测试另用实际子进程核对创建中断、强杀后新 PID、身份、A11 完整事实和错误保全。真实 Android 页面、App 进程重启和系统认证依次取证。[复现入口](../../scripts/README.md#m0-android-内部账簿创建与重开)

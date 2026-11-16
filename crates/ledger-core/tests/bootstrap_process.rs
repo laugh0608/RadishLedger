@@ -367,6 +367,9 @@ fn real_process_bootstrap_interruptions_and_independent_recovery() {
         "protectionPublished",
     ] {
         let run = radishledger_core::random_id().unwrap();
+        let (empty, _) = ok(call(directory.path(), &run, json!({"kind":"locate"}), &[]));
+        assert_eq!(empty, json!({"state":"empty"}));
+        assert!(!directory.path().join(format!("m0c-{run}")).exists());
         if ["envelopesSaved", "databaseStarted", "databaseReady"].contains(&point) {
             kill_at(
                 directory.path(),
@@ -380,6 +383,7 @@ fn real_process_bootstrap_interruptions_and_independent_recovery() {
                 ),
                 point,
             );
+            let located = call(directory.path(), &run, json!({"kind":"locate"}), &[]);
             let resumed = call(
                 directory.path(),
                 &run,
@@ -387,6 +391,7 @@ fn real_process_bootstrap_interruptions_and_independent_recovery() {
                 recovery.as_bytes(),
             );
             if point == "databaseStarted" {
+                assert_eq!(located.0["error"]["code"], "missing_database");
                 assert_eq!(resumed.0["error"]["code"], "missing_database");
                 assert!(
                     !directory
@@ -397,7 +402,18 @@ fn real_process_bootstrap_interruptions_and_independent_recovery() {
                 ok(call(directory.path(), &run, json!({"kind":"cleanup"}), &[]));
                 continue;
             }
-            ok(resumed);
+            let (located, _) = ok(located);
+            assert_eq!(
+                located["state"],
+                if point == "envelopesSaved" {
+                    "initializing"
+                } else {
+                    "registered"
+                }
+            );
+            let (resumed, _) = ok(resumed);
+            assert_eq!(located["vault"], resumed["vault"]);
+            assert_eq!(located["device"], resumed["device"]);
         } else {
             ok(call(
                 directory.path(),
@@ -528,6 +544,9 @@ fn nonempty_wal_survives_kill_wrong_material_and_original_intent_replay() {
     let path = directory.path().join(format!("m0c-{run}"));
     assert!(std::fs::metadata(path.join("ledger.db-wal")).unwrap().len() > 32);
     let original_files = hashes(&path);
+    let (located, _) = ok(call(directory.path(), &run, json!({"kind":"locate"}), &[]));
+    assert_eq!(located["state"], "registered");
+    assert_eq!(hashes(&path), original_files);
     for (unlock, secret) in [
         (
             "password",
@@ -559,6 +578,8 @@ fn nonempty_wal_survives_kill_wrong_material_and_original_intent_replay() {
         recovery.as_bytes(),
     ));
     assert_nonempty(&before);
+    assert_eq!(located["vault"], before["vault"]);
+    assert_eq!(located["device"], before["device"]);
     assert_ne!(before["pid"], killed_pid);
     let (password_opened, _) = ok(call(
         directory.path(),
@@ -579,6 +600,9 @@ fn nonempty_wal_survives_kill_wrong_material_and_original_intent_replay() {
     let bootstrap = std::fs::read(&bootstrap_path).unwrap();
     std::fs::write(&bootstrap_path, b"{").unwrap();
     let corrupted_files = hashes(&path);
+    let located = call(directory.path(), &run, json!({"kind":"locate"}), &[]);
+    assert_eq!(located.0["error"]["code"], "invalid_bootstrap");
+    assert_eq!(hashes(&path), corrupted_files);
     let rejected = call(
         directory.path(),
         &run,

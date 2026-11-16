@@ -61,6 +61,8 @@ pub struct Request {
     pub pause_at: Option<Point>,
     #[serde(default)]
     pub file_fault: Option<FileFault>,
+    #[serde(default)]
+    pub expected_identity: Option<(String, String)>,
 }
 
 #[derive(Deserialize)]
@@ -76,6 +78,7 @@ pub enum Action {
     Replay { unlock: Unlock },
     PrepareProtection { unlock: Unlock },
     CommitProtection { generation: String },
+    Locate,
     Status,
     Cleanup,
 }
@@ -366,6 +369,33 @@ fn create(request: &Request, input: &[u8]) -> Result<Reply> {
     Ok(Reply::public(b.inspect(&files, &root)?))
 }
 
+fn locate(request: &Request) -> Result<Reply> {
+    let Some(files) = Files::locate(&request.directory, &request.run)? else {
+        return Ok(Reply::public(json!({"state":"empty"})));
+    };
+    // 目录存在时，缺失封装或已经登记过的库一律停止。状态只供导航，解锁仍需认证。
+    let bootstrap = Bootstrap::load(&files)?;
+    let database_started = files.exists("database-started")?;
+    let database_exists = files.exists("ledger.db")?;
+    if database_started && !database_exists {
+        return Err(CoreError::new(
+            "missing_database",
+            "登记过的原账库不存在，材料保留",
+        ));
+    }
+    if !database_started && (database_exists || files.exists("ready.json")?) {
+        return Err(CoreError::new(
+            "unexpected_database",
+            "账库登记与文件不一致，材料保留",
+        ));
+    }
+    Ok(Reply::public(json!({
+        "state": if database_started { "registered" } else { "initializing" },
+        "vault": bootstrap.vault,
+        "device": bootstrap.device,
+    })))
+}
+
 pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
     if request.abi != 1 {
         return Err(CoreError::new("abi_mismatch", "bootstrap 实验 ABI 不兼容"));
@@ -385,6 +415,9 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
     if let Action::Create = request.action {
         return create(&request, input);
     }
+    if let Action::Locate = request.action {
+        return locate(&request);
+    }
     let files =
         Files::acquire(&request.directory, &request.run, false)?.with_fault(request.file_fault);
     if let Action::Cleanup = request.action {
@@ -392,6 +425,14 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         return Ok(Reply::public(json!({"cleaned":true})));
     }
     let mut b = Bootstrap::load(&files)?;
+    if let Some((vault, device)) = &request.expected_identity
+        && (&b.vault, &b.device) != (vault, device)
+    {
+        return Err(CoreError::new(
+            "selection_changed",
+            "账簿或设备身份已变化，操作停止",
+        ));
+    }
     if let Action::Status = request.action {
         return Ok(Reply::public(
             json!({"vault":b.vault,"device":b.device,"activeProtection":active_generation(&files)?,

@@ -42,6 +42,7 @@ Future<BootstrapResult> callBootstrap(
   Uint8List input, {
   String? pauseAt,
   Map<String, String>? fileFault,
+  (String, String)? expectedIdentity,
   int abi = 1,
 }) async {
   final metadata = jsonEncode({
@@ -51,6 +52,8 @@ Future<BootstrapResult> callBootstrap(
     'action': action,
     'pause_at': pauseAt,
     'file_fault': fileFault,
+    if (expectedIdentity case (final vault, final device))
+      'expected_identity': [vault, device],
   });
   final transfer = TransferableTypedData.fromList([input]);
   input.fillRange(0, input.length, 0);
@@ -93,6 +96,8 @@ Future<BootstrapResult> callBootstrap(
 
 /// 平台只处理本次 run / generation 的系统项，账务与封装仍由 Rust 决定。
 class SystemProtection {
+  const SystemProtection();
+
   static const channel = MethodChannel('radishledger/m0c/protection');
   Future<T?> _call<T>(String method, [Map<String, Object?>? arguments]) async {
     try {
@@ -105,8 +110,12 @@ class SystemProtection {
     }
   }
 
-  Future<String> storage() async {
-    final path = await _call<String>('storage');
+  Future<String> storage() => _storage('storage');
+
+  Future<String> internalLedgerStorage() => _storage('internalLedgerStorage');
+
+  Future<String> _storage(String method) async {
+    final path = await _call<String>(method);
     if (path == null || path.isEmpty) {
       throw const BootstrapFailure('storage_unavailable');
     }
