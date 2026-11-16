@@ -4,7 +4,7 @@
 
 ## 背景
 
-内部开发按既有决定，在证据核对后只使用一个桥接候选。E15 宿主新建归档切片已通过。两种候选共用 Rust 账务与 SQLCipher 核心、版本化非秘密 JSON 以及独立的有界秘密字节通道。[ADR 0004](0004-internal-development-and-platform-exits.md) · [宿主归档验收](../validation/portability-cases.md#511-e15-宿主新建归档文件) · [移动核心契约](../development/mobile-core-prototype.md#1-一个核心两个调用候选)
+内部开发按既有决定，在证据核对后只使用一个桥接候选。E15 宿主新建归档切片已通过。两种候选共用 Rust 账务与 SQLCipher 核心、版本化 JSON 以及独立的有界秘密字节通道。包含账务的 JSON 遵循本地隐私边界。[ADR 0004](0004-internal-development-and-platform-exits.md) · [宿主归档验收](../validation/portability-cases.md#511-e15-宿主新建归档文件) · [移动核心契约](../development/mobile-core-prototype.md#1-一个核心两个调用候选)
 
 ## 决定与代价
 
