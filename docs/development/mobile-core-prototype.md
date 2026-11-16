@@ -636,3 +636,5 @@ Android 主入口可通过 `--dart-define=RADISH_INTERNAL_LEDGER=true` 打开合
 宿主验证使用真实 Rust / SQLCipher 与薄桥接。Flutter 在窄屏双倍字号下运行创建、确认、错误口令、切后台丢弃晚结果以及重新打开，系统能力使用替身。Rust 父测试另用实际子进程核对创建中断、强杀后新 PID、身份、A11 完整事实和错误保全。真实 Android 页面、App 进程重启和系统认证依次取证。[复现入口](../../scripts/README.md#m0-android-内部账簿创建与重开)
 
 Android 设备集成入口在实际 `noBackupFilesDir/internal-ledger` 下创建本批独占目录，从真实通道读取认证能力，并在同一测试进程内完成恢复材料确认。用已有合成入口写入 A11 后，核对界面关闭、页面重建、错口令拒绝及独立材料重开，比较同身份与完整账务。合成口令与恢复材料由测试直接写入当前可用输入框的控制器，提交仍经实际界面控件；只回传平台能力和核对结果。成功后清理本次独占目录，失败时保全现场。该入口覆盖 Android 测试包的同进程页面重建，实际软键盘、release 的后台与新 PID 及真机认证分别验收。[设备集成入口](../../apps/m0_probe/integration_test/internal_ledger_test.dart)
+
+正常 Android release 的键盘和生命周期单独取证。在一次性模拟器中，沿用已有 debug 私有 FIFO 创建及只读复核合成 A11，以同一隔离测试签名保留数据切换正常 release。真实 Android 软键盘触控验证错口令拒绝、正确口令解锁、Home 返回原 PID 锁定以及 `am force-stop` 后新 PID 解锁。复验结束用已有 debug 入口比较原身份、完整审计和摘要。release 的通过范围从已确认的合成账簿开始，创建确认、硬件保护和真机认证仍分别取证。[实际结果](../devlogs/2026-11.md#2026-11-16-android-release-键盘后台与新-pid-重开)
