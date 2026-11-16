@@ -176,3 +176,5 @@ E15 的父测试在发布前后强杀自己启动的 worker，单 worker 等待�
 ### M0 Android 内部账簿创建与重开
 
 Android 的 `lib/main.dart` 使用 `--dart-define=RADISH_INTERNAL_LEDGER=true` 选择内部账簿页面。按既有设备授权范围取实际运行证据，使用合成口令与恢复材料。宿主可在 `apps/m0_probe` 执行 `flutter test --no-pub test/internal_ledger_test.dart`，验证实际薄 C ABI、SQLCipher、创建与重开及窄屏行为。仓库根的 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core --test bootstrap_process --jobs 4` 补充实际子进程创建中断与待恢复 WAL 重开。保护替身与宿主 PID 证据分别记录。[实现与失败边界](../docs/development/mobile-core-prototype.md#8-android-内部账簿的创建与重开)
+
+授权并核对隔离 Android 目标后，在 `apps/m0_probe` 执行 `flutter test --no-pub -d <已确认的模拟器> integration_test/internal_ledger_test.dart`。先按 debug 模式生成 Flutter 插件登记，避免复用 release 模式的生成文件。执行会安装 Android 测试包，测试期间口令和恢复材料只在测试进程内使用。核对同进程页面重建及 A11 保全之后，按原验收继续核对 release 的进程重启。
