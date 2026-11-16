@@ -166,3 +166,9 @@ Unix 父测试实际调度 11 个准备点和 7 个放弃 / 清理点的子进�
 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core restored_snapshot --jobs 4` 使用 Unix 测试专用 SQLCipher schema 1003，从实际已选恢复库取得内存快照。覆盖双连接并发、新旧观察序号、A04 删除后恢复、CSV 历史及待处理身份、预算 / 取消、未知字段和早期 1002 重开。也由 `check-core.sh` 执行。归档封装和独立回环需另验。见[宿主验收](../docs/validation/portability-cases.md#510-恢复后再次归档验收候选)。
 
 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core --lib restore_roundtrip --jobs 4` 验证 `0.2` 通过 schema 1004 暂存、schema 1005 候选与条件选择在多个独占目录恢复。覆盖实际 CSV 历史、新交易、取消续作、错口令和篡改保全。测试仅使用合成资料和自动回收的 tempfile 目录。
+
+### M0-E 新建归档文件
+
+`CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core --lib e15_ --jobs 4` 验证 Unix 宿主私有目录上的有界文件写入、回读认证、无覆盖发布、未定结果复核及独立 SQLCipher 暂存恢复。`restore_roundtrip` 在宿主机上从实际保存的 `0.2` 文件开始第一代独立恢复。两组都由 `check-core.sh` 执行。
+
+E15 的父测试在发布前后强杀自己启动的 worker，单 worker 等待上限为 20 秒。密文经匿名 stdin 传入，使用固定公开测试口令。父测试核对残留后回收本次独占 tempfile，复核入口保留未确认归属的临时文件。实际覆盖范围见 [E15 宿主文件验收](../docs/validation/portability-cases.md#511-e15-宿主新建归档文件)。

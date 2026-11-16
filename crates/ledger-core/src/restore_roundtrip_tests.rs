@@ -129,6 +129,29 @@ fn restore_roundtrip_preserves_history_and_csv_across_independent_generations() 
         host.write(&selected, |store| store.commit(&first)).unwrap();
         reseal(&host, &selected)
     };
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let archive = {
+        use crate::archive_container::files::ArchiveFiles;
+        use std::ffi::OsStr;
+
+        let output = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let cancel = flag();
+        let name = OsStr::new("first-generation.archive");
+        ArchiveFiles::open(output.path(), PASSWORD, CANDIDATE_LIMITS, &cancel)
+            .unwrap()
+            .with_restored_reader()
+            .save_new(name, &archive)
+            .unwrap();
+        drop(archive);
+        ArchiveFiles::open(output.path(), PASSWORD, CANDIDATE_LIMITS, &cancel)
+            .unwrap()
+            .with_restored_reader()
+            .read_saved(name)
+            .unwrap()
+    };
 
     let (next_archive, prior_id) = {
         let blank = BlankHost::new();

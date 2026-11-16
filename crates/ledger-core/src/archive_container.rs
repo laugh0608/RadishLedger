@@ -1,4 +1,4 @@
-//! M0-E 已批准的整体认证宿主实验；只处理内存，不写文件或激活恢复账库。
+//! M0-E 整体认证归档；宿主文件保存复用同一认证边界。
 use crate::crypto::{self, KdfPoint, Profile, Secret};
 use crate::logical_snapshot::{Contents, Facts, LogicalSnapshot};
 use crate::{CoreError, Result};
@@ -7,6 +7,9 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroizing;
 
+#[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
+#[path = "archive_files.rs"]
+pub mod files;
 #[path = "archive_json.rs"]
 pub(crate) mod json;
 #[cfg(all(test, unix))]

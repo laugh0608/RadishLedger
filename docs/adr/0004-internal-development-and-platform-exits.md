@@ -26,3 +26,5 @@
 [MVP 路线图](../mvp-roadmap.md)维护内部准入、M1/M2 出口；[原 B/C 矩阵](../development/mobile-core-validation.md)继续定义所有动作与通过标准，按平台分期验收，不降低单项判据。[移动体验](../design/mobile-experience.md#13-受限内部本地流程)和[可迁移性](../data-portability.md#9-冻结条件与实现顺序)限定内部切片。当前顺位、资源阻塞与准入实际状态只在[current](../status/current.md)。
 
 本决定限定调整 ADR 0001 的阶段衔接，不替代产品定位、Flutter/Rust/Go 分工或安全契约，不宣布 M0/M1 完成。实现、依赖、设备/VM、安装/签名、系统设置和发布分别按后续明确任务授权；本轮没有代码或环境操作。
+
+后续内部准入核对及桥接选择见 [ADR 0005](0005-android-internal-bridge.md)。
