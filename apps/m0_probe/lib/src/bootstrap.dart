@@ -10,9 +10,10 @@ import 'probe.dart';
 import 'bootstrap_selection.dart';
 
 class BootstrapFailure implements Exception {
-  const BootstrapFailure(this.code, [this.platformCode]);
+  const BootstrapFailure(this.code, [this.platformCode, this.message]);
   final String code;
   final Object? platformCode;
+  final String? message;
   @override
   String toString() => 'BootstrapFailure($code)';
 }
@@ -26,8 +27,11 @@ class BootstrapResult {
   void requireSuccess() {
     if (status['ok'] != true) {
       clear();
+      final error = status['error'] as Map?;
       throw BootstrapFailure(
-        (status['error'] as Map?)?['code'] as String? ?? 'invalid_response',
+        error?['code'] as String? ?? 'invalid_response',
+        null,
+        error?['message'] as String?,
       );
     }
   }
@@ -43,6 +47,7 @@ Future<BootstrapResult> callBootstrap(
   String? pauseAt,
   Map<String, String>? fileFault,
   (String, String)? expectedIdentity,
+  bool includeLedger = false,
   int abi = 1,
 }) async {
   final metadata = jsonEncode({
@@ -52,6 +57,7 @@ Future<BootstrapResult> callBootstrap(
     'action': action,
     'pause_at': pauseAt,
     'file_fault': fileFault,
+    if (includeLedger) 'include_ledger': true,
     if (expectedIdentity case (final vault, final device))
       'expected_identity': [vault, device],
   });

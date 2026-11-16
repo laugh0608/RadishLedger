@@ -36,10 +36,15 @@ fn start_request_with_worker(
     fault: Option<Value>,
     secret: &[u8],
 ) -> Child {
-    let metadata = serde_json::to_vec(
-        &json!({"abi":1,"directory":directory,"run":run,"action":action,"pause_at":pause,"file_fault":fault}),
+    spawn_request(
+        worker,
+        json!({"abi":1,"directory":directory,"run":run,"action":action,"pause_at":pause,"file_fault":fault}),
+        secret,
     )
-    .unwrap();
+}
+
+fn spawn_request(worker: &Path, request: Value, secret: &[u8]) -> Child {
+    let metadata = serde_json::to_vec(&request).unwrap();
     let mut child = Command::new(worker)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -179,6 +184,132 @@ fn kill_at(directory: &Path, run: &str, mut child: Child, point: &str) {
     }
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
+}
+
+#[test]
+fn local_book_reopens_receipts_transactions_and_balances_across_processes() {
+    let dir = tempfile::tempdir().unwrap();
+    let directory = dir.path();
+    let run = "00000000000000000000000000000001";
+    let password = b"synthetic local ledger process test";
+    let (_, recovery) = ok(call(directory, run, json!({"kind":"newRecovery"}), &[]));
+    let mut create_input = Zeroizing::new(password.to_vec());
+    create_input.extend_from_slice(&recovery);
+    let (created, _) = ok(call(
+        directory,
+        run,
+        json!({"kind":"create"}),
+        &create_input,
+    ));
+    let identity = json!([created["vault"], created["device"]]);
+    let process = |action, pause| {
+        spawn_request(
+            Path::new(env!("CARGO_BIN_EXE_m0-bootstrap-worker")),
+            json!({"abi":1,"directory":directory,"run":run,"action":action,
+                   "pause_at":pause,"expected_identity":identity,"include_ledger":true}),
+            password,
+        )
+    };
+    let save = |command, pause| {
+        process(
+            json!({"kind":"saveLocal","unlock":"password","command":command}),
+            pause,
+        )
+    };
+    let reopen = || {
+        ok(finish(process(
+            json!({"kind":"inspect","unlock":"password"}),
+            None,
+        )))
+        .0
+    };
+    let id = |n: usize| format!("{n:032x}");
+    let write_identity = |n| json!({"operationId":id(n),"eventId":id(n+1),"revisionId":id(n+2)});
+    // A01 的银行期初和收入，另在同一账户录入 30 元支出以核对借贷方向。
+    let account = json!({"kind":"account","id":id(1),"accountKind":"bank","name":"合成银行",
+        "amountYuan":"1000.00","businessDate":"2026-01-01","identity":write_identity(10)});
+    let income_category =
+        json!({"kind":"category","id":id(2),"categoryKind":"income","name":"合成工资"});
+    let expense_category =
+        json!({"kind":"category","id":id(3),"categoryKind":"expense","name":"合成餐饮"});
+    let income = json!({"kind":"entry","direction":"income","amountYuan":"2000.00",
+        "businessDate":"2026-01-05","accountId":id(1),"categoryId":id(2),"identity":write_identity(20)});
+    let expense = json!({"kind":"entry","direction":"expense","amountYuan":"30.00",
+        "businessDate":"2026-01-07","accountId":id(1),"categoryId":id(3),"identity":write_identity(30)});
+
+    assert_eq!(
+        finish(save(account.clone(), None)).0["error"]["code"],
+        "recovery_unconfirmed"
+    );
+    ok(call(directory, run, json!({"kind":"confirm"}), &recovery));
+    let mut bad_opening = account.clone();
+    bad_opening["businessDate"] = json!("2026-02-29");
+    assert_eq!(
+        finish(save(bad_opening, None)).0["error"]["code"],
+        "invalid_calendar_date"
+    );
+    assert_eq!(reopen()["book"]["accounts"], json!([]));
+
+    let pending = save(account.clone(), Some("localSavePrepared"));
+    let pending_pid = pending.id();
+    kill_at(directory, run, pending, "localSavePrepared");
+    let rolled_back = reopen();
+    assert_ne!(rolled_back["pid"], pending_pid);
+    assert_eq!(rolled_back["lastSaveCommitted"], false);
+    assert_eq!(rolled_back["book"]["accounts"], json!([]));
+    let (opened, _) = ok(finish(save(account.clone(), None)));
+    let (replayed, _) = ok(finish(save(account, None)));
+    assert_eq!(opened["book"], replayed["book"]);
+    assert_eq!(opened["book"]["balancesMinor"][id(1)], "100000");
+    assert_eq!(opened["book"]["recentEntries"], json!([]));
+
+    for category in [income_category, expense_category] {
+        let (registered, _) = ok(finish(save(category.clone(), None)));
+        assert_eq!(
+            registered["book"],
+            ok(finish(save(category, None))).0["book"]
+        );
+    }
+    let mut wrong_category = income.clone();
+    wrong_category["categoryId"] = json!(id(3));
+    assert_eq!(
+        finish(save(wrong_category, None)).0["error"]["code"],
+        "category_type_mismatch"
+    );
+    let (recorded, _) = ok(finish(save(income, None)));
+    assert_eq!(recorded["book"]["balancesMinor"][id(1)], "300000");
+
+    let pending = save(expense.clone(), Some("localSaveCommitted"));
+    let pending_pid = pending.id();
+    kill_at(directory, run, pending, "localSaveCommitted");
+    let reopened = reopen();
+    assert_ne!(reopened["pid"], pending_pid);
+    assert_eq!(reopened["lastSaveCommitted"], true);
+    assert_eq!(reopened["book"]["balancesMinor"][id(1)], "297000");
+    let rows = reopened["book"]["recentEntries"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    for (row, event, kind, amount, date, category) in [
+        (&rows[0], id(31), "expense", "3000", "2026-01-07", id(3)),
+        (&rows[1], id(21), "income", "200000", "2026-01-05", id(2)),
+    ] {
+        assert_eq!(row["id"], event);
+        assert_eq!(row["kind"], kind);
+        assert_eq!(row["amountMinor"], amount);
+        assert_eq!(row["businessDate"], date);
+        assert_eq!(row["accountId"], id(1));
+        assert_eq!(row["categoryId"], category);
+    }
+    assert_eq!(ok(finish(save(expense, None))).0["book"], reopened["book"]);
+    let (audit, _) = ok(call(
+        directory,
+        run,
+        json!({"kind":"inspect","unlock":"password"}),
+        password,
+    ));
+    assert_eq!(audit["audit"]["sequence"], 3);
+    assert_eq!(audit["audit"]["operations"].as_array().unwrap().len(), 3);
+    let (status, _) = ok(call(directory, run, json!({"kind":"status"}), &[]));
+    assert_eq!(status["candidates"], json!([]));
 }
 
 #[test]

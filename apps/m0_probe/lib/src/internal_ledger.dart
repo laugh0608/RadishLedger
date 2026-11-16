@@ -61,7 +61,10 @@ class InternalLedger {
     }
   }
 
-  Future<BootstrapResult> create(Uint8List password) async {
+  Future<BootstrapResult> create(
+    Uint8List password, {
+    bool includeLedger = false,
+  }) async {
     BootstrapResult? generated;
     try {
       if (password.isEmpty || password.length > 1024) {
@@ -75,7 +78,12 @@ class InternalLedger {
       final input = Uint8List(password.length + generated.secret.length)
         ..setAll(0, password)
         ..setAll(password.length, generated.secret);
-      final result = await _authenticated({'kind': 'create'}, input, null);
+      final result = await _authenticated(
+        {'kind': 'create'},
+        input,
+        null,
+        includeLedger: includeLedger,
+      );
       try {
         return BootstrapResult(
           result.status,
@@ -93,8 +101,9 @@ class InternalLedger {
   Future<BootstrapResult> unlock(
     InternalLedgerLocation location,
     LedgerUnlock unlock,
-    Uint8List input,
-  ) => _authenticated(
+    Uint8List input, {
+    bool includeLedger = false,
+  }) => _authenticated(
     {
       'kind': location.state == InternalLedgerState.initializing
           ? 'resume'
@@ -103,19 +112,40 @@ class InternalLedger {
     },
     input,
     location.identity,
+    includeLedger: includeLedger,
   );
 
-  Future<BootstrapResult> confirm(LedgerIdentity expected, Uint8List input) =>
-      _authenticated({'kind': 'confirm'}, input, expected);
+  Future<BootstrapResult> confirm(
+    LedgerIdentity expected,
+    Uint8List input, {
+    bool includeLedger = false,
+  }) => _authenticated(
+    {'kind': 'confirm'},
+    input,
+    expected,
+    includeLedger: includeLedger,
+  );
 
   Future<BootstrapResult> reissue(LedgerIdentity expected, Uint8List input) =>
       _authenticated({'kind': 'reissueRecovery'}, input, expected);
 
+  Future<BootstrapResult> save(
+    LedgerIdentity expected,
+    LedgerUnlock unlock,
+    Uint8List input,
+    Map<String, Object?> command,
+  ) => _authenticated(
+    {'kind': 'saveLocal', 'unlock': unlock.name, 'command': command},
+    input,
+    expected,
+  );
+
   Future<BootstrapResult> _authenticated(
     Map<String, Object?> action,
     Uint8List input,
-    LedgerIdentity? expected,
-  ) async {
+    LedgerIdentity? expected, {
+    bool includeLedger = false,
+  }) async {
     final result = await callBootstrap(
       BridgeCandidate.thin,
       service.directory,
@@ -123,6 +153,7 @@ class InternalLedger {
       action,
       input,
       expectedIdentity: expected,
+      includeLedger: includeLedger,
     );
     try {
       result.requireSuccess();

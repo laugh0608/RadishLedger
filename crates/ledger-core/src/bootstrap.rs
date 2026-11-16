@@ -2,13 +2,16 @@
 pub use crate::bootstrap_files::{FaultFile, FaultStage, FileFault};
 use crate::bootstrap_files::{Files, identity, io_error};
 use crate::crypto::{self, Envelope, Profile, Secret};
-use crate::store::{DbKey, Store};
+pub use crate::store::local_ledger::LedgerCommand;
+use crate::store::{DbKey, Store, local_ledger::BookView};
 use crate::{CoreError, Result, random_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
+
+const SAVE_ATTEMPT: &str = "save-attempt.json";
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +51,8 @@ pub enum Point {
     ProtectionPrepared,
     ProtectionPublished,
     FixtureSaved,
+    LocalSavePrepared,
+    LocalSaveCommitted,
 }
 
 #[derive(Deserialize)]
@@ -63,6 +68,8 @@ pub struct Request {
     pub file_fault: Option<FileFault>,
     #[serde(default)]
     pub expected_identity: Option<(String, String)>,
+    #[serde(default)]
+    pub include_ledger: bool,
 }
 
 #[derive(Deserialize)]
@@ -70,14 +77,30 @@ pub struct Request {
 pub enum Action {
     NewRecovery,
     Create,
-    Resume { unlock: Unlock },
+    Resume {
+        unlock: Unlock,
+    },
     Confirm,
     ReissueRecovery,
-    Seed { unlock: Unlock },
-    Inspect { unlock: Unlock },
-    Replay { unlock: Unlock },
-    PrepareProtection { unlock: Unlock },
-    CommitProtection { generation: String },
+    Seed {
+        unlock: Unlock,
+    },
+    Inspect {
+        unlock: Unlock,
+    },
+    SaveLocal {
+        unlock: Unlock,
+        command: LedgerCommand,
+    },
+    Replay {
+        unlock: Unlock,
+    },
+    PrepareProtection {
+        unlock: Unlock,
+    },
+    CommitProtection {
+        generation: String,
+    },
     Locate,
     Status,
     Cleanup,
@@ -256,6 +279,89 @@ impl Bootstrap {
             "activeProtection":active_generation(files)?,"pid":std::process::id()}),
         )
     }
+
+    fn local_report(&self, ready: bool, book: Option<BookView>, last_save: Option<bool>) -> Value {
+        json!({"vault":self.vault,"device":self.device,"ready":ready,"book":book,
+            "lastSaveCommitted":last_save,"pid":std::process::id()})
+    }
+
+    fn inspect_local(&self, files: &Files, root: &Secret) -> Result<Value> {
+        let ready = self.ready(files, root)?;
+        let store = self.open(files, root, false)?;
+        if !ready {
+            return Ok(self.local_report(false, None, None));
+        }
+        // 诊断账库通过原有全量核对后仍可查看，用户路径不改写固定证据。
+        let fixture_digest = store.fixture_digest()?;
+        if let Some(expected) = &fixture_digest
+            && &store.content_digest()? != expected
+        {
+            return Err(CoreError::new("fixture_mismatch", "固定合成账库与基线不符"));
+        }
+        let last_save = if files.exists(SAVE_ATTEMPT)? {
+            let key = self.local_save_key(root)?;
+            let envelope = decode(&files.read(SAVE_ATTEMPT)?)?;
+            let receipt = crypto::unseal(key.as_ref(), &envelope, &self.aad("local-save", ""))?;
+            Some(store.local_save_committed(*receipt)?)
+        } else {
+            None
+        };
+        let mut report = self.local_report(true, Some(store.local_book()?), last_save);
+        report["fixtureComplete"] = json!(fixture_digest.is_some());
+        Ok(report)
+    }
+
+    fn local_save_key(&self, root: &Secret) -> Result<Secret> {
+        crypto::derive(root.as_ref(), &self.salt, b"radishledger/m0c/v1/local-save")
+    }
+
+    fn save_local(
+        &self,
+        files: &Files,
+        root: &Secret,
+        command: LedgerCommand,
+        pause_at: Option<Point>,
+    ) -> Result<Reply> {
+        if !self.ready(files, root)? {
+            return Err(CoreError::new(
+                "recovery_unconfirmed",
+                "先确认恢复材料，再保存到本机",
+            ));
+        }
+        if self.open(files, root, false)?.fixture_digest()?.is_some() {
+            return Err(CoreError::new("fixture_read_only", "固定验收账簿仅供查看"));
+        }
+        let key = self.local_save_key(root)?;
+        let mut store = self.open(files, root, true)?;
+        let book = store
+            .save_local(command, |attempt| {
+                let envelope =
+                    crypto::seal(key.as_ref(), &attempt.encode(), &self.aad("local-save", ""))?;
+                files.publish(
+                    SAVE_ATTEMPT,
+                    &encode(&envelope)?,
+                    files.exists(SAVE_ATTEMPT)?,
+                )?;
+                point(files, Point::LocalSavePrepared, pause_at)
+            })
+            .map_err(|mut error| {
+                if matches!(
+                    error.code,
+                    "storage_error" | "bootstrap_publish_uncertain" | "fault_timeout"
+                ) {
+                    error.code = "local_save_uncertain";
+                    error.message = "保存结果未定，重新解锁后核对上次保存";
+                }
+                error
+            })?;
+        point(files, Point::LocalSaveCommitted, pause_at)
+            .map_err(|_| CoreError::new("local_save_uncertain", "重新解锁后核对上次保存"))?;
+        Ok(Reply::public(self.local_report(
+            true,
+            Some(book),
+            Some(true),
+        )))
+    }
 }
 
 fn active_generation(files: &Files) -> Result<Option<String>> {
@@ -366,7 +472,12 @@ fn create(request: &Request, input: &[u8]) -> Result<Reply> {
     files.publish("bootstrap.json", &encode(&b)?, false)?;
     point(&files, Point::EnvelopesSaved, request.pause_at)?;
     initialize_database(&files, &b, &root, request.pause_at)?;
-    Ok(Reply::public(b.inspect(&files, &root)?))
+    let report = if request.include_ledger {
+        b.inspect_local(&files, &root)?
+    } else {
+        b.inspect(&files, &root)?
+    };
+    Ok(Reply::public(report))
 }
 
 fn locate(request: &Request) -> Result<Reply> {
@@ -445,6 +556,15 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         | Action::Seed { unlock }
         | Action::Replay { unlock }
         | Action::PrepareProtection { unlock } => unlock,
+        Action::SaveLocal { unlock, .. } => {
+            if request.expected_identity.is_none() || matches!(unlock, Unlock::System) {
+                return Err(CoreError::new(
+                    "invalid_action",
+                    "本地保存需要原账簿身份及口令或恢复材料",
+                ));
+            }
+            unlock
+        }
         Action::Confirm => Unlock::Recovery,
         Action::ReissueRecovery => Unlock::Password,
         Action::CommitProtection { ref generation } => {
@@ -464,6 +584,9 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
     };
     let root = b.root(&files, unlock, input)?;
     match request.action {
+        Action::SaveLocal { command, .. } => {
+            return b.save_local(&files, &root, command, request.pause_at);
+        }
         Action::Resume { .. } => initialize_database(&files, &b, &root, request.pause_at)?,
         Action::ReissueRecovery => {
             let store = b.open(&files, &root, false)?;
@@ -503,7 +626,7 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
             }
             let mut store = b.open(&files, &root, true)?;
             if store.fixture_digest()?.is_none() {
-                if store.sequence()? != 0 {
+                if store.sequence()? != 0 || files.exists(SAVE_ATTEMPT)? {
                     return Err(CoreError::new(
                         "fixture_incomplete",
                         "合成样例写入中断，已有事实保留供核对",
@@ -546,5 +669,10 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         Action::Inspect { .. } => {}
         _ => return Err(CoreError::new("invalid_action", "实验动作不可用")),
     }
-    Ok(Reply::public(b.inspect(&files, &root)?))
+    let report = if request.include_ledger {
+        b.inspect_local(&files, &root)?
+    } else {
+        b.inspect(&files, &root)?
+    };
+    Ok(Reply::public(report))
 }

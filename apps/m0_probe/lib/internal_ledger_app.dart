@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'src/bootstrap.dart';
 import 'src/internal_ledger.dart';
+import 'src/local_book.dart';
 
 class InternalLedgerApp extends StatelessWidget {
   const InternalLedgerApp({
@@ -41,7 +42,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
   InternalLedgerLocation? _location;
   bool _deviceAuthentication = false;
   bool _busy = true;
-  bool _opened = false;
+  LocalBook? _book;
   bool _pendingConfirmation = false;
   bool _reissuing = false;
   LedgerUnlock _method = LedgerUnlock.password;
@@ -91,6 +92,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
       code: 'bootstrap_publish_uncertain' || 'invalid_response',
     ) =>
       '结果未定，请重新核对原账簿。',
+    BootstrapFailure(code: 'local_save_uncertain') => '保存结果未定，请重新打开账簿核对上次保存。',
     BootstrapFailure(
       code: 'missing_database' ||
           'unexpected_database' ||
@@ -100,6 +102,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
           'foreign_directory',
     ) =>
       '原账簿或创建材料不完整、损坏或不可读。文件已保留，请重新核对。',
+    BootstrapFailure(message: final message?) => message,
     BootstrapFailure(code: final code) => '操作未完成（$code）。请重新核对。',
     _ => '无法核对本地账簿，请重试。',
   };
@@ -116,7 +119,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     _clearIssued();
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
-      _opened = false;
+      _book = null;
       _pendingConfirmation = false;
       _reissuing = false;
       _method = LedgerUnlock.password;
@@ -138,11 +141,12 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Future<void> _submit(
+  Future<bool> _submit(
     Future<BootstrapResult> Function(Uint8List) action, {
     required bool canWrite,
+    bool saving = false,
   }) async {
-    if (_busy) return;
+    if (_busy) return false;
     final epoch = ++_epoch;
     final input = Uint8List.fromList(utf8.encode(_input.text));
     _input.clear();
@@ -155,9 +159,14 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     var accepted = false;
     try {
       result = await action(input);
-      if (!mounted || epoch != _epoch) return;
+      if (!mounted || epoch != _epoch) return false;
       final identity = InternalLedger.identity(result.report);
       final ready = result.report['ready'] == true;
+      final book = ready ? LocalBook.fromReport(result.report) : null;
+      if (saving &&
+          (book?.lastSaveCommitted != true || result.secret.isNotEmpty)) {
+        throw const BootstrapFailure('invalid_response');
+      }
       if (result.secret.isNotEmpty && result.secret.length != 80) {
         throw const BootstrapFailure('invalid_response');
       }
@@ -166,16 +175,33 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
           : Uint8List.fromList(result.secret);
       setState(() {
         _location = (state: InternalLedgerState.registered, identity: identity);
-        _opened = ready;
+        _book = book;
         _pendingConfirmation = !ready;
         _reissuing = false;
         if (released != null || ready) _clearIssued();
         _issued ??= released;
+        if (saving) {
+          _message = '已保存到本机';
+        } else if (book?.lastSaveCommitted case final committed?) {
+          _message = committed ? '最近核对的保存已提交。' : '最近核对的保存未提交，可重新录入。';
+        }
       });
       accepted = true;
     } catch (error) {
       if (mounted && epoch == _epoch) {
         setState(() {
+          final uncertain =
+              saving &&
+              (error is! BootstrapFailure ||
+                  const {
+                    'local_save_uncertain',
+                    'bootstrap_publish_uncertain',
+                    'internal_error',
+                    'invalid_output',
+                    'invalid_response',
+                    'selection_changed',
+                  }.contains(error.code));
+          if (uncertain) _book = null;
           if (error is BootstrapFailure &&
               (error.code == 'bootstrap_publish_uncertain' ||
                   error.code == 'selection_changed' ||
@@ -185,13 +211,23 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
             _clearIssued();
             if (!canWrite) _location = null;
           }
-          _message = _explain(error);
+          _message =
+              uncertain &&
+                  (error is! BootstrapFailure ||
+                      error.code != 'selection_changed')
+              ? _explain(const BootstrapFailure('local_save_uncertain'))
+              : _explain(error);
         });
       }
     } finally {
       result?.clear();
       input.fillRange(0, input.length, 0);
-      if ((canWrite || epoch != _epoch) && !accepted && mounted) {
+      if (((canWrite && !saving) ||
+              (saving && _book == null) ||
+              epoch != _epoch) &&
+          !accepted &&
+          mounted &&
+          _ledger != null) {
         try {
           final location = await _ledger!.locate();
           final previous = _location?.identity;
@@ -212,6 +248,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
       }
       if (mounted) setState(() => _busy = false);
     }
+    return accepted;
   }
 
   void _retry() {
@@ -240,6 +277,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final ledger = _ledger;
     final location = _location;
+    final book = _book;
     return Scaffold(
       appBar: AppBar(title: const Text('萝卜账簿')),
       body: SafeArea(
@@ -250,24 +288,46 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
             children: [
               const Text('仅用于合成数据'),
               const SizedBox(height: 16),
-              if (_opened) ...[
+              if (book != null &&
+                  ledger != null &&
+                  location?.identity != null) ...[
                 Text('账簿已打开', style: Theme.of(context).textTheme.headlineSmall),
                 const SizedBox(height: 16),
                 FilledButton(onPressed: _lock, child: const Text('关闭账簿')),
-              ] else if (ledger != null && location != null)
-                ..._form(context, ledger, location)
-              else if (!_busy)
-                OutlinedButton(onPressed: _retry, child: const Text('重新核对')),
+              ],
               if (_busy) ...[
                 const SizedBox(height: 12),
                 const LinearProgressIndicator(semanticsLabel: '正在处理本地账簿'),
                 if (_location != null)
                   TextButton(onPressed: _lock, child: const Text('停止等待')),
               ],
-              if (_message case final text?) ...[
+              if (book == null && _message != null) ...[
                 const SizedBox(height: 12),
-                Semantics(liveRegion: true, child: Text(text)),
+                Semantics(liveRegion: true, child: Text(_message!)),
               ],
+              if (book != null && ledger != null && location?.identity != null)
+                LocalBookPanel(
+                  book: book,
+                  unlock: _method,
+                  credential: _input,
+                  busy: _busy,
+                  message: _message,
+                  clearMessage: () => setState(() => _message = null),
+                  save: (command) => _submit(
+                    (input) => ledger.save(
+                      location!.identity!,
+                      _method,
+                      input,
+                      command,
+                    ),
+                    canWrite: true,
+                    saving: true,
+                  ),
+                )
+              else if (ledger != null && location != null)
+                ..._form(context, ledger, location)
+              else if (!_busy)
+                OutlinedButton(onPressed: _retry, child: const Text('重新核对')),
             ],
           ),
         ),
@@ -294,7 +354,11 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
         : '解锁本地账簿';
     final identity = location.identity;
     final (label, action, canWrite) = empty
-        ? ('创建账簿', ledger.create, true)
+        ? (
+            '创建账簿',
+            (Uint8List input) => ledger.create(input, includeLedger: true),
+            true,
+          )
         : _pendingConfirmation
         ? _reissuing
               ? (
@@ -304,12 +368,14 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
                 )
               : (
                   '确认已保存的恢复材料',
-                  (Uint8List input) => ledger.confirm(identity!, input),
+                  (Uint8List input) =>
+                      ledger.confirm(identity!, input, includeLedger: true),
                   true,
                 )
         : (
             initializing ? '继续创建' : '打开账簿',
-            (Uint8List input) => ledger.unlock(location, _method, input),
+            (Uint8List input) =>
+                ledger.unlock(location, _method, input, includeLedger: true),
             initializing,
           );
     final issued = _issued;

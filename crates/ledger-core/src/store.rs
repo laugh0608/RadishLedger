@@ -30,6 +30,9 @@ pub(crate) mod snapshot_store;
 #[path = "restore_store.rs"]
 pub(crate) mod restore_store;
 
+#[path = "store_local.rs"]
+pub(crate) mod local_ledger;
+
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {
@@ -412,31 +415,11 @@ impl Store {
     }
 
     pub fn add_account(&mut self, id: &str, kind: &str, name: &str) -> Result<()> {
-        valid_id(id)?;
-        if !matches!(kind, "cash" | "bank" | "wallet" | "credit_card") || name.len() > 256 {
-            return Err(CoreError::new("invalid_account", "账户类型或名称无效"));
-        }
-        self.connection
-            .execute(
-                "INSERT INTO accounts(id,kind,name) VALUES (?1,?2,?3)",
-                params![id, kind, name],
-            )
-            .map_err(db_error)?;
-        Ok(())
+        insert_account(&self.connection, id, kind, name)
     }
 
     pub fn add_category(&mut self, id: &str, kind: &str, name: &str) -> Result<()> {
-        valid_id(id)?;
-        if !matches!(kind, "income" | "expense") || name.len() > 256 {
-            return Err(CoreError::new("invalid_category", "分类类型或名称无效"));
-        }
-        self.connection
-            .execute(
-                "INSERT INTO categories(id,kind,name) VALUES (?1,?2,?3)",
-                params![id, kind, name],
-            )
-            .map_err(db_error)?;
-        Ok(())
+        insert_category(&self.connection, id, kind, name)
     }
 
     pub fn sequence(&self) -> Result<i64> {
@@ -681,6 +664,34 @@ impl Store {
         tx.commit().map_err(db_error)?;
         Ok(snapshot)
     }
+}
+
+fn insert_account(connection: &Connection, id: &str, kind: &str, name: &str) -> Result<()> {
+    valid_id(id)?;
+    if !matches!(kind, "cash" | "bank" | "wallet" | "credit_card") || name.len() > 256 {
+        return Err(CoreError::new("invalid_account", "账户类型或名称无效"));
+    }
+    connection
+        .execute(
+            "INSERT INTO accounts(id,kind,name) VALUES (?1,?2,?3)",
+            params![id, kind, name],
+        )
+        .map_err(db_error)?;
+    Ok(())
+}
+
+fn insert_category(connection: &Connection, id: &str, kind: &str, name: &str) -> Result<()> {
+    valid_id(id)?;
+    if !matches!(kind, "income" | "expense") || name.len() > 256 {
+        return Err(CoreError::new("invalid_category", "分类类型或名称无效"));
+    }
+    connection
+        .execute(
+            "INSERT INTO categories(id,kind,name) VALUES (?1,?2,?3)",
+            params![id, kind, name],
+        )
+        .map_err(db_error)?;
+    Ok(())
 }
 
 fn read_snapshot(connection: &Connection, months: &[String]) -> Result<Snapshot> {

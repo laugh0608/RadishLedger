@@ -201,4 +201,146 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'saves account, categories and both directions and reads them on reopen',
+    (tester) async {
+      final root = Directory.systemTemp.createTempSync(
+        'radish_local_book_widget_',
+      );
+      addTearDown(() => root.deleteSync(recursive: true));
+      final platform = UnavailableSystem(root);
+      await tester.runAsync(() async {
+        final ledger = await InternalLedger.open(platform);
+        final created = await ledger.create(_bytes(_password));
+        try {
+          await _report(
+            ledger.confirm(
+              InternalLedger.identity(created.report),
+              Uint8List.fromList(created.secret),
+            ),
+          );
+        } finally {
+          created.clear();
+        }
+      });
+
+      Future<void> tap(Finder target) async {
+        await tester.ensureVisible(target);
+        await tester.tap(target);
+        await tester.pump();
+      }
+
+      Finder field(String label) => find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == label,
+      );
+
+      Future<void> enter(String label, String input) async {
+        final target = field(label);
+        await tester.ensureVisible(target);
+        await tester.enterText(target, input);
+        await tester.pump();
+      }
+
+      Future<void> choose(String label, String value) async {
+        final dropdown = find.ancestor(
+          of: find.text(label),
+          matching: find.byType(DropdownButtonFormField<String>),
+        );
+        await tap(dropdown);
+        await tester.pumpAndSettle();
+        await tap(find.text(value).last);
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> open() async {
+        await _until(tester, () => find.text('解锁本地账簿').evaluate().isNotEmpty);
+        await enter('本地口令', _password);
+        await tap(find.widgetWithText(FilledButton, '打开账簿'));
+        await _until(tester, () => find.text('账簿已打开').evaluate().isNotEmpty);
+      }
+
+      Future<void> save({String result = '已保存到本机'}) async {
+        await enter('保存用本地口令', _password);
+        await tap(find.widgetWithText(FilledButton, '保存到本机'));
+        await _until(
+          tester,
+          () =>
+              find.text(result).evaluate().isNotEmpty &&
+              find.byType(LinearProgressIndicator).evaluate().isEmpty,
+        );
+        await tester.pump();
+      }
+
+      await tester.pumpWidget(InternalLedgerApp(platform: platform));
+      await open();
+      expect(find.text('还没有收支记录。'), findsOneWidget);
+      await tap(find.widgetWithText(OutlinedButton, '新建账户'));
+      await enter('账户名称', '合成银行');
+      await choose('账户类型', '银行账户');
+      await enter('期初金额（CNY）', '1000.00');
+      await enter('生效日期（YYYY-MM-DD）', '2026-01-01');
+      await save();
+      expect(find.text('合成银行 · 银行账户 · ¥1000.00'), findsOneWidget);
+      expect(find.text('还没有收支记录。'), findsOneWidget);
+
+      await tap(find.widgetWithText(OutlinedButton, '新建分类'));
+      await enter('分类名称', '临时分类');
+      await tap(find.text('取消录入'));
+      await tap(find.text('继续编辑'));
+      expect(tester.widget<TextField>(field('分类名称')).controller!.text, '临时分类');
+      await tap(find.text('取消录入'));
+      await tap(find.text('丢弃输入'));
+      expect(find.textContaining('临时分类'), findsNothing);
+
+      await tap(find.widgetWithText(OutlinedButton, '新建分类'));
+      await enter('分类名称', '合成工资');
+      await choose('收支类型', '收入');
+      await save();
+      await tap(find.widgetWithText(OutlinedButton, '新建分类'));
+      await enter('分类名称', '合成餐饮');
+      await save();
+
+      await tap(find.widgetWithText(FilledButton, '记一笔'));
+      await choose('收支类型', '收入');
+      await choose('分类', '合成工资');
+      await enter('金额（CNY）', '2000.001');
+      await enter('业务日期（YYYY-MM-DD）', '2026-01-05');
+      await save(result: '人民币金额最多两位小数');
+      expect(
+        tester.widget<TextField>(field('金额（CNY）')).controller!.text,
+        '2000.001',
+      );
+      expect(
+        tester.widget<TextField>(field('保存用本地口令')).controller!.text,
+        isEmpty,
+      );
+      await enter('金额（CNY）', '2000.00');
+      await save();
+      expect(find.text('合成银行 · 银行账户 · ¥3000.00'), findsOneWidget);
+
+      await tap(find.widgetWithText(FilledButton, '记一笔'));
+      await choose('分类', '合成餐饮');
+      await enter('金额（CNY）', '30.00');
+      await enter('业务日期（YYYY-MM-DD）', '2026-01-07');
+      await save();
+      await tap(find.widgetWithText(FilledButton, '关闭账簿'));
+      expect(find.textContaining('¥2970.00'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(InternalLedgerApp(platform: platform));
+      await open();
+      expect(find.text('最近核对的保存已提交。'), findsOneWidget);
+      expect(find.text('合成银行 · 银行账户 · ¥2970.00'), findsOneWidget);
+      expect(
+        find.text('2026-01-05 · 收入 · ¥2000.00\n合成银行 · 合成工资'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('2026-01-07 · 支出 · ¥30.00\n合成银行 · 合成餐饮'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
