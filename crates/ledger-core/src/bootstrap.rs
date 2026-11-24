@@ -93,6 +93,11 @@ pub enum Action {
         index: u32,
         sequence: i64,
     },
+    ReadMonth {
+        unlock: Unlock,
+        month: String,
+        sequence: i64,
+    },
     SaveLocal {
         unlock: Unlock,
         command: LedgerCommand,
@@ -308,6 +313,18 @@ impl Bootstrap {
         let mut report = self.local_report(true, Some(store.local_book()?), last_save);
         report["fixtureComplete"] = json!(read_only);
         Ok(report)
+    }
+
+    fn open_local_query(&self, files: &Files, root: &Secret) -> Result<Store> {
+        if !self.ready(files, root)? {
+            return Err(CoreError::new(
+                "recovery_unconfirmed",
+                "先确认恢复材料，再查询账簿",
+            ));
+        }
+        let store = self.open(files, root, false)?;
+        Self::check_local_fixture(&store)?;
+        Ok(store)
     }
 
     fn check_local_fixture(store: &Store) -> Result<bool> {
@@ -566,7 +583,9 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         | Action::Seed { unlock }
         | Action::Replay { unlock }
         | Action::PrepareProtection { unlock } => unlock,
-        Action::SaveLocal { unlock, .. } | Action::ReadEntries { unlock, .. } => {
+        Action::SaveLocal { unlock, .. }
+        | Action::ReadEntries { unlock, .. }
+        | Action::ReadMonth { unlock, .. } => {
             if request.expected_identity.is_none() || matches!(unlock, Unlock::System) {
                 return Err(CoreError::new(
                     "invalid_action",
@@ -597,17 +616,19 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         Action::ReadEntries {
             index, sequence, ..
         } => {
-            if !b.ready(&files, &root)? {
-                return Err(CoreError::new(
-                    "recovery_unconfirmed",
-                    "先确认恢复材料，再查看流水",
-                ));
-            }
-            let store = b.open(&files, &root, false)?;
-            Bootstrap::check_local_fixture(&store)?;
+            let store = b.open_local_query(&files, &root)?;
             let page = store.entry_page(index, sequence)?;
             return Ok(Reply::public(
                 json!({"vault":b.vault,"device":b.device,"ready":true,"entryPage":page}),
+            ));
+        }
+        Action::ReadMonth {
+            month, sequence, ..
+        } => {
+            let store = b.open_local_query(&files, &root)?;
+            let summary = store.month_summary(month, sequence)?;
+            return Ok(Reply::public(
+                json!({"vault":b.vault,"device":b.device,"ready":true,"monthSummary":summary}),
             ));
         }
         Action::SaveLocal { command, .. } => {

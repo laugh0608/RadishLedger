@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'bootstrap.dart';
 import 'internal_ledger.dart';
+import 'monthly_summary.dart';
 
 class LocalBook {
   LocalBook._(
@@ -115,6 +116,8 @@ class _BookEntry {
       '${book._accounts[accountId]!.name} · ${book._categories[categoryId]!.name}';
 }
 
+enum _MonthView { choose, report }
+
 enum _Form { account, category, entry, revise, delete }
 
 const _accountKinds = {
@@ -151,6 +154,7 @@ class LocalBookPanel extends StatefulWidget {
     required this.clearMessage,
     required this.save,
     required this.readPage,
+    required this.readMonth,
   });
 
   final LocalBook book;
@@ -160,6 +164,7 @@ class LocalBookPanel extends StatefulWidget {
   final String? message;
   final VoidCallback clearMessage;
   final Future<EntryPage?> Function(int) readPage;
+  final Future<MonthlySummary?> Function(String) readMonth;
   final Future<bool> Function(Map<String, Object?>) save;
 
   @override
@@ -170,6 +175,9 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   final _name = TextEditingController();
   final _amount = TextEditingController();
   final _date = TextEditingController();
+  final _month = TextEditingController();
+  _MonthView? _monthView;
+  MonthlySummary? _summary;
   _Form? _form;
   _BookEntry? _original;
   String _accountKind = 'cash';
@@ -181,6 +189,51 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   bool _confirmDiscard = false;
   EntryPage? _history;
   int? _requestedPage;
+
+  void _chooseMonth(String month) {
+    widget.clearMessage();
+    widget.credential.clear();
+    _month.text = month;
+    setState(() => _monthView = _MonthView.choose);
+  }
+
+  void _openMonths() {
+    if (_summary != null) {
+      widget.clearMessage();
+      setState(() => _monthView = _MonthView.report);
+      return;
+    }
+    final latest = widget.book.firstPage._entries.firstOrNull?.businessDate;
+    _chooseMonth((latest ?? DateTime.now().toIso8601String()).substring(0, 7));
+  }
+
+  void _leaveMonth() {
+    widget.clearMessage();
+    widget.credential.clear();
+    setState(
+      () => _monthView = _monthView == _MonthView.choose && _summary != null
+          ? _MonthView.report
+          : null,
+    );
+  }
+
+  Future<void> _readMonth() async {
+    final report = await widget.readMonth(_month.text);
+    if (mounted && report != null) {
+      setState(() {
+        _summary = report;
+        _monthView = _MonthView.report;
+      });
+    }
+  }
+
+  void _shiftMonth(String month, int offset) {
+    final date = DateTime.utc(
+      int.parse(month.substring(0, 4)),
+      int.parse(month.substring(5)) + offset,
+    );
+    _chooseMonth(date.toIso8601String().substring(0, 7));
+  }
 
   void _showPage(EntryPage? page) {
     widget.clearMessage();
@@ -298,6 +351,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
       setState(() {
         _form = null;
         _history = null;
+        _summary = null;
       });
     }
   }
@@ -307,6 +361,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
     _name.dispose();
     _amount.dispose();
     _date.dispose();
+    _month.dispose();
     super.dispose();
   }
 
@@ -469,6 +524,10 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
           ),
         ],
       ),
+    OutlinedButton(
+      onPressed: widget.busy ? null : _openMonths,
+      child: const Text('查看月汇总'),
+    ),
     Text('账户余额', style: Theme.of(context).textTheme.titleMedium),
     if (book._accounts.isEmpty) const Text('请先建立账户并确认期初金额。'),
     for (final MapEntry(:key, :value) in book._accounts.entries)
@@ -486,6 +545,68 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
     ),
     ..._entryRows(book, book.firstPage),
   ];
+
+  List<Widget> _monthlyView() {
+    if (_monthView == _MonthView.choose) {
+      return [
+        Text('查询月汇总', style: Theme.of(context).textTheme.titleMedium),
+        _text(_month, '业务月份（YYYY-MM）', 7),
+        _credentialField('查询'),
+        FilledButton(
+          onPressed: widget.busy || widget.credential.text.isEmpty
+              ? null
+              : _readMonth,
+          child: const Text('读取月汇总'),
+        ),
+        if (widget.message case final message?)
+          Semantics(liveRegion: true, child: Text(message)),
+        TextButton(
+          onPressed: widget.busy ? null : _leaveMonth,
+          child: const Text('取消查询'),
+        ),
+      ];
+    }
+    final summary = _summary!;
+    return [
+      Text(
+        '${summary.month} 月汇总',
+        style: Theme.of(context).textTheme.titleMedium,
+      ),
+      Wrap(
+        children: [
+          TextButton(
+            onPressed: widget.busy || summary.month == '0001-01'
+                ? null
+                : () => _shiftMonth(summary.month, -1),
+            child: const Text('上个月'),
+          ),
+          TextButton(
+            onPressed: widget.busy ? null : () => _chooseMonth(summary.month),
+            child: const Text('选择月份'),
+          ),
+          TextButton(
+            onPressed: widget.busy || summary.month == '9999-12'
+                ? null
+                : () => _shiftMonth(summary.month, 1),
+            child: const Text('下个月'),
+          ),
+        ],
+      ),
+      if (!summary.hasActivity) const Text('这个月没有收支或退款。'),
+      Text('收入 ${_yuan(summary.income)}'),
+      Text('净支出 ${_yuan(summary.netExpense)}'),
+      Text('结余 ${_yuan(summary.surplus)}'),
+      Text('毛支出 ${_yuan(summary.expense)} · 退款 ${_yuan(summary.refund)}'),
+      Text('支出分类净额', style: Theme.of(context).textTheme.titleSmall),
+      if (summary.categories.isEmpty) const Text('还没有支出分类。'),
+      for (final row in summary.categories)
+        Text('${row.name} · ${_yuan(row.minor)}'),
+      TextButton(
+        onPressed: widget.busy ? null : _leaveMonth,
+        child: const Text('返回账簿'),
+      ),
+    ];
+  }
 
   List<Widget> _historyView(LocalBook book, EntryPage page) => [
     Text(
@@ -565,7 +686,9 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   Widget build(BuildContext context) {
     final form = _form;
     final history = _history;
-    final children = form == null
+    final children = _monthView != null
+        ? _monthlyView()
+        : form == null
         ? history == null
               ? _overview(widget.book)
               : _historyView(widget.book, history)
@@ -583,10 +706,12 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
           ]
         : _fields(form);
     return PopScope(
-      canPop: form == null && history == null,
+      canPop: form == null && history == null && _monthView == null,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop || widget.busy) return;
-        if (form != null) {
+        if (_monthView != null) {
+          _leaveMonth();
+        } else if (form != null) {
           _askDiscard();
         } else {
           _showPage(_requestedPage == null ? null : history);

@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:radishledger_probe/internal_ledger_app.dart';
 import 'package:radishledger_probe/src/bootstrap.dart';
 import 'package:radishledger_probe/src/internal_ledger.dart';
+import 'package:radishledger_probe/src/monthly_summary.dart';
 
 const _password = 'synthetic-internal-ledger-password';
 
@@ -712,6 +713,203 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pump();
       expect(find.text('查看完整流水'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  test(
+    'monthly report keeps refund signs, zero categories and offsetting activity',
+    () {
+      final payload = <String, dynamic>{
+        'month': '2026-02',
+        'sequence': 3,
+        'incomeMinor': '0',
+        'grossExpenseMinor': '500',
+        'refundMinor': '500',
+        'netExpenseMinor': '0',
+        'surplusMinor': '0',
+        'categoryNames': <String, dynamic>{'a': '购物', 'b': '餐饮', 'c': '交通'},
+        'expenseCategoriesMinor': <String, dynamic>{
+          'a': '-500',
+          'b': '500',
+          'c': '0',
+        },
+      };
+      MonthlySummary parse() =>
+          MonthlySummary.fromReport({'monthSummary': payload}, '2026-02', 3);
+      final summary = parse();
+      expect(summary.hasActivity, isTrue);
+      expect(summary.categories, [
+        (name: '餐饮', minor: '500'),
+        (name: '交通', minor: '0'),
+        (name: '购物', minor: '-500'),
+      ]);
+      payload['refundMinor'] = 5.0;
+      expect(parse, throwsA(_failed('invalid_response')));
+    },
+  );
+
+  testWidgets(
+    'monthly summary follows selected revisions across months and deletion',
+    (tester) async {
+      final root = Directory.systemTemp.createTempSync('radish_month_widget_');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final platform = UnavailableSystem(root);
+      late InternalLedger ledger;
+      late LedgerIdentity identity;
+      String id(int n) => n.toRadixString(16).padLeft(32, '0');
+      Map<String, String> write(int operation, int event, int revision) => {
+        'operationId': id(operation),
+        'eventId': id(event),
+        'revisionId': id(revision),
+      };
+      await tester.runAsync(() async {
+        ledger = await InternalLedger.open(platform);
+        final created = await ledger.create(_bytes(_password));
+        try {
+          identity = InternalLedger.identity(created.report);
+          Future<void> save(Map<String, Object?> command) async {
+            await _report(
+              ledger.save(
+                identity,
+                LedgerUnlock.recovery,
+                Uint8List.fromList(created.secret),
+                command,
+              ),
+            );
+          }
+
+          await expectLater(
+            ledger.readMonth(
+              identity,
+              LedgerUnlock.password,
+              _bytes(_password),
+              month: '2026-01',
+              sequence: 0,
+            ),
+            throwsA(_failed('recovery_unconfirmed')),
+          );
+          await _report(
+            ledger.confirm(identity, Uint8List.fromList(created.secret)),
+          );
+          await save({
+            'kind': 'account',
+            'id': id(1),
+            'accountKind': 'cash',
+            'name': '合成现金',
+            'amountYuan': '100.00',
+            'businessDate': '2026-01-01',
+            'identity': write(10, 11, 12),
+          });
+          await save({
+            'kind': 'category',
+            'id': id(2),
+            'categoryKind': 'expense',
+            'name': '合成餐饮',
+          });
+          await save({
+            'kind': 'entry',
+            'direction': 'expense',
+            'accountId': id(1),
+            'categoryId': id(2),
+            'amountYuan': '10.00',
+            'businessDate': '2026-01-31',
+            'identity': write(20, 21, 22),
+          });
+        } finally {
+          created.clear();
+        }
+      });
+      Future<void> tap(String label) async {
+        final target = find.text(label);
+        await tester.ensureVisible(target);
+        await tester.tap(target);
+        await tester.pump();
+      }
+
+      Future<void> submit(String label, String password, String state) async {
+        final field = find.byWidgetPredicate(
+          (w) => w is TextField && w.obscureText,
+        );
+        await tester.ensureVisible(field);
+        await tester.enterText(field, password);
+        await tester.pump();
+        await tap(label);
+        await _until(
+          tester,
+          () =>
+              find.text(state).evaluate().isNotEmpty &&
+              find.byType(LinearProgressIndicator).evaluate().isEmpty,
+        );
+      }
+
+      Future<void> open() async => submit('打开账簿', _password, '账簿已打开');
+      Future<void> read(String month) async =>
+          submit('读取月汇总', _password, '$month 月汇总');
+      await tester.pumpWidget(InternalLedgerApp(platform: platform));
+      await _until(tester, () => find.text('解锁本地账簿').evaluate().isNotEmpty);
+      await open();
+      await tap('查看月汇总');
+      await read('2026-01');
+      expect(find.text('净支出 ¥10.00'), findsOneWidget);
+      expect(find.text('合成餐饮 · ¥10.00'), findsOneWidget);
+      expect(find.text('结余 -¥10.00'), findsOneWidget);
+      await tap('下个月');
+      await tap('取消查询');
+      expect(find.text('2026-01 月汇总'), findsOneWidget);
+      await tap('下个月');
+      await submit(
+        '读取月汇总',
+        'incorrect synthetic password',
+        '口令或恢复材料不正确，也可能是封装损坏。原账簿已保留。',
+      );
+      expect(find.text('这个月没有收支或退款。'), findsNothing);
+      await read('2026-02');
+      expect(find.text('这个月没有收支或退款。'), findsOneWidget);
+      expect(find.text('合成餐饮 · ¥0.00'), findsOneWidget);
+      await tap('返回账簿');
+      await tap('查看月汇总');
+      expect(find.text('2026-02 月汇总'), findsOneWidget);
+      await tap('上个月');
+      await tester.runAsync(
+        () => _report(
+          ledger.save(identity, LedgerUnlock.password, _bytes(_password), {
+            'kind': 'reviseEntry',
+            'previousRevisionId': id(22),
+            'businessDate': '2026-02-01',
+            'amountYuan': '25.00',
+            'identity': write(30, 21, 32),
+          }),
+        ),
+      );
+      await submit('读取月汇总', _password, '查询期间账务已变化。请重新解锁核对月汇总。');
+      expect(find.text('账簿已打开'), findsNothing);
+      await open();
+      expect(
+        find.text('2026-02-01 · 支出 · ¥25.00\n合成现金 · 合成餐饮'),
+        findsOneWidget,
+      );
+      await tap('查看月汇总');
+      await read('2026-02');
+      expect(find.text('净支出 ¥25.00'), findsOneWidget);
+      expect(find.text('合成餐饮 · ¥25.00'), findsOneWidget);
+      await tap('上个月');
+      await read('2026-01');
+      expect(find.text('这个月没有收支或退款。'), findsOneWidget);
+      await tap('返回账簿');
+      await tap('删除这笔支出');
+      await submit('确认删除', _password, '已删除这笔收支');
+      expect(find.text('合成现金 · 现金 · ¥100.00'), findsOneWidget);
+      await tap('查看月汇总');
+      final monthField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == '业务月份（YYYY-MM）',
+      );
+      await tester.enterText(monthField, '2026-13');
+      await submit('读取月汇总', _password, '统计月份无效');
+      await tester.enterText(monthField, '2026-02');
+      await read('2026-02');
+      expect(find.text('净支出 ¥0.00'), findsOneWidget);
+      expect(find.text('这个月没有收支或退款。'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

@@ -610,6 +610,75 @@ mod tests {
     }
 
     #[test]
+    fn local_month_summaries_match_the_shared_checkpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let cases: Value = serde_json::from_str(CASES).unwrap();
+        for (case_id, step_id) in [
+            ("A01", "initial"),
+            ("A01", "refund"),
+            ("A02", "refund"),
+            ("A06", "renamed"),
+            ("A08", "selected-date"),
+            ("A08", "edit-date"),
+        ] {
+            let mut case = cases["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|case| case["id"] == case_id)
+                .unwrap()
+                .clone();
+            let steps = case["steps"].as_array_mut().unwrap();
+            let count = steps.iter().position(|step| step["id"] == step_id).unwrap() + 1;
+            steps.truncate(count);
+            let expected = steps.last().unwrap().clone();
+            let path = dir.path().join(format!("{case_id}-{step_id}.db"));
+            let key = DbKey::random().unwrap();
+            let mut store = Store::create(&path, &key).unwrap();
+            let (_, symbols, _) = populate_case(&mut store, &case, &[]).unwrap();
+            drop(store);
+            let store = Store::open_readonly(&path, &key).unwrap();
+            let before = store.content_digest().unwrap();
+            let sequence = store.sequence().unwrap();
+            for (month, wanted) in expected["expected"]["monthlyReports"].as_object().unwrap() {
+                let actual = store.month_summary(month.clone(), sequence).unwrap();
+                let mut actual = symbols.normalize(serde_json::to_value(actual).unwrap());
+                let fields = actual.as_object_mut().unwrap();
+                assert_eq!(fields.remove("sequence").unwrap(), sequence);
+                assert_eq!(fields.remove("month").unwrap(), month.as_str());
+                let names = fields.remove("categoryNames").unwrap();
+                for category in wanted["expenseCategoriesMinor"].as_object().unwrap().keys() {
+                    let renamed = expected
+                        .get("categoryNames")
+                        .and_then(|names| names.get(category));
+                    assert_eq!(
+                        names[category],
+                        renamed.cloned().unwrap_or_else(|| json!(category))
+                    );
+                }
+                assert_eq!(&actual, wanted, "{case_id}/{step_id}/{month}");
+            }
+            assert_eq!(
+                store
+                    .month_summary("2026-13".into(), sequence)
+                    .err()
+                    .unwrap()
+                    .code,
+                "invalid_calendar_date"
+            );
+            assert_eq!(
+                store
+                    .month_summary("2026-01".into(), sequence + 1)
+                    .err()
+                    .unwrap()
+                    .code,
+                "stale_month_summary"
+            );
+            assert_eq!(store.content_digest().unwrap(), before);
+        }
+    }
+
+    #[test]
     fn common_material_runs_against_encrypted_transactions() {
         let temp = tempfile::tempdir().expect("isolated test directory");
         let report = super::run(temp.path()).expect("actual core and hand-authored expectations");

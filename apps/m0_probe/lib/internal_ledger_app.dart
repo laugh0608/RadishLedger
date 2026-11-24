@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'src/bootstrap.dart';
 import 'src/internal_ledger.dart';
 import 'src/local_book.dart';
+import 'src/monthly_summary.dart';
 
 class InternalLedgerApp extends StatelessWidget {
   const InternalLedgerApp({
@@ -93,6 +94,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     ) =>
       '结果未定，请重新核对原账簿。',
     BootstrapFailure(code: 'local_save_uncertain') => '保存结果未定，请重新打开账簿核对上次保存。',
+    BootstrapFailure(code: 'stale_month_summary') => '查询期间账务已变化。请重新解锁核对月汇总。',
     BootstrapFailure(code: 'stale_entry_page') => '翻页期间流水已变化。请重新解锁，从第一页核对。',
     BootstrapFailure(code: 'stale_revision') => '这笔流水已变化。请重新解锁并核对最新记录。',
     BootstrapFailure(code: 'stale_candidates') => '这笔流水存在冲突。请重新解锁核对，本次操作未提交。',
@@ -148,7 +150,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     Future<BootstrapResult> Function(Uint8List) action, {
     required bool canWrite,
     String? savedMessage,
-    void Function(Map<String, dynamic>)? receivePage,
+    void Function(Map<String, dynamic>)? receiveQuery,
   }) async {
     if (_busy) return false;
     final saving = savedMessage != null;
@@ -165,11 +167,11 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     try {
       result = await action(input);
       if (!mounted || epoch != _epoch) return false;
-      if (receivePage != null) {
+      if (receiveQuery != null) {
         if (result.report['ready'] != true || result.secret.isNotEmpty) {
           throw const BootstrapFailure('invalid_response');
         }
-        receivePage(result.report);
+        receiveQuery(result.report);
         accepted = true;
         return true;
       }
@@ -219,7 +221,8 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
                   (error.code == 'stale_revision' ||
                       error.code == 'stale_candidates' ||
                       error.code == 'stale_entry_page' ||
-                      receivePage != null &&
+                      error.code == 'stale_month_summary' ||
+                      receiveQuery != null &&
                           const {
                             'selection_changed',
                             'invalid_response',
@@ -348,10 +351,27 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
                         sequence: book.firstPage.sequence,
                       ),
                       canWrite: false,
-                      receivePage: (report) =>
+                      receiveQuery: (report) =>
                           page = book.readPage(report, index),
                     );
                     return page;
+                  },
+                  readMonth: (month) async {
+                    MonthlySummary? summary;
+                    final sequence = book.firstPage.sequence;
+                    await _submit(
+                      (input) => ledger.readMonth(
+                        location!.identity!,
+                        _method,
+                        input,
+                        month: month,
+                        sequence: sequence,
+                      ),
+                      canWrite: false,
+                      receiveQuery: (report) => summary =
+                          MonthlySummary.fromReport(report, month, sequence),
+                    );
+                    return summary;
                   },
                   save: (command) => _submit(
                     (input) => ledger.save(

@@ -2,7 +2,7 @@ use super::{
     Store, Write, WriteEffect, apply_write, db_error, insert_account, insert_category,
     read_snapshot, valid_id,
 };
-use crate::domain::{Event, EventKind, parse_yuan};
+use crate::domain::{Event, EventKind, MonthlyReport, parse_yuan};
 use crate::logical_snapshot::Reference;
 use crate::{CoreError, Result};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
@@ -119,6 +119,16 @@ pub(crate) struct EntryPage {
     page_index: u32,
     has_more: bool,
     recent_entries: Vec<LocalEntry>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MonthSummary {
+    month: String,
+    sequence: i64,
+    #[serde(flatten)]
+    report: MonthlyReport,
+    category_names: BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -325,6 +335,35 @@ impl Store {
         let page = read_entries(&tx, index, Some(sequence))?;
         tx.commit().map_err(db_error)?;
         Ok(page)
+    }
+
+    pub(crate) fn month_summary(&self, month: String, sequence: i64) -> Result<MonthSummary> {
+        let tx = self.connection.unchecked_transaction().map_err(db_error)?;
+        if super::read_sequence(&tx)? != sequence {
+            return Err(CoreError::new(
+                "stale_month_summary",
+                "账务已变化，请重新打开账簿核对月汇总",
+            ));
+        }
+        let categories = references(
+            &tx,
+            "SELECT id,kind,name,archived FROM categories WHERE kind='expense' ORDER BY id LIMIT 257",
+        )?;
+        let mut projection = read_snapshot(&tx, std::slice::from_ref(&month))?.projection;
+        let report = projection
+            .monthly_reports
+            .remove(&month)
+            .ok_or_else(|| CoreError::new("invalid_report", "未能取得所选业务月份的汇总"))?;
+        tx.commit().map_err(db_error)?;
+        Ok(MonthSummary {
+            sequence,
+            month,
+            report,
+            category_names: categories
+                .into_iter()
+                .map(|category| (category.id, category.name))
+                .collect(),
+        })
     }
 
     pub(crate) fn local_save_committed(&self, mut receipt: [u8; 32]) -> Result<bool> {

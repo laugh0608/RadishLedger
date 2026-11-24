@@ -185,4 +185,6 @@ Android 的 `lib/main.dart` 使用 `--dart-define=RADISH_INTERNAL_LEDGER=true` �
 
 完整流水可用 `cargo test --locked -p radishledger-core --lib entry_pages_cover_ties_boundaries_and_reject_stale_reads` 复验同日排序、分页边界和并发变更。上述 Flutter 宿主入口覆盖从已打开的账簿浏览历史、取消翻页、错口令及重新解锁。[完整流水契约](../docs/development/mobile-core-prototype.md#84-普通收支的完整流水)
 
+月汇总可用 `cargo test --locked -p radishledger-core --lib local_month_summaries_match_the_shared_checkpoints` 对照 A01、A02、A06、A08，覆盖期初、转账、跨月退款、归档改名和跨月编辑。Flutter 的 `test/internal_ledger_test.dart` 经真实薄桥接验证选月、空月、拒绝与重新解锁，以及删除后的分类净额。[月汇总契约](../docs/development/mobile-core-prototype.md#85-业务月份的收支汇总与分类小计)
+
 授权并核对隔离 Android 目标后，在 `apps/m0_probe` 执行 `flutter test --no-pub -d <已确认的模拟器> integration_test/internal_ledger_test.dart`。先按 debug 模式生成 Flutter 插件登记，避免复用 release 模式的生成文件。执行会安装 Android 测试包，测试期间口令和恢复材料只在测试进程内使用。该入口核对同进程页面重建及 A11 保全。正常 release 的实际键盘、后台和 App 新 PID 证据单独记录，按实际包及覆盖动作取证。[设备验收范围](../docs/development/mobile-core-prototype.md#8-android-内部账簿的创建与重开)

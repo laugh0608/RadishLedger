@@ -146,6 +146,23 @@ class InternalLedger {
     expected,
   );
 
+  Future<BootstrapResult> readMonth(
+    LedgerIdentity expected,
+    LedgerUnlock unlock,
+    Uint8List input, {
+    required String month,
+    required int sequence,
+  }) => _authenticated(
+    {
+      'kind': 'readMonth',
+      'unlock': unlock.name,
+      'month': month,
+      'sequence': sequence,
+    },
+    input,
+    expected,
+  );
+
   Future<BootstrapResult> save(
     LedgerIdentity expected,
     LedgerUnlock unlock,
