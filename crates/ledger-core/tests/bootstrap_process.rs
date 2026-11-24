@@ -336,6 +336,42 @@ fn local_book_reopens_receipts_transactions_and_balances_across_processes() {
     assert_eq!(revised[0]["businessDate"], "2026-02-01");
     assert_eq!(revised[1], rows[1]);
     assert_eq!(ok(finish(save(edit, None))).0["book"], committed["book"]);
+    let delete = json!({"kind":"deleteEntry","previousRevisionId":id(41),
+        "identity":{"eventId":id(31),"operationId":id(50),"revisionId":id(51)}});
+    kill_at(
+        directory,
+        run,
+        save(delete.clone(), Some("localSavePrepared")),
+        "localSavePrepared",
+    );
+    let pending_delete = reopen();
+    assert_eq!(pending_delete["lastSaveCommitted"], false);
+    assert_eq!(pending_delete["book"], committed["book"]);
+    kill_at(
+        directory,
+        run,
+        save(delete.clone(), Some("localSaveCommitted")),
+        "localSaveCommitted",
+    );
+    let deleted = reopen();
+    assert_eq!(deleted["lastSaveCommitted"], true);
+    assert_eq!(deleted["book"]["balancesMinor"][id(1)], "300000");
+    assert_eq!(deleted["book"]["recentEntries"], json!([rows[1]]));
+    assert_eq!(ok(finish(save(delete, None))).0["book"], deleted["book"]);
+    let (audit, _) = ok(call(
+        directory,
+        run,
+        json!({"kind":"inspect","unlock":"password"}),
+        password,
+    ));
+    let snapshot = &audit["audit"]["snapshot"];
+    assert_eq!(snapshot["deletedEventIds"], json!([id(31)]));
+    assert_eq!(snapshot["selectedRevisionIds"][id(31)], id(51));
+    assert_eq!(audit["audit"]["revisions"], 5);
+    assert_eq!(
+        audit["audit"]["operations"],
+        json!([id(10), id(20), id(30), id(40), id(50)])
+    );
     let (status, _) = ok(call(directory, run, json!({"kind":"status"}), &[]));
     assert_eq!(status["candidates"], json!([]));
 }

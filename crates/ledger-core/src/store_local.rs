@@ -18,13 +18,13 @@ pub struct WriteIdentity {
 }
 
 impl WriteIdentity {
-    fn write(self, event: Event, previous_revision_id: Option<String>) -> Write {
+    fn write(self, event: Option<Event>, previous_revision_id: Option<String>) -> Write {
         Write {
             operation_id: self.operation_id,
             event_id: self.event_id,
             revision_id: self.revision_id,
             previous_revision_id,
-            event: Some(event),
+            event,
             expected_sequence: None,
             observed_balance_minor: None,
             target_balance_minor: None,
@@ -67,6 +67,10 @@ pub enum LedgerCommand {
         business_date: String,
         account_id: String,
         category_id: String,
+        identity: WriteIdentity,
+    },
+    DeleteEntry {
+        previous_revision_id: String,
         identity: WriteIdentity,
     },
     ReviseEntry {
@@ -195,6 +199,36 @@ fn read_book(connection: &Connection) -> Result<BookView> {
     })
 }
 
+// 使用表单所见的不可变修订。apply_write 在同一事务内核对重放、当前所选版本和候选。
+fn ordinary_entry_revision(
+    connection: &Connection,
+    event_id: &str,
+    revision_id: &str,
+) -> Result<Event> {
+    valid_id(event_id)?;
+    valid_id(revision_id)?;
+    let payload: Option<String> = connection
+        .query_row(
+            "SELECT payload FROM revisions WHERE id=?1 AND event_id=?2 AND payload IS NOT NULL",
+            [revision_id, event_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?;
+    let payload =
+        payload.ok_or_else(|| CoreError::new("stale_revision", "原流水修订不存在，请重新核对"))?;
+    let event: Event = serde_json::from_str(&payload)
+        .map_err(|_| CoreError::new("corrupt_fact", "账务事实无法解释"))?;
+    if !matches!(event.kind, EventKind::Income | EventKind::Expense) {
+        return Err(CoreError::new(
+            "invalid_entry_kind",
+            "此操作仅支持普通收入或支出",
+        ));
+    }
+    event.validate()?;
+    Ok(event)
+}
+
 fn checked_name(name: &str) -> Result<&str> {
     let name = name.trim();
     if name.is_empty() || name.contains('\0') {
@@ -290,7 +324,7 @@ impl Store {
                 if !existed {
                     insert_account(&tx, &id, &account_kind, name)?;
                 }
-                let write = identity.write(opening, None);
+                let write = identity.write(Some(opening), None);
                 let effect = apply_write(&tx, &write, &mut |_| Ok(()))?;
                 if existed != (effect == WriteEffect::Replayed) {
                     return Err(CoreError::new(
@@ -338,7 +372,16 @@ impl Store {
                     amount_minor: parse_yuan(&amount_yuan, false)?.to_string(),
                     note: String::new(),
                 };
-                let write = identity.write(event, None);
+                let write = identity.write(Some(event), None);
+                apply_write(&tx, &write, &mut |_| Ok(()))?;
+                (false, write.operation_id)
+            }
+            LedgerCommand::DeleteEntry {
+                identity,
+                previous_revision_id,
+            } => {
+                ordinary_entry_revision(&tx, &identity.event_id, &previous_revision_id)?;
+                let write = identity.write(None, Some(previous_revision_id));
                 apply_write(&tx, &write, &mut |_| Ok(()))?;
                 (false, write.operation_id)
             }
@@ -348,27 +391,11 @@ impl Store {
                 amount_yuan,
                 business_date,
             } => {
-                valid_id(&previous_revision_id)?;
-                // 从不可变的原修订取回未编辑字段，使原操作在后续修订提交后仍可重放。
-                let payload: Option<String> = tx.query_row(
-                    "SELECT payload FROM revisions WHERE id=?1 AND event_id=?2 AND payload IS NOT NULL",
-                    [&previous_revision_id, &identity.event_id],
-                    |row| row.get(0),
-                ).optional().map_err(db_error)?;
-                let payload = payload.ok_or_else(|| {
-                    CoreError::new("stale_revision", "原流水修订不存在，请重新核对")
-                })?;
-                let mut event: Event = serde_json::from_str(&payload)
-                    .map_err(|_| CoreError::new("corrupt_fact", "账务事实无法解释"))?;
-                if !matches!(event.kind, EventKind::Income | EventKind::Expense) {
-                    return Err(CoreError::new(
-                        "invalid_entry_kind",
-                        "只能编辑普通收入或支出",
-                    ));
-                }
+                let mut event =
+                    ordinary_entry_revision(&tx, &identity.event_id, &previous_revision_id)?;
                 event.amount_minor = parse_yuan(&amount_yuan, false)?.to_string();
                 event.business_date = business_date;
-                let write = identity.write(event, Some(previous_revision_id));
+                let write = identity.write(Some(event), Some(previous_revision_id));
                 apply_write(&tx, &write, &mut |_| Ok(()))?;
                 (false, write.operation_id)
             }
@@ -381,5 +408,133 @@ impl Store {
         })?;
         tx.commit().map_err(db_error)?;
         Ok(book)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::DbKey;
+
+    fn delete(event_id: &str, previous: &str, operation: &str, revision: &str) -> LedgerCommand {
+        LedgerCommand::DeleteEntry {
+            previous_revision_id: previous.into(),
+            identity: WriteIdentity {
+                event_id: event_id.into(),
+                operation_id: operation.into(),
+                revision_id: revision.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn ordinary_delete_reopens_with_tombstone_and_replays_after_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("delete.db");
+        let key = DbKey::random().unwrap();
+        let mut store = Store::create(&path, &key).unwrap();
+        crate::probe::populate_snapshot_fixture(&mut store, "A08", "edit-date").unwrap();
+        let entry = store.local_book().unwrap().recent_entries.remove(0);
+        let original = store.revision_event(&entry.revision_id).unwrap().unwrap();
+        let operation = crate::random_id().unwrap();
+        let tombstone = crate::random_id().unwrap();
+        let command = || delete(&entry.id, &entry.revision_id, &operation, &tombstone);
+        let view = store.save_local(command(), |_| Ok(())).unwrap();
+        assert!(view.recent_entries.is_empty());
+        assert_eq!(view.balances_minor[&entry.account_id], "10000");
+        drop(store);
+        let mut store = Store::open(&path, &key).unwrap();
+        let snapshot = store
+            .snapshot(&["2026-01".into(), "2026-02".into()])
+            .unwrap();
+        assert_eq!(snapshot.deleted_event_ids, [entry.id.clone()].into());
+        assert_eq!(snapshot.selected_revision_ids[&entry.id], tombstone);
+        assert_eq!(
+            snapshot.projection.balances_minor[&entry.account_id],
+            "10000"
+        );
+        for month in ["2026-01", "2026-02"] {
+            let report = &snapshot.projection.monthly_reports[month];
+            assert_eq!(report.net_expense_minor, "0");
+            assert_eq!(report.expense_categories_minor[&entry.category_id], "0");
+        }
+        assert_eq!(store.revision_event(&tombstone).unwrap(), None);
+        assert_eq!(
+            store.revision_event(&entry.revision_id).unwrap(),
+            Some(original.clone())
+        );
+        let digest = store.content_digest().unwrap();
+        store.save_local(command(), |_| Ok(())).unwrap();
+        let duplicate = delete(
+            &entry.id,
+            &tombstone,
+            &crate::random_id().unwrap(),
+            &crate::random_id().unwrap(),
+        );
+        assert_eq!(
+            store.save_local(duplicate, |_| Ok(())).err().unwrap().code,
+            "stale_revision"
+        );
+        assert_eq!(store.content_digest().unwrap(), digest);
+
+        let restored = crate::random_id().unwrap();
+        let restore = WriteIdentity {
+            operation_id: crate::random_id().unwrap(),
+            event_id: entry.id.clone(),
+            revision_id: restored.clone(),
+        }
+        .write(Some(original), Some(tombstone.clone()));
+        store.commit(&restore).unwrap();
+        let digest = store.content_digest().unwrap();
+        let view = store.save_local(command(), |_| Ok(())).unwrap();
+        assert_eq!(view.recent_entries[0].revision_id, restored);
+        assert_eq!(view.balances_minor[&entry.account_id], "7500");
+        assert_eq!(store.content_digest().unwrap(), digest);
+    }
+
+    #[test]
+    fn ordinary_delete_rejects_stale_conflicted_and_non_entry_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store =
+            Store::create(&dir.path().join("refused.db"), &DbKey::random().unwrap()).unwrap();
+        let aliases =
+            crate::probe::populate_snapshot_fixture(&mut store, "A08", "edit-date").unwrap();
+        let id = |name| {
+            aliases
+                .iter()
+                .find(|(_, label)| label.as_str() == name)
+                .unwrap()
+                .0
+        };
+        let event = id("expense");
+        let older = id("expense-v1");
+        let current = id("expense-v2");
+        let candidate = store.revision_event(older).unwrap().unwrap();
+        store
+            .receive_candidate(event, &crate::random_id().unwrap(), older, &candidate)
+            .unwrap();
+        let digest = store.content_digest().unwrap();
+        for (target, previous, code) in [
+            (event, older, "stale_revision"),
+            (event, current, "stale_candidates"),
+            (id("open-cash"), id("open-cash-v1"), "invalid_entry_kind"),
+            (id("open-cash"), current, "stale_revision"),
+        ] {
+            let command = delete(
+                target,
+                previous,
+                &crate::random_id().unwrap(),
+                &crate::random_id().unwrap(),
+            );
+            assert_eq!(
+                store
+                    .save_local(command, |_| panic!("rejected delete registered"))
+                    .err()
+                    .unwrap()
+                    .code,
+                code
+            );
+        }
+        assert_eq!(store.content_digest().unwrap(), digest);
     }
 }

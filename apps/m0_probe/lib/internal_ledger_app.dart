@@ -93,8 +93,8 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     ) =>
       '结果未定，请重新核对原账簿。',
     BootstrapFailure(code: 'local_save_uncertain') => '保存结果未定，请重新打开账簿核对上次保存。',
-    BootstrapFailure(code: 'stale_revision') => '这笔流水已变化。请重新解锁，核对最新记录后再编辑。',
-    BootstrapFailure(code: 'stale_candidates') => '这笔流水存在冲突。请重新解锁核对，当前修改未保存。',
+    BootstrapFailure(code: 'stale_revision') => '这笔流水已变化。请重新解锁并核对最新记录。',
+    BootstrapFailure(code: 'stale_candidates') => '这笔流水存在冲突。请重新解锁核对，本次操作未提交。',
     BootstrapFailure(
       code: 'missing_database' ||
           'unexpected_database' ||
@@ -146,9 +146,10 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
   Future<bool> _submit(
     Future<BootstrapResult> Function(Uint8List) action, {
     required bool canWrite,
-    bool saving = false,
+    String? savedMessage,
   }) async {
     if (_busy) return false;
+    final saving = savedMessage != null;
     final epoch = ++_epoch;
     final input = Uint8List.fromList(utf8.encode(_input.text));
     _input.clear();
@@ -183,9 +184,9 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
         if (released != null || ready) _clearIssued();
         _issued ??= released;
         if (saving) {
-          _message = '已保存到本机';
+          _message = savedMessage;
         } else if (book?.lastSaveCommitted case final committed?) {
-          _message = committed ? '最近核对的保存已提交。' : '最近核对的保存未提交，可重新录入。';
+          _message = committed ? '最近核对的保存已提交。' : '最近核对的保存未提交，请核对流水后再试。';
         }
       });
       accepted = true;
@@ -328,7 +329,9 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
                       command,
                     ),
                     canWrite: true,
-                    saving: true,
+                    savedMessage: command['kind'] == 'deleteEntry'
+                        ? '已删除这笔收支'
+                        : '已保存到本机',
                   ),
                 )
               else if (ledger != null && location != null)

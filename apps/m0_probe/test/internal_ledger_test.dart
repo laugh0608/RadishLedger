@@ -388,7 +388,7 @@ void main() {
           ),
         );
       });
-      await save(result: '这笔流水已变化。请重新解锁，核对最新记录后再编辑。');
+      await save(result: '这笔流水已变化。请重新解锁并核对最新记录。');
       expect(find.text('账簿已打开'), findsNothing);
       await open();
       expect(find.text('合成银行 · 银行账户 · ¥2980.00'), findsOneWidget);
@@ -415,6 +415,145 @@ void main() {
         find.text('2026-01-05 · 收入 · ¥1900.00\n合成银行 · 合成工资'),
         findsOneWidget,
       );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'delete confirmation binds the displayed revision and clears credentials on cancel',
+    (tester) async {
+      final directory = Directory.systemTemp.createTempSync(
+        'radish_delete_widget_',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final platform = UnavailableSystem(directory);
+      late InternalLedger ledger;
+      late LedgerIdentity identity;
+      String id(int n) => n.toRadixString(16).padLeft(32, '0');
+      Map<String, String> write(int operation, int event, int revision) => {
+        'operationId': id(operation),
+        'eventId': id(event),
+        'revisionId': id(revision),
+      };
+      Future<void> save(Map<String, Object?> command) async {
+        await _report(
+          ledger.save(
+            identity,
+            LedgerUnlock.password,
+            _bytes(_password),
+            command,
+          ),
+        );
+      }
+
+      await tester.runAsync(() async {
+        ledger = await InternalLedger.open(platform);
+        final created = await ledger.create(_bytes(_password));
+        try {
+          identity = InternalLedger.identity(created.report);
+          await _report(
+            ledger.confirm(identity, Uint8List.fromList(created.secret)),
+          );
+        } finally {
+          created.clear();
+        }
+        await save({
+          'kind': 'account',
+          'id': id(1),
+          'accountKind': 'cash',
+          'name': '现金账户',
+          'amountYuan': '100.00',
+          'businessDate': '2026-01-01',
+          'identity': write(3, 4, 5),
+        });
+        await save({
+          'kind': 'category',
+          'id': id(2),
+          'categoryKind': 'income',
+          'name': '合成收入',
+        });
+        await save({
+          'kind': 'entry',
+          'direction': 'income',
+          'accountId': id(1),
+          'categoryId': id(2),
+          'amountYuan': '50.00',
+          'businessDate': '2026-02-01',
+          'identity': write(6, 7, 8),
+        });
+      });
+
+      Future<void> tap(String label) async {
+        final target = find.text(label);
+        await tester.ensureVisible(target);
+        await tester.tap(target);
+        await tester.pump();
+      }
+
+      Future<void> submit(String label, String password, String result) async {
+        final field = find.byType(TextField);
+        await tester.ensureVisible(field);
+        await tester.enterText(field, password);
+        await tester.pump();
+        await tap(label);
+        await _until(
+          tester,
+          () =>
+              find.text(result).evaluate().isNotEmpty &&
+              find.byType(LinearProgressIndicator).evaluate().isEmpty,
+        );
+      }
+
+      await tester.pumpWidget(InternalLedgerApp(platform: platform));
+      await _until(tester, () => find.text('解锁本地账簿').evaluate().isNotEmpty);
+      await submit('打开账簿', _password, '账簿已打开');
+      await tap('删除这笔收入');
+      expect(
+        find.text('原记录\n2026-02-01 · 收入 · ¥50.00\n现金账户 · 合成收入'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('余额将减少¥50.00'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), _password);
+      await tap('取消删除');
+      expect(find.text('现金账户 · 现金 · ¥150.00'), findsOneWidget);
+      await tap('删除这笔收入');
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, '确认删除'))
+            .onPressed,
+        isNull,
+      );
+
+      await tester.runAsync(
+        () => save({
+          'kind': 'reviseEntry',
+          'previousRevisionId': id(8),
+          'businessDate': '2026-02-01',
+          'amountYuan': '60.00',
+          'identity': write(9, 7, 10),
+        }),
+      );
+      await submit('确认删除', _password, '这笔流水已变化。请重新解锁并核对最新记录。');
+      expect(find.text('账簿已打开'), findsNothing);
+      await submit('打开账簿', _password, '账簿已打开');
+      expect(find.text('现金账户 · 现金 · ¥160.00'), findsOneWidget);
+      await tap('删除这笔收入');
+      expect(find.textContaining('余额将减少¥60.00'), findsOneWidget);
+      await submit(
+        '确认删除',
+        'wrong synthetic password',
+        '口令或恢复材料不正确，也可能是封装损坏。原账簿已保留。',
+      );
+      await submit('确认删除', _password, '已删除这笔收支');
+      expect(find.text('还没有收支记录。'), findsOneWidget);
+      expect(find.text('现金账户 · 现金 · ¥100.00'), findsOneWidget);
+      await tap('关闭账簿');
+      await submit('打开账簿', _password, '最近核对的保存已提交。');
+      expect(find.text('还没有收支记录。'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

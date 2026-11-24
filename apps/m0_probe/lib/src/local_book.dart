@@ -76,7 +76,7 @@ class _BookEntry {
       '${book._accounts[accountId]!.name} · ${book._categories[categoryId]!.name}';
 }
 
-enum _Form { account, category, entry, revise }
+enum _Form { account, category, entry, revise, delete }
 
 const _accountKinds = {
   'cash': '现金',
@@ -175,6 +175,11 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
     if (widget.busy) return;
     FocusManager.instance.primaryFocus?.unfocus();
     widget.credential.clear();
+    if (_form == _Form.delete) {
+      widget.clearMessage();
+      setState(() => _form = null);
+      return;
+    }
     setState(() => _confirmDiscard = true);
   }
 
@@ -215,6 +220,11 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
         'previousRevisionId': _original!.revisionId,
         'amountYuan': _amount.text,
         'businessDate': _date.text,
+        'identity': _identity(),
+      },
+      _Form.delete => {
+        'kind': 'deleteEntry',
+        'previousRevisionId': _original!.revisionId,
         'identity': _identity(),
       },
     };
@@ -269,6 +279,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   List<Widget> _fields(_Form form) {
     final entry = form == _Form.entry;
     final account = form == _Form.account;
+    final deleting = form == _Form.delete;
     final hasReferences = !entry || (_account != null && _category != null);
     final noCategories = _categories.isEmpty;
     return [
@@ -277,9 +288,17 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
         _Form.category => '新建分类',
         _Form.entry => '记一笔',
         _Form.revise => '编辑收支',
+        _Form.delete => '删除收支',
       }),
-      if (_original case final original?)
+      if (_original case final original?) ...[
         Text('原记录\n${original.describe(widget.book)}'),
+        if (deleting)
+          Text(
+            '这笔${_directions[original.kind]}将从流水和当月汇总中移除，'
+            '${widget.book._accounts[original.accountId]!.name}余额将'
+            '${original.kind == 'expense' ? '增加' : '减少'}${_yuan(original.amountMinor)}。',
+          ),
+      ],
       if (account || form == _Form.category)
         _text(_name, account ? '账户名称' : '分类名称', 64),
       if (account)
@@ -289,7 +308,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
           _accountKind,
           (value) => setState(() => _accountKind = value!),
         )
-      else if (form != _Form.revise)
+      else if (entry || form == _Form.category)
         _choice('收支类型', _directions, _direction, (value) {
           setState(() {
             _direction = value!;
@@ -312,7 +331,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
         ),
         if (noCategories) Text('请先新建${_directions[_direction]}分类。'),
       ],
-      if (form != _Form.category) ...[
+      if (!deleting && form != _Form.category) ...[
         _text(
           _amount,
           account ? '期初金额（CNY）' : '金额（CNY）',
@@ -333,9 +352,8 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
         autocorrect: false,
         enableIMEPersonalizedLearning: false,
         decoration: InputDecoration(
-          labelText: widget.unlock == LedgerUnlock.recovery
-              ? '保存用恢复材料'
-              : '保存用本地口令',
+          labelText:
+              '${deleting ? '删除' : '保存'}用${widget.unlock == LedgerUnlock.recovery ? '恢复材料' : '本地口令'}',
         ),
       ),
       FilledButton(
@@ -343,13 +361,13 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
             widget.busy || !hasReferences || widget.credential.text.isEmpty
             ? null
             : () => _save(form),
-        child: const Text('保存到本机'),
+        child: Text(deleting ? '确认删除' : '保存到本机'),
       ),
       if (widget.message case final message?)
         Semantics(liveRegion: true, child: Text(message)),
       TextButton(
         onPressed: widget.busy ? null : _askDiscard,
-        child: const Text('取消录入'),
+        child: Text(deleting ? '取消删除' : '取消录入'),
       ),
     ];
   }
@@ -395,15 +413,23 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
     for (final entry in book._entries) ...[
       Text(entry.describe(book)),
       if (!book.readOnly)
-        Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: TextButton.icon(
-            icon: const Icon(Icons.edit_outlined),
-            label: Text('编辑这笔${_directions[entry.kind]}'),
-            onPressed: widget.busy
-                ? null
-                : () => _open(_Form.revise, original: entry),
-          ),
+        Wrap(
+          children: [
+            TextButton.icon(
+              icon: const Icon(Icons.edit_outlined),
+              label: Text('编辑这笔${_directions[entry.kind]}'),
+              onPressed: widget.busy
+                  ? null
+                  : () => _open(_Form.revise, original: entry),
+            ),
+            TextButton.icon(
+              icon: const Icon(Icons.delete_outline),
+              label: Text('删除这笔${_directions[entry.kind]}'),
+              onPressed: widget.busy
+                  ? null
+                  : () => _open(_Form.delete, original: entry),
+            ),
+          ],
         ),
     ],
   ];
