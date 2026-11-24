@@ -637,7 +637,7 @@ Android 主入口可通过 `--dart-define=RADISH_INTERNAL_LEDGER=true` 打开合
 
 Android 设备集成入口在实际 `noBackupFilesDir/internal-ledger` 下创建本批独占目录，从真实通道读取认证能力，并在同一测试进程内完成恢复材料确认。用已有合成入口写入 A11 后，核对界面关闭、页面重建、错口令拒绝及独立材料重开，比较同身份与完整账务。合成口令与恢复材料由测试直接写入当前可用输入框的控制器，提交仍经实际界面控件；只回传平台能力和核对结果。成功后清理本次独占目录，失败时保全现场。该入口覆盖 Android 测试包的同进程页面重建，实际软键盘、release 的后台与新 PID 及真机认证分别验收。[设备集成入口](../../apps/m0_probe/integration_test/internal_ledger_test.dart)
 
-正常 Android release 的键盘和生命周期单独取证。在一次性模拟器中，沿用已有 debug 私有 FIFO 创建及只读复核合成 A11，以同一隔离测试签名保留数据切换正常 release。真实 Android 软键盘触控验证错口令拒绝、正确口令解锁、Home 返回原 PID 锁定以及 `am force-stop` 后新 PID 解锁。复验结束用已有 debug 入口比较原身份、完整审计和摘要。release 的通过范围从已确认的合成账簿开始，创建确认、硬件保护和真机认证仍分别取证。[实际结果](../devlogs/2026-11.md#2026-11-16-android-release-键盘后台与新-pid-重开)
+正常 Android release 的键盘和生命周期单独取证。在一次性模拟器中，沿用已有 debug 私有 FIFO 创建及只读复核合成 A11，以同一隔离测试签名保留数据切换正常 release。真实 Android 软键盘触控验证错口令拒绝、正确口令解锁、Home 返回原 PID 锁定以及 `am force-stop` 后新 PID 解锁。复验结束用已有 debug 入口比较原身份、完整审计和摘要。这次 A11 复验从已确认的合成账簿开始。空槽创建确认和普通收支的模拟器验收见第 8.1 节，硬件保护与真机认证仍待验证。[实际结果](../devlogs/2026-11.md#2026-11-16-android-release-键盘后台与新-pid-重开)
 
 ### 8.1 内部账簿首笔收支
 
@@ -650,3 +650,5 @@ Android 设备集成入口在实际 `noBackupFilesDir/internal-ledger` 下创建
 事务通过校验后，Rust 在归属锁内先持久化经认证加密的尝试身份，再提交 SQLCipher 事务。`save-attempt.json` 每次登记覆盖前一次，仅含用于核对的身份和对象类型。密钥由根材料按独立用途派生，认证上下文绑定账簿与设备。重开查询原库中的 outbox 操作或分类，`lastSaveCommitted` 返回最近登记的尝试是否提交，`null` 表示尚无登记。保存结果未定时，页面先锁定，重新解锁后显示该核对结果和实际账务。进程退出时若尚未登记本次尝试，相应的数据库写入也尚未提交。
 
 宿主 Flutter 的 `test/internal_ledger_test.dart` 从确认为空的账簿录入测试账户、两类分类与两笔收支，再重建界面并重新解锁。Rust 的 `bootstrap_process` 使用实际子进程在事务提交前和提交后分别强杀，在新 PID 核对结果、原操作重放、流水和余额。[验证记录](../devlogs/2026-11.md#2026-11-16-最小本地记账首笔收支)
+
+Android 模拟器正常 release 从空槽创建账簿并确认恢复材料后，通过实际键盘录入账户、两类分类与两笔收支。超精度收入被拒绝，取消后期初余额和空流水保全。Home 返回时原进程锁定，强停后在新进程解锁，逐笔核对日期、方向、金额、账户与分类，余额仍为 ¥2970.00。[模拟器验收与输入方式](../devlogs/2026-11.md#2026-11-24-android-release-首笔收支与重开)
