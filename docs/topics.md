@@ -48,8 +48,8 @@ R01–R12 的原定义保持唯一来源；本表是归属映射，不改变 MVP
 | --- | --- | --- |
 | E-CSV 受限撤销 E07 | 数据交换、归档与迁移；账务、隐私协同 | [E 案例](validation/portability-cases.md#2-csv-输入批次与导出)、[局部验证入口](validation/portability-cases.md#53-e-csv-受限撤销候选)及[current](status/current.md#接下来的事项)：原修订重检、备注编辑竞争、取消 / 强杀恢复、重复撤销与重导防复活；尚不能判定的依赖保持阻塞 |
 | E-SNAPSHOT 最小一致快照 | 数据交换、归档与迁移；账务 / 同步协同 | [只读候选](validation/portability-cases.md#54-e-snapshot-最小一致逻辑快照候选)、原 E 任务表与 current；保全事实、修订、候选、删除、来源、原意图及导入 / 撤销任务，不把摘要或原 DB 文件当归档 |
-| E-CONTAINER 归档文件保存 | 数据交换、归档与迁移，隐私与本地可靠性协同 | 宿主文件发布、移动文件提供方与空白设备恢复各取证据。[容器和保存约束](data-portability.md#32-认证容器与资源约束)、[归档案例](validation/portability-cases.md#3-归档生成认证与保真)及[当前顺位](status/current.md#接下来的事项) |
-| Android 内部账簿与首笔收支 | 移动端体验与核心接入，账务与隐私主线协同 | 保存边界、设备实际输入、后台与 App 新 PID 各取相应证据。[创建与重开](development/mobile-core-prototype.md#8-android-内部账簿的创建与重开) · [首笔收支](development/mobile-core-prototype.md#81-内部账簿首笔收支) · [当前顺位](status/current.md#接下来的事项) |
+| E-CONTAINER 与 E-RESTORE | 数据交换、归档与迁移，隐私与本地可靠性协同 | [容器和保存约束](data-portability.md#32-认证容器与资源约束) · [Android 下载目录与空暂存验收](validation/portability-cases.md#512-android-新建归档与空暂存恢复) · [候选库准备与活动切换](data-portability.md#41-恢复任务与活动切换) |
+| Android 内部账簿与普通收支 | 移动端体验与核心接入，账务与隐私主线协同 | [创建与重开](development/mobile-core-prototype.md#8-android-内部账簿的创建与重开) · [首笔收支、编辑与删除](development/mobile-core-prototype.md#81-内部账簿首笔收支) · [流水分页](development/mobile-core-prototype.md#84-普通收支的完整流水) · [业务月份汇总](development/mobile-core-prototype.md#85-业务月份的收支汇总与分类小计) |
 | 分期真机 release | 隐私、密钥与恢复保护牵头；移动主线协同 | current 条件线、B/C 矩阵与设备操作单；Android M1 / iOS M2 前分别关闭真实认证、保护、重启和资源缺口 |
 | 内部准入与逐平台出口 | 移动端体验与核心接入牵头整合，六条主线协同 | [路线图](mvp-roadmap.md#内部开发准入与正式出口)及 current：先核对内部准入与单一桥接，再交付本地流程；正式冻结按对应平台证据，不从规划调整宣布退出 |
 
