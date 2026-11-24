@@ -19,11 +19,13 @@ pub(crate) mod restored;
 #[path = "archive_tests.rs"]
 mod tests;
 
+pub(crate) const MAGIC: &[u8; 8] = b"RLM0E001";
 pub const MAX_PAYLOAD: usize = 16 * 1024 * 1024;
 const HEADER: usize = 176;
 const MANIFEST: usize = 116;
 const BODY_OVERHEAD: usize = 136;
 const OVERHEAD: usize = 328;
+pub(crate) const MAX_SEALED_BYTES: usize = MAX_PAYLOAD + OVERHEAD;
 const WRAP_INFO: &[u8] = b"radishledger/archive/review1/password-wrap";
 const BODY_INFO: &[u8] = b"radishledger/archive/review1/content-key";
 const WRAP_AAD: &[u8] = b"radishledger/archive/review1/wrap\0";
@@ -193,7 +195,7 @@ struct Header {
 impl Header {
     fn new(n: usize, entropy: &Entropy, version: Version) -> Self {
         let mut p = [0_u8; 128];
-        p[..8].copy_from_slice(b"RLM0E001");
+        p[..8].copy_from_slice(MAGIC);
         p[10..12].copy_from_slice(&(version as u16).to_be_bytes());
         p[12..16].copy_from_slice(&(HEADER as u32).to_be_bytes());
         p[16..18].copy_from_slice(&1_u16.to_be_bytes());
@@ -210,7 +212,7 @@ impl Header {
     }
 
     fn read(input: &[u8], limits: Limits, max_version: Version) -> Result<Self> {
-        if input.len() < HEADER || &input[..8] != b"RLM0E001" {
+        if input.len() < HEADER || &input[..8] != MAGIC {
             return Err(invalid());
         }
         let p: [u8; 128] = input[..128].try_into().map_err(|_| invalid())?;

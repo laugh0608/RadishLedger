@@ -7,6 +7,8 @@ import 'src/bootstrap.dart';
 import 'src/internal_ledger.dart';
 import 'src/local_book.dart';
 import 'src/monthly_summary.dart';
+import 'src/archive_download.dart';
+import 'src/restore_page.dart';
 
 class InternalLedgerApp extends StatelessWidget {
   const InternalLedgerApp({
@@ -85,6 +87,16 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     BootstrapFailure(code: 'authentication_failed') =>
       '口令或恢复材料不正确，也可能是封装损坏。原账簿已保留。',
     BootstrapFailure(code: 'invalid_recovery') => '恢复材料格式或校验有误，请检查后重试。',
+    BootstrapFailure(code: 'invalid_archive_password') =>
+      '请使用与解锁材料不同的归档口令，长度为 1–80 个 UTF-8 字节。',
+    BootstrapFailure(code: 'archive_already_exists') => '这个归档名已存在，请选择新文件名。',
+    BootstrapFailure(code: 'archive_downloads_unavailable') =>
+      '下载归档需要 Android 10 或以上。',
+    BootstrapFailure(code: 'archive_publish_uncertain') =>
+      '归档发布结果未定，请先在 Download/RadishLedger 核对文件。',
+    BootstrapFailure(code: 'archive_cleanup_failed') => '归档清理未完成，请保留现场核对。',
+    BootstrapFailure(code: 'archive_download_io' || 'archive_file_mismatch') =>
+      '下载目录写入或回读核对失败，已有归档和账簿已保留。',
     BootstrapFailure(code: 'invalid_password') => '请输入有效的本地口令。',
     BootstrapFailure(code: 'vault_busy' || 'kdf_busy') => '上次操作尚未结束，请稍后重试。',
     BootstrapFailure(code: 'already_exists' || 'selection_changed') =>
@@ -373,6 +385,28 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
                     );
                     return summary;
                   },
+                  export: (name, password) async {
+                    String? actual;
+                    await _submit(
+                      (input) {
+                        final epoch = _epoch;
+                        return exportArchive(
+                          directory: ledger.service.directory,
+                          run: InternalLedger.run,
+                          identity: location!.identity!,
+                          unlock: _method.name,
+                          name: name,
+                          local: input,
+                          password: password,
+                          active: () => mounted && epoch == _epoch,
+                        );
+                      },
+                      canWrite: false,
+                      receiveQuery: (report) =>
+                          actual = report['archiveName'] as String,
+                    );
+                    return actual;
+                  },
                   save: (command) => _submit(
                     (input) => ledger.save(
                       location!.identity!,
@@ -469,6 +503,23 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
         onPressed: _busy ? null : () => _submit(action, canWrite: canWrite),
         child: Text(label),
       ),
+      if (!_pendingConfirmation && !initializing)
+        OutlinedButton(
+          onPressed: _busy
+              ? null
+              : () {
+                  _input.clear();
+                  Navigator.of(context).push<void>(
+                    MaterialPageRoute(
+                      builder: (_) => RestorePage(
+                        ledger: ledger,
+                        protectionAvailable: _deviceAuthentication,
+                      ),
+                    ),
+                  );
+                },
+          child: const Text('从加密归档恢复'),
+        ),
       if (!empty)
         TextButton(
           onPressed: _busy ? null : _changeMethod,

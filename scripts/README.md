@@ -188,3 +188,7 @@ Android 的 `lib/main.dart` 使用 `--dart-define=RADISH_INTERNAL_LEDGER=true` �
 月汇总可用 `cargo test --locked -p radishledger-core --lib local_month_summaries_match_the_shared_checkpoints` 对照 A01、A02、A06、A08，覆盖期初、转账、跨月退款、归档改名和跨月编辑。Flutter 的 `test/internal_ledger_test.dart` 经真实薄桥接验证选月、空月、拒绝与重新解锁，以及删除后的分类净额。[月汇总契约](../docs/development/mobile-core-prototype.md#85-业务月份的收支汇总与分类小计)
 
 授权并核对隔离 Android 目标后，在 `apps/m0_probe` 执行 `flutter test --no-pub -d <已确认的模拟器> integration_test/internal_ledger_test.dart`。先按 debug 模式生成 Flutter 插件登记，避免复用 release 模式的生成文件。执行会安装 Android 测试包，测试期间口令和恢复材料只在测试进程内使用。该入口核对同进程页面重建及 A11 保全。正常 release 的实际键盘、后台和 App 新 PID 证据单独记录，按实际包及覆盖动作取证。[设备验收范围](../docs/development/mobile-core-prototype.md#8-android-内部账簿的创建与重开)
+
+内部归档可用 `cargo test --locked -p radishledger-core --lib archive_captures_authenticated_history` 核对真实 SQLCipher 历史、回读和错口令。`apps/m0_probe` 内的 `flutter test --no-pub test/archive_download_test.dart` 经薄桥接覆盖发布前取消和回读被改动；提供方使用宿主替身。实际 Downloads 的验收在 Android release 单独进行。[内部归档契约](../docs/development/mobile-core-prototype.md#86-新建独立加密归档)
+
+从文件恢复到独立空暂存的宿主回归复用上述 Rust A11 归档测试，并核对已有目标拒绝、重新打开和精确放弃。`test/restore_archive_test.dart` 使用独立 Go 归档向量，验证真实薄桥接、错误口令与前后台清理；系统文档选择器及强停后的新任务另在模拟器 release 验收。[恢复暂存契约](../docs/development/mobile-core-prototype.md#87-从实际归档恢复到空暂存并核对)

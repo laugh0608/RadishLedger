@@ -291,3 +291,133 @@ fn bootstrap_preserves_identity_and_unsynced_facts_through_recovery() {
     call(json!({"kind":"cleanup"}), &[]).unwrap();
     assert!(!path.exists());
 }
+
+#[test]
+fn archive_captures_authenticated_history_and_requires_the_written_bytes() {
+    use crate::archive_container::{self, CANDIDATE_LIMITS};
+    use std::sync::atomic::AtomicBool;
+
+    let _test_guard = crypto::KDF_TESTS.lock().unwrap();
+    let base = tempfile::tempdir().unwrap();
+    let run = crate::random_id().unwrap();
+    let local = "synthetic local";
+    let pass = b"synthetic archive";
+    let recovery = crypto::random::<32>().unwrap();
+    let created = command(
+        base.path(),
+        &run,
+        json!({"kind":"create"}),
+        &create_input(local.as_bytes(), &recovery),
+    )
+    .unwrap();
+    let identity = json!([created.report["vault"], created.report["device"]]);
+    let call = |action: Value, secret: &[u8]| {
+        let request = serde_json::from_value(json!({"abi":1,"directory":base.path(),"run":run,"action":action,"expected_identity":identity})).unwrap();
+        bootstrap::run(request, secret)
+    };
+    let material = crypto::recovery_text(recovery.as_ref()).unwrap();
+    call(json!({"kind":"confirm"}), material.as_bytes()).unwrap();
+    let seeded = call(
+        json!({"kind":"seed","unlock":"recovery"}),
+        material.as_bytes(),
+    )
+    .unwrap();
+    let stage = "archive-host01";
+    let dir = base.path().join(stage);
+    std::fs::create_dir(&dir).unwrap();
+    let original = hashes(&base.path().join(format!("m0c-{run}")));
+    let prepare = json!({"kind":"prepareArchive","unlock":"password","stage":stage,"archive_bytes":pass.len()});
+    let combined = Zeroizing::new([local.as_bytes(), pass].concat());
+    let sealed = call(prepare.clone(), &combined).unwrap();
+    assert!(call(prepare, &combined).is_err());
+    let bytes = std::fs::read(dir.join("sealed")).unwrap();
+    let archive =
+        archive_container::open(&bytes, pass, CANDIDATE_LIMITS, &AtomicBool::new(false)).unwrap();
+    let facts = &archive.contents().facts;
+    assert_eq!(json!(facts.sequence), seeded.report["audit"]["sequence"]);
+    assert!(!facts.candidates.is_empty() && facts.revisions.iter().any(|r| r.event.is_none()));
+    assert!(facts.revisions.len() > facts.selected.len());
+    assert_eq!(
+        facts.intent_history.len(),
+        seeded.report["audit"]["operations"]
+            .as_array()
+            .unwrap()
+            .len()
+    );
+    let verify = json!({"kind":"verifyArchive","stage":stage,"digest":sealed.report["digest"]});
+    std::fs::write(dir.join("readback"), &bytes).unwrap();
+    assert_eq!(
+        call(verify.clone(), local.as_bytes()).err().unwrap().code,
+        "archive_unlock_failed"
+    );
+    assert_eq!(call(verify.clone(), pass).unwrap().report["verified"], true);
+    std::fs::write(dir.join("readback"), &bytes[..bytes.len() - 1]).unwrap();
+    assert_eq!(
+        call(verify, pass).err().unwrap().code,
+        "archive_file_mismatch"
+    );
+    assert_eq!(std::fs::read(dir.join("sealed")).unwrap(), bytes);
+    let destination = tempfile::tempdir().unwrap();
+    let stage = "archive-resume01";
+    let target = destination.path().join(stage);
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("source.rla"), &bytes).unwrap();
+    let restore = |action, input: &[u8]| command(destination.path(), &run, action, input);
+    let prepare = json!({"kind":"prepareRestore","stage":stage});
+    assert_eq!(
+        restore(prepare.clone(), local.as_bytes())
+            .err()
+            .unwrap()
+            .code,
+        "archive_unlock_failed"
+    );
+    assert_eq!(std::fs::read_dir(&target).unwrap().count(), 1);
+    let restored = restore(prepare.clone(), pass).unwrap();
+    let report = &restored.report;
+    assert_eq!(
+        (
+            report["activeEvents"].as_u64(),
+            report["deleted"].as_u64(),
+            report["candidates"].as_u64()
+        ),
+        (Some(3), Some(1), Some(2))
+    );
+    assert_eq!(report["netAssetsMinor"], "18000");
+    let mut balances: Vec<_> = report["balances"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["minor"].as_str().unwrap())
+        .collect();
+    balances.sort();
+    assert_eq!(balances, ["10000", "8000"]);
+    assert_eq!(report["revisions"], 8);
+    assert_eq!(report["intents"], 7);
+    assert_eq!(
+        restore(prepare, pass).err().unwrap().code,
+        "restore_target_not_empty"
+    );
+    let inspect = json!({"kind":"inspectRestore","stage":stage,"ticket":report["ticket"]});
+    let credentials = Zeroizing::new([&restored.secret[..], pass].concat());
+    assert_eq!(
+        restore(inspect.clone(), &credentials).unwrap().report,
+        *report
+    );
+    let discard = json!({"kind":"discardRestore","stage":stage,"ticket":report["ticket"]});
+    assert!(restore(discard.clone(), &[0; 32]).is_err());
+    std::fs::write(target.join("source.rla"), &bytes[..bytes.len() - 1]).unwrap();
+    assert_eq!(
+        restore(inspect, &credentials).err().unwrap().code,
+        "restore_mismatch"
+    );
+    assert_eq!(
+        restore(discard, &restored.secret).unwrap().report["discarded"],
+        true
+    );
+    assert_eq!(std::fs::read_dir(target).unwrap().count(), 1);
+    assert_eq!(
+        restore(json!({"kind":"locate"}), &[]).unwrap().report["state"],
+        "empty"
+    );
+    assert_eq!(hashes(&base.path().join(format!("m0c-{run}"))), original);
+}

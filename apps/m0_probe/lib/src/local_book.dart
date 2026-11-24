@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import 'archive_form.dart';
 import 'bootstrap.dart';
 import 'internal_ledger.dart';
 import 'monthly_summary.dart';
@@ -155,8 +156,10 @@ class LocalBookPanel extends StatefulWidget {
     required this.save,
     required this.readPage,
     required this.readMonth,
+    required this.export,
   });
 
+  final SaveArchive export;
   final LocalBook book;
   final LedgerUnlock unlock;
   final TextEditingController credential;
@@ -176,6 +179,13 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   final _amount = TextEditingController();
   final _date = TextEditingController();
   final _month = TextEditingController();
+  bool _archiving = false;
+  void _archive(bool open) {
+    widget.clearMessage();
+    widget.credential.clear();
+    setState(() => _archiving = open);
+  }
+
   _MonthView? _monthView;
   MonthlySummary? _summary;
   _Form? _form;
@@ -528,6 +538,10 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
       onPressed: widget.busy ? null : _openMonths,
       child: const Text('查看月汇总'),
     ),
+    OutlinedButton(
+      onPressed: widget.busy ? null : () => _archive(true),
+      child: const Text('新建加密归档'),
+    ),
     Text('账户余额', style: Theme.of(context).textTheme.titleMedium),
     if (book._accounts.isEmpty) const Text('请先建立账户并确认期初金额。'),
     for (final MapEntry(:key, :value) in book._accounts.entries)
@@ -686,7 +700,18 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   Widget build(BuildContext context) {
     final form = _form;
     final history = _history;
-    final children = _monthView != null
+    final children = _archiving
+        ? <Widget>[
+            ArchiveForm(
+              credential: widget.credential,
+              unlock: widget.unlock,
+              busy: widget.busy,
+              message: widget.message,
+              save: widget.export,
+              leave: () => _archive(false),
+            ),
+          ]
+        : _monthView != null
         ? _monthlyView()
         : form == null
         ? history == null
@@ -706,10 +731,13 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
           ]
         : _fields(form);
     return PopScope(
-      canPop: form == null && history == null && _monthView == null,
+      canPop:
+          !_archiving && form == null && history == null && _monthView == null,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop || widget.busy) return;
-        if (_monthView != null) {
+        if (_archiving) {
+          _archive(false);
+        } else if (_monthView != null) {
           _leaveMonth();
         } else if (form != null) {
           _askDiscard();

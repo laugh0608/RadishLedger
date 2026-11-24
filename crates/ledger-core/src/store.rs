@@ -36,6 +36,10 @@ pub(crate) mod local_ledger;
 pub struct DbKey(Zeroizing<[u8; 32]>);
 
 impl DbKey {
+    pub(crate) fn into_secret(self) -> Zeroizing<[u8; 32]> {
+        self.0
+    }
+
     pub(crate) fn from_secret(bytes: &[u8]) -> Result<Self> {
         Ok(Self(crate::crypto::secret(bytes)?))
     }

@@ -11,6 +11,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
+#[path = "bootstrap_archive.rs"]
+mod archive;
+
 const SAVE_ATTEMPT: &str = "save-attempt.json";
 
 #[derive(Serialize, Deserialize)]
@@ -97,6 +100,27 @@ pub enum Action {
         unlock: Unlock,
         month: String,
         sequence: i64,
+    },
+    PrepareArchive {
+        unlock: Unlock,
+        stage: String,
+        archive_bytes: usize,
+    },
+    RestoreInputLimits,
+    PrepareRestore {
+        stage: String,
+    },
+    InspectRestore {
+        stage: String,
+        ticket: crate::restore_stage::Ticket,
+    },
+    DiscardRestore {
+        stage: String,
+        ticket: crate::restore_stage::Ticket,
+    },
+    VerifyArchive {
+        stage: String,
+        digest: [u8; 32],
     },
     SaveLocal {
         unlock: Unlock,
@@ -542,6 +566,28 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         return Err(CoreError::new("invalid_argument", "秘密输入超过允许长度"));
     }
     identity(&request.run)?;
+    match &request.action {
+        Action::RestoreInputLimits => {
+            return Ok(Reply::public(json!({
+                "maxBytes": crate::archive_container::MAX_SEALED_BYTES,
+                "magic": crate::archive_container::MAGIC,
+            })));
+        }
+        Action::PrepareRestore { stage } => {
+            return archive::prepare_restore(&request.directory, stage, input);
+        }
+        Action::InspectRestore { stage, ticket } => {
+            return archive::inspect_restore(&request.directory, stage, ticket.clone(), input);
+        }
+        Action::DiscardRestore { stage, ticket } => {
+            return archive::discard_restore(&request.directory, stage, ticket.clone(), input);
+        }
+        _ => {}
+    }
+    if let Action::VerifyArchive { stage, digest } = &request.action {
+        archive::verify(&request.directory, stage, *digest, input)?;
+        return Ok(Reply::public(json!({"verified":true})));
+    }
     if let Action::NewRecovery = request.action {
         let recovery = crypto::random::<32>()?;
         let text = crypto::recovery_text(recovery.as_ref())?;
@@ -583,7 +629,8 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         | Action::Seed { unlock }
         | Action::Replay { unlock }
         | Action::PrepareProtection { unlock } => unlock,
-        Action::SaveLocal { unlock, .. }
+        Action::PrepareArchive { unlock, .. }
+        | Action::SaveLocal { unlock, .. }
         | Action::ReadEntries { unlock, .. }
         | Action::ReadMonth { unlock, .. } => {
             if request.expected_identity.is_none() || matches!(unlock, Unlock::System) {
@@ -611,6 +658,20 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         }
         _ => return Err(CoreError::new("invalid_action", "实验动作不可用")),
     };
+    if let Action::PrepareArchive {
+        stage,
+        archive_bytes,
+        ..
+    } = &request.action
+    {
+        let (local, password) = archive::credentials(input, *archive_bytes)?;
+        let root = b.root(&files, unlock, local)?;
+        let store = b.open_local_query(&files, &root)?;
+        let digest = archive::prepare(store, &request.directory, stage, password)?;
+        return Ok(Reply::public(
+            json!({"vault":b.vault,"device":b.device,"ready":true,"digest":digest}),
+        ));
+    }
     let root = b.root(&files, unlock, input)?;
     match request.action {
         Action::ReadEntries {
