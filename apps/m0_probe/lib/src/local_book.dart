@@ -10,7 +10,7 @@ class LocalBook {
     this._accounts,
     this._categories,
     this.balances,
-    this._entries,
+    this.firstPage,
     this.lastSaveCommitted,
     this.readOnly,
   );
@@ -24,11 +24,7 @@ class LocalBook {
       _references(book['accounts'] as List),
       _references(book['categories'] as List),
       Map<String, String>.from(book['balancesMinor'] as Map),
-      [
-        for (final row
-            in (book['recentEntries'] as List).cast<Map<String, dynamic>>())
-          _BookEntry.fromJson(row),
-      ],
+      EntryPage.fromJson(book, index: 0),
       report['lastSaveCommitted'] as bool?,
       report['fixtureComplete'] == true,
     );
@@ -46,9 +42,52 @@ class LocalBook {
   final Map<String, _Reference> _accounts;
   final Map<String, _Reference> _categories;
   final Map<String, String> balances;
-  final List<_BookEntry> _entries;
+  final EntryPage firstPage;
+
+  EntryPage readPage(Map<String, dynamic> report, int index) {
+    final page = EntryPage.fromJson(report['entryPage'], index: index);
+    if (page.sequence != firstPage.sequence ||
+        page._entries.any(
+          (row) =>
+              !_accounts.containsKey(row.accountId) ||
+              !_categories.containsKey(row.categoryId),
+        )) {
+      throw const BootstrapFailure('invalid_response');
+    }
+    return page;
+  }
+
   final bool? lastSaveCommitted;
   final bool readOnly;
+}
+
+class EntryPage {
+  EntryPage._(this.index, this.sequence, this.hasMore, this._entries);
+
+  factory EntryPage.fromJson(dynamic value, {required int index}) {
+    if (value is! Map<String, dynamic> ||
+        value['pageIndex'] != index ||
+        value['sequence'] is! int ||
+        value['hasMore'] is! bool ||
+        value['recentEntries'] is! List) {
+      throw const BootstrapFailure('invalid_response');
+    }
+    return EntryPage._(
+      index,
+      value['sequence'] as int,
+      value['hasMore'] as bool,
+      [
+        for (final row
+            in (value['recentEntries'] as List).cast<Map<String, dynamic>>())
+          _BookEntry.fromJson(row),
+      ],
+    );
+  }
+
+  final int index;
+  final int sequence;
+  final bool hasMore;
+  final List<_BookEntry> _entries;
 }
 
 typedef _Reference = ({String name, String kind, bool archived});
@@ -111,6 +150,7 @@ class LocalBookPanel extends StatefulWidget {
     required this.message,
     required this.clearMessage,
     required this.save,
+    required this.readPage,
   });
 
   final LocalBook book;
@@ -119,6 +159,7 @@ class LocalBookPanel extends StatefulWidget {
   final bool busy;
   final String? message;
   final VoidCallback clearMessage;
+  final Future<EntryPage?> Function(int) readPage;
   final Future<bool> Function(Map<String, Object?>) save;
 
   @override
@@ -138,6 +179,31 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   String? _referenceId;
   Map<String, String>? _writeIdentity;
   bool _confirmDiscard = false;
+  EntryPage? _history;
+  int? _requestedPage;
+
+  void _showPage(EntryPage? page) {
+    widget.clearMessage();
+    widget.credential.clear();
+    setState(() {
+      _history = page;
+      _requestedPage = null;
+    });
+  }
+
+  void _navigate(int index) {
+    if (index == 0) {
+      _showPage(widget.book.firstPage);
+      return;
+    }
+    widget.clearMessage();
+    setState(() => _requestedPage = index);
+  }
+
+  Future<void> _readPage(int index) async {
+    final page = await widget.readPage(index);
+    if (mounted && page != null) _showPage(page);
+  }
 
   Map<String, String> get _accounts => {
     for (final MapEntry(:key, :value) in widget.book._accounts.entries)
@@ -229,7 +295,10 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
       },
     };
     if (await widget.save(command) && mounted) {
-      setState(() => _form = null);
+      setState(() {
+        _form = null;
+        _history = null;
+      });
     }
   }
 
@@ -274,6 +343,20 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
     autocorrect: false,
     keyboardType: keyboard,
     decoration: InputDecoration(labelText: label, counterText: ''),
+  );
+
+  Widget _credentialField(String action, {bool enabled = true}) => TextField(
+    controller: widget.credential,
+    enabled: !widget.busy && enabled,
+    onChanged: (_) => setState(() {}),
+    obscureText: true,
+    enableSuggestions: false,
+    autocorrect: false,
+    enableIMEPersonalizedLearning: false,
+    decoration: InputDecoration(
+      labelText:
+          '$action用${widget.unlock == LedgerUnlock.recovery ? '恢复材料' : '本地口令'}',
+    ),
   );
 
   List<Widget> _fields(_Form form) {
@@ -343,19 +426,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
         ),
         _text(_date, account ? '生效日期（YYYY-MM-DD）' : '业务日期（YYYY-MM-DD）', 10),
       ],
-      TextField(
-        controller: widget.credential,
-        enabled: !widget.busy && hasReferences,
-        onChanged: (_) => setState(() {}),
-        obscureText: true,
-        enableSuggestions: false,
-        autocorrect: false,
-        enableIMEPersonalizedLearning: false,
-        decoration: InputDecoration(
-          labelText:
-              '${deleting ? '删除' : '保存'}用${widget.unlock == LedgerUnlock.recovery ? '恢复材料' : '本地口令'}',
-        ),
-      ),
+      _credentialField(deleting ? '删除' : '保存', enabled: hasReferences),
       FilledButton(
         onPressed:
             widget.busy || !hasReferences || widget.credential.text.isEmpty
@@ -409,8 +480,64 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
     for (final category in book._categories.values)
       Text('${category.name} · ${_directions[category.kind]}'),
     Text('最近收支（最多 20 笔）', style: Theme.of(context).textTheme.titleMedium),
-    if (book._entries.isEmpty) const Text('还没有收支记录。'),
-    for (final entry in book._entries) ...[
+    TextButton(
+      onPressed: widget.busy ? null : () => _showPage(book.firstPage),
+      child: const Text('查看完整流水'),
+    ),
+    ..._entryRows(book, book.firstPage),
+  ];
+
+  List<Widget> _historyView(LocalBook book, EntryPage page) => [
+    Text(
+      '完整流水 · 第 ${page.index + 1} 页',
+      style: Theme.of(context).textTheme.titleMedium,
+    ),
+    if (_requestedPage case final next?) ...[
+      _credentialField('翻页'),
+      FilledButton(
+        onPressed: widget.busy || widget.credential.text.isEmpty
+            ? null
+            : () => _readPage(next),
+        child: Text('读取第 ${next + 1} 页'),
+      ),
+      TextButton(
+        onPressed: widget.busy ? null : () => _showPage(page),
+        child: const Text('取消翻页'),
+      ),
+    ] else ...[
+      Wrap(
+        children: [
+          if (page.index > 0)
+            TextButton(
+              onPressed: widget.busy ? null : () => _navigate(page.index - 1),
+              child: const Text('上一页'),
+            ),
+          if (page.hasMore)
+            TextButton(
+              onPressed: widget.busy ? null : () => _navigate(page.index + 1),
+              child: const Text('下一页'),
+            ),
+          TextButton(
+            onPressed: widget.busy ? null : () => _showPage(null),
+            child: const Text('返回账簿'),
+          ),
+        ],
+      ),
+      if (!page.hasMore && page._entries.isNotEmpty) const Text('已到最后一页'),
+      ..._entryRows(book, page),
+      if (page.hasMore)
+        OutlinedButton(
+          onPressed: widget.busy ? null : () => _navigate(page.index + 1),
+          child: const Text('继续查看下一页'),
+        ),
+    ],
+    if (widget.message case final message?)
+      Semantics(liveRegion: true, child: Text(message)),
+  ];
+
+  List<Widget> _entryRows(LocalBook book, EntryPage page) => [
+    if (page._entries.isEmpty) const Text('还没有收支记录。'),
+    for (final entry in page._entries) ...[
       Text(entry.describe(book)),
       if (!book.readOnly)
         Wrap(
@@ -437,8 +564,11 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   @override
   Widget build(BuildContext context) {
     final form = _form;
+    final history = _history;
     final children = form == null
-        ? _overview(widget.book)
+        ? history == null
+              ? _overview(widget.book)
+              : _historyView(widget.book, history)
         : _confirmDiscard
         ? [
             const Text('丢弃未保存的输入？'),
@@ -453,9 +583,14 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
           ]
         : _fields(form);
     return PopScope(
-      canPop: form == null,
+      canPop: form == null && history == null,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && form != null) _askDiscard();
+        if (didPop || widget.busy) return;
+        if (form != null) {
+          _askDiscard();
+        } else {
+          _showPage(_requestedPage == null ? null : history);
+        }
       },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

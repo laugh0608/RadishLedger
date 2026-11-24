@@ -557,4 +557,162 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets(
+    'browses older ordinary entries and refreshes a changed history',
+    (tester) async {
+      final root = Directory.systemTemp.createTempSync(
+        'radish_history_widget_',
+      );
+      addTearDown(() => root.deleteSync(recursive: true));
+      final platform = UnavailableSystem(root);
+      late InternalLedger ledger;
+      late LedgerIdentity identity;
+      String id(int n) => n.toRadixString(16).padLeft(32, '0');
+      Map<String, String> write(int n) => {
+        'operationId': id(n),
+        'eventId': id(n + 1),
+        'revisionId': id(n + 2),
+      };
+      await tester.runAsync(() async {
+        ledger = await InternalLedger.open(platform);
+        final created = await ledger.create(_bytes(_password));
+        try {
+          identity = InternalLedger.identity(created.report);
+          Future<void> save(Map<String, Object?> cmd) async {
+            await _report(
+              ledger.save(
+                identity,
+                LedgerUnlock.recovery,
+                Uint8List.fromList(created.secret),
+                cmd,
+              ),
+            );
+          }
+
+          await expectLater(
+            ledger.readEntries(
+              identity,
+              LedgerUnlock.recovery,
+              Uint8List.fromList(created.secret),
+              index: 1,
+              sequence: 0,
+            ),
+            throwsA(_failed('recovery_unconfirmed')),
+          );
+          await _report(
+            ledger.confirm(identity, Uint8List.fromList(created.secret)),
+          );
+          await save({
+            'kind': 'account',
+            'id': id(1),
+            'accountKind': 'cash',
+            'name': '合成现金',
+            'amountYuan': '100',
+            'businessDate': '2026-01-01',
+            'identity': write(10),
+          });
+          await save({
+            'kind': 'category',
+            'id': id(2),
+            'categoryKind': 'income',
+            'name': '合成收入',
+          });
+          for (var i = 1; i <= 21; i++) {
+            await save({
+              'kind': 'entry',
+              'direction': 'income',
+              'accountId': id(1),
+              'categoryId': id(2),
+              'amountYuan': i.toString(),
+              'businessDate': i == 1 ? '2026-01-31' : '2026-02-01',
+              'identity': write(100 + i * 3),
+            });
+          }
+        } finally {
+          created.clear();
+        }
+      });
+      Future<void> tap(String label) async {
+        final control = find.text(label);
+        await tester.ensureVisible(control);
+        await tester.tap(control);
+        await tester.pump();
+      }
+
+      Future<void> submit(String label, String password, String result) async {
+        final field = find.byType(TextField);
+        await tester.ensureVisible(field);
+        await tester.enterText(field, password);
+        await tester.pump();
+        await tap(label);
+        await _until(
+          tester,
+          () =>
+              find.text(result).evaluate().isNotEmpty &&
+              find.byType(LinearProgressIndicator).evaluate().isEmpty,
+        );
+      }
+
+      const first = '完整流水 · 第 1 页';
+      const second = '完整流水 · 第 2 页';
+      const newest = '2026-02-01 · 收入 · ¥21.00\n合成现金 · 合成收入';
+      const oldest = '2026-01-31 · 收入 · ¥1.00\n合成现金 · 合成收入';
+      await tester.pumpWidget(InternalLedgerApp(platform: platform));
+      await _until(tester, () => find.text('解锁本地账簿').evaluate().isNotEmpty);
+      await submit('打开账簿', _password, '账簿已打开');
+      await tap('查看完整流水');
+      expect(find.text(first), findsOneWidget);
+      expect(find.text(newest), findsOneWidget);
+      expect(find.text(oldest), findsNothing);
+      await tap('继续查看下一页');
+      await tester.enterText(find.byType(TextField), _password);
+      await tap('取消翻页');
+      expect(find.text(newest), findsOneWidget);
+      await tap('下一页');
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      await submit(
+        '读取第 2 页',
+        'incorrect synthetic password',
+        '口令或恢复材料不正确，也可能是封装损坏。原账簿已保留。',
+      );
+      await submit('读取第 2 页', _password, second);
+      expect(find.text(oldest), findsOneWidget);
+      expect(find.text('下一页'), findsNothing);
+      expect(find.text('已到最后一页'), findsOneWidget);
+      await tap('编辑这笔收入');
+      await tap('取消录入');
+      await tap('丢弃输入');
+      expect(find.text(second), findsOneWidget);
+      await tap('上一页');
+      expect(find.text(newest), findsOneWidget);
+      await tap('下一页');
+      await tester.runAsync(
+        () => _report(
+          ledger.save(identity, LedgerUnlock.password, _bytes(_password), {
+            'kind': 'deleteEntry',
+            'previousRevisionId': id(105),
+            'identity': {
+              'eventId': id(104),
+              'operationId': id(500),
+              'revisionId': id(501),
+            },
+          }),
+        ),
+      );
+      await submit('读取第 2 页', _password, '翻页期间流水已变化。请重新解锁，从第一页核对。');
+      expect(find.text('账簿已打开'), findsNothing);
+      await submit('打开账簿', _password, '账簿已打开');
+      expect(find.text('合成现金 · 现金 · ¥330.00'), findsOneWidget);
+      await tap('查看完整流水');
+      expect(find.text('下一页'), findsNothing);
+      expect(find.text('已到最后一页'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(find.text('查看完整流水'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

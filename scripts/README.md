@@ -183,4 +183,6 @@ Android 的 `lib/main.dart` 使用 `--dart-define=RADISH_INTERNAL_LEDGER=true` �
 
 上述跨进程用例也会在普通收支删除提交前后强杀，重开后核对原流水或删除修订、余额、保存回执及原操作重放。`cargo test --locked -p radishledger-core --lib ordinary_delete_` 单独覆盖删除对月度分类汇总的影响、历史保全、过期与冲突拒绝，以及交易显式恢复后的旧删除重放。[普通收支删除契约](../docs/development/mobile-core-prototype.md#83-普通收支删除)
 
+完整流水可用 `cargo test --locked -p radishledger-core --lib entry_pages_cover_ties_boundaries_and_reject_stale_reads` 复验同日排序、分页边界和并发变更。上述 Flutter 宿主入口覆盖从已打开的账簿浏览历史、取消翻页、错口令及重新解锁。[完整流水契约](../docs/development/mobile-core-prototype.md#84-普通收支的完整流水)
+
 授权并核对隔离 Android 目标后，在 `apps/m0_probe` 执行 `flutter test --no-pub -d <已确认的模拟器> integration_test/internal_ledger_test.dart`。先按 debug 模式生成 Flutter 插件登记，避免复用 release 模式的生成文件。执行会安装 Android 测试包，测试期间口令和恢复材料只在测试进程内使用。该入口核对同进程页面重建及 A11 保全。正常 release 的实际键盘、后台和 App 新 PID 证据单独记录，按实际包及覆盖动作取证。[设备验收范围](../docs/development/mobile-core-prototype.md#8-android-内部账簿的创建与重开)

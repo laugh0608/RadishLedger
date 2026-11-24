@@ -108,6 +108,16 @@ pub(crate) struct BookView {
     accounts: Vec<Reference>,
     categories: Vec<Reference>,
     balances_minor: BTreeMap<String, String>,
+    #[serde(flatten)]
+    page: EntryPage,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EntryPage {
+    sequence: i64,
+    page_index: u32,
+    has_more: bool,
     recent_entries: Vec<LocalEntry>,
 }
 
@@ -157,27 +167,63 @@ fn read_book(connection: &Connection) -> Result<BookView> {
         "SELECT id,kind,name,archived FROM categories ORDER BY name,id LIMIT 257",
     )?;
     let balances_minor = read_snapshot(connection, &[])?.projection.balances_minor;
+    let page = read_entries(connection, 0, None)?;
+    Ok(BookView {
+        accounts,
+        categories,
+        balances_minor,
+        page,
+    })
+}
+
+const ENTRIES_PER_PAGE: i64 = 20;
+
+fn read_entries(connection: &Connection, index: u32, expected: Option<i64>) -> Result<EntryPage> {
+    let sequence = super::read_sequence(connection)?;
+    if expected.is_some_and(|value| value != sequence) {
+        return Err(CoreError::new(
+            "stale_entry_page",
+            "流水已变化，请重新打开账簿",
+        ));
+    }
+    // 仅从同一所选版本序列翻页，同日记录用稳定事件身份区分。
     let mut statement = connection
         .prepare(
-            "SELECT s.event_id,s.revision_id,r.payload FROM selected s JOIN revisions r ON r.id=s.revision_id
+            "SELECT s.event_id,s.revision_id,r.payload,a.id,c.id
+             FROM selected s JOIN revisions r ON r.id=s.revision_id
+             LEFT JOIN accounts a ON a.id=json_extract(r.payload,'$.accountId')
+             LEFT JOIN categories c ON c.id=json_extract(r.payload,'$.categoryId')
              WHERE json_extract(r.payload,'$.kind') IN ('income','expense')
-             ORDER BY json_extract(r.payload,'$.businessDate') DESC,s.event_id DESC LIMIT 20",
+             ORDER BY json_extract(r.payload,'$.businessDate') DESC,s.event_id DESC
+             LIMIT ?1 OFFSET ?2",
         )
         .map_err(db_error)?;
-    let recent_entries = statement
-        .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get::<_, String>(2)?))
-        })
+    let mut recent_entries = statement
+        .query_map(
+            [ENTRIES_PER_PAGE + 1, i64::from(index) * ENTRIES_PER_PAGE],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )
         .map_err(db_error)?
         .map(|row| {
-            let (id, revision_id, payload) = row.map_err(db_error)?;
+            let (id, revision_id, payload, account, category) = row.map_err(db_error)?;
             let event: Event = serde_json::from_str(&payload)
                 .map_err(|_| CoreError::new("corrupt_fact", "账务事实无法解释"))?;
             let (Some(account_id), Some(category_id)) = (event.account_id, event.category_id)
             else {
                 return Err(CoreError::new("corrupt_fact", "收支引用不完整"));
             };
-            if !categories.iter().any(|category| category.id == category_id) {
+            if account.is_none() {
+                return Err(CoreError::new("missing_account", "无法解释流水的原账户"));
+            }
+            if category.is_none() {
                 return Err(CoreError::new("missing_category", "无法解释流水的原分类"));
             }
             Ok(LocalEntry {
@@ -190,11 +236,16 @@ fn read_book(connection: &Connection) -> Result<BookView> {
                 amount_minor: event.amount_minor,
             })
         })
-        .collect::<Result<_>>()?;
-    Ok(BookView {
-        accounts,
-        categories,
-        balances_minor,
+        .collect::<Result<Vec<_>>>()?;
+    if index > 0 && recent_entries.is_empty() {
+        return Err(CoreError::new("invalid_entry_page", "流水页超出范围"));
+    }
+    let has_more = recent_entries.len() > ENTRIES_PER_PAGE as usize;
+    recent_entries.truncate(ENTRIES_PER_PAGE as usize);
+    Ok(EntryPage {
+        sequence,
+        page_index: index,
+        has_more,
         recent_entries,
     })
 }
@@ -267,6 +318,13 @@ impl Store {
         let book = read_book(&tx)?;
         tx.commit().map_err(db_error)?;
         Ok(book)
+    }
+
+    pub(crate) fn entry_page(&self, index: u32, sequence: i64) -> Result<EntryPage> {
+        let tx = self.connection.unchecked_transaction().map_err(db_error)?;
+        let page = read_entries(&tx, index, Some(sequence))?;
+        tx.commit().map_err(db_error)?;
+        Ok(page)
     }
 
     pub(crate) fn local_save_committed(&self, mut receipt: [u8; 32]) -> Result<bool> {
@@ -428,19 +486,92 @@ mod tests {
     }
 
     #[test]
+    fn entry_pages_cover_ties_boundaries_and_reject_stale_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db");
+        let key = DbKey::random().unwrap();
+        let mut store = Store::create(&path, &key).unwrap();
+        let id = |n: u32| format!("{n:032x}");
+        let account = id(1);
+        let category = id(2);
+        store.add_account(&account, "cash", "现金").unwrap();
+        store.add_category(&category, "income", "收入").unwrap();
+        let empty = store.local_book().unwrap().page;
+        assert!(empty.recent_entries.is_empty() && !empty.has_more);
+        for n in 1..=41 {
+            let command = LedgerCommand::Entry {
+                direction: Direction::Income,
+                amount_yuan: n.to_string(),
+                business_date: if n > 20 { "2026-02-01" } else { "2026-01-31" }.into(),
+                account_id: account.clone(),
+                category_id: category.clone(),
+                identity: WriteIdentity {
+                    event_id: id(100 + n),
+                    revision_id: id(200 + n),
+                    operation_id: id(300 + n),
+                },
+            };
+            let view = store.save_local(command, |_| Ok(())).unwrap();
+            if n == 20 || n == 21 {
+                assert_eq!(view.page.recent_entries.len(), 20);
+                assert_eq!(view.page.has_more, n == 21);
+            }
+        }
+        drop(store);
+        let reader = Store::open_readonly(&path, &key).unwrap();
+        let first = reader.local_book().unwrap().page;
+        let sequence = first.sequence;
+        let digest = reader.content_digest().unwrap();
+        let mut all = Vec::new();
+        for (index, page) in [
+            first,
+            reader.entry_page(1, sequence).unwrap(),
+            reader.entry_page(2, sequence).unwrap(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(page.page_index, index as u32);
+            assert_eq!(page.has_more, index < 2);
+            all.extend(page.recent_entries.into_iter().map(|row| row.id));
+        }
+        assert_eq!(all, (1..=41).rev().map(|n| id(100 + n)).collect::<Vec<_>>());
+        assert_eq!(
+            reader.entry_page(3, sequence).err().unwrap().code,
+            "invalid_entry_page"
+        );
+        assert_eq!(reader.content_digest().unwrap(), digest);
+
+        let mut writer = Store::open(&path, &key).unwrap();
+        writer
+            .save_local(delete(&id(141), &id(241), &id(400), &id(401)), |_| Ok(()))
+            .unwrap();
+        assert_eq!(
+            reader.entry_page(1, sequence).err().unwrap().code,
+            "stale_entry_page"
+        );
+        let fresh = reader.local_book().unwrap().page;
+        assert_eq!(fresh.recent_entries[0].id, id(140));
+        let last = reader.entry_page(1, fresh.sequence).unwrap();
+        assert_eq!(last.recent_entries.len(), 20);
+        assert_eq!(last.recent_entries[19].id, id(101));
+        assert!(!last.has_more);
+    }
+
+    #[test]
     fn ordinary_delete_reopens_with_tombstone_and_replays_after_restore() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("delete.db");
         let key = DbKey::random().unwrap();
         let mut store = Store::create(&path, &key).unwrap();
         crate::probe::populate_snapshot_fixture(&mut store, "A08", "edit-date").unwrap();
-        let entry = store.local_book().unwrap().recent_entries.remove(0);
+        let entry = store.local_book().unwrap().page.recent_entries.remove(0);
         let original = store.revision_event(&entry.revision_id).unwrap().unwrap();
         let operation = crate::random_id().unwrap();
         let tombstone = crate::random_id().unwrap();
         let command = || delete(&entry.id, &entry.revision_id, &operation, &tombstone);
         let view = store.save_local(command(), |_| Ok(())).unwrap();
-        assert!(view.recent_entries.is_empty());
+        assert!(view.page.recent_entries.is_empty());
         assert_eq!(view.balances_minor[&entry.account_id], "10000");
         drop(store);
         let mut store = Store::open(&path, &key).unwrap();
@@ -487,7 +618,7 @@ mod tests {
         store.commit(&restore).unwrap();
         let digest = store.content_digest().unwrap();
         let view = store.save_local(command(), |_| Ok(())).unwrap();
-        assert_eq!(view.recent_entries[0].revision_id, restored);
+        assert_eq!(view.page.recent_entries[0].revision_id, restored);
         assert_eq!(view.balances_minor[&entry.account_id], "7500");
         assert_eq!(store.content_digest().unwrap(), digest);
     }

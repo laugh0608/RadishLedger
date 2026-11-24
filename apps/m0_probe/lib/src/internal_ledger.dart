@@ -129,6 +129,23 @@ class InternalLedger {
   Future<BootstrapResult> reissue(LedgerIdentity expected, Uint8List input) =>
       _authenticated({'kind': 'reissueRecovery'}, input, expected);
 
+  Future<BootstrapResult> readEntries(
+    LedgerIdentity expected,
+    LedgerUnlock unlock,
+    Uint8List input, {
+    required int index,
+    required int sequence,
+  }) => _authenticated(
+    {
+      'kind': 'readEntries',
+      'unlock': unlock.name,
+      'index': index,
+      'sequence': sequence,
+    },
+    input,
+    expected,
+  );
+
   Future<BootstrapResult> save(
     LedgerIdentity expected,
     LedgerUnlock unlock,

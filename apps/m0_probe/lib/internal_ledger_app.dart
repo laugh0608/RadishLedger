@@ -93,6 +93,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     ) =>
       '结果未定，请重新核对原账簿。',
     BootstrapFailure(code: 'local_save_uncertain') => '保存结果未定，请重新打开账簿核对上次保存。',
+    BootstrapFailure(code: 'stale_entry_page') => '翻页期间流水已变化。请重新解锁，从第一页核对。',
     BootstrapFailure(code: 'stale_revision') => '这笔流水已变化。请重新解锁并核对最新记录。',
     BootstrapFailure(code: 'stale_candidates') => '这笔流水存在冲突。请重新解锁核对，本次操作未提交。',
     BootstrapFailure(
@@ -147,6 +148,7 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     Future<BootstrapResult> Function(Uint8List) action, {
     required bool canWrite,
     String? savedMessage,
+    void Function(Map<String, dynamic>)? receivePage,
   }) async {
     if (_busy) return false;
     final saving = savedMessage != null;
@@ -163,6 +165,14 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     try {
       result = await action(input);
       if (!mounted || epoch != _epoch) return false;
+      if (receivePage != null) {
+        if (result.report['ready'] != true || result.secret.isNotEmpty) {
+          throw const BootstrapFailure('invalid_response');
+        }
+        receivePage(result.report);
+        accepted = true;
+        return true;
+      }
       final identity = InternalLedger.identity(result.report);
       final ready = result.report['ready'] == true;
       final book = ready ? LocalBook.fromReport(result.report) : null;
@@ -207,7 +217,13 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
           if (uncertain ||
               error is BootstrapFailure &&
                   (error.code == 'stale_revision' ||
-                      error.code == 'stale_candidates')) {
+                      error.code == 'stale_candidates' ||
+                      error.code == 'stale_entry_page' ||
+                      receivePage != null &&
+                          const {
+                            'selection_changed',
+                            'invalid_response',
+                          }.contains(error.code))) {
             _book = null;
           }
           if (error is BootstrapFailure &&
@@ -321,6 +337,22 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
                   busy: _busy,
                   message: _message,
                   clearMessage: () => setState(() => _message = null),
+                  readPage: (index) async {
+                    EntryPage? page;
+                    await _submit(
+                      (input) => ledger.readEntries(
+                        location!.identity!,
+                        _method,
+                        input,
+                        index: index,
+                        sequence: book.firstPage.sequence,
+                      ),
+                      canWrite: false,
+                      receivePage: (report) =>
+                          page = book.readPage(report, index),
+                    );
+                    return page;
+                  },
                   save: (command) => _submit(
                     (input) => ledger.save(
                       location!.identity!,

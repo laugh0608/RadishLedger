@@ -423,11 +423,7 @@ impl Store {
     }
 
     pub fn sequence(&self) -> Result<i64> {
-        self.connection
-            .query_row("SELECT sequence FROM metadata WHERE id=1", [], |row| {
-                row.get(0)
-            })
-            .map_err(db_error)
+        read_sequence(&self.connection)
     }
 
     pub fn outbox_count(&self) -> Result<usize> {
@@ -692,6 +688,14 @@ fn insert_category(connection: &Connection, id: &str, kind: &str, name: &str) ->
         )
         .map_err(db_error)?;
     Ok(())
+}
+
+fn read_sequence(connection: &Connection) -> Result<i64> {
+    connection
+        .query_row("SELECT sequence FROM metadata WHERE id=1", [], |row| {
+            row.get(0)
+        })
+        .map_err(db_error)
 }
 
 fn read_snapshot(connection: &Connection, months: &[String]) -> Result<Snapshot> {

@@ -88,6 +88,11 @@ pub enum Action {
     Inspect {
         unlock: Unlock,
     },
+    ReadEntries {
+        unlock: Unlock,
+        index: u32,
+        sequence: i64,
+    },
     SaveLocal {
         unlock: Unlock,
         command: LedgerCommand,
@@ -291,13 +296,7 @@ impl Bootstrap {
         if !ready {
             return Ok(self.local_report(false, None, None));
         }
-        // 诊断账库通过原有全量核对后仍可查看，用户路径不改写固定证据。
-        let fixture_digest = store.fixture_digest()?;
-        if let Some(expected) = &fixture_digest
-            && &store.content_digest()? != expected
-        {
-            return Err(CoreError::new("fixture_mismatch", "固定合成账库与基线不符"));
-        }
+        let read_only = Self::check_local_fixture(&store)?;
         let last_save = if files.exists(SAVE_ATTEMPT)? {
             let key = self.local_save_key(root)?;
             let envelope = decode(&files.read(SAVE_ATTEMPT)?)?;
@@ -307,8 +306,19 @@ impl Bootstrap {
             None
         };
         let mut report = self.local_report(true, Some(store.local_book()?), last_save);
-        report["fixtureComplete"] = json!(fixture_digest.is_some());
+        report["fixtureComplete"] = json!(read_only);
         Ok(report)
+    }
+
+    fn check_local_fixture(store: &Store) -> Result<bool> {
+        // 诊断账库通过原有全量核对后仍可查看，用户路径不改写固定证据。
+        let fixture_digest = store.fixture_digest()?;
+        if let Some(expected) = &fixture_digest
+            && &store.content_digest()? != expected
+        {
+            return Err(CoreError::new("fixture_mismatch", "固定合成账库与基线不符"));
+        }
+        Ok(fixture_digest.is_some())
     }
 
     fn local_save_key(&self, root: &Secret) -> Result<Secret> {
@@ -556,11 +566,11 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
         | Action::Seed { unlock }
         | Action::Replay { unlock }
         | Action::PrepareProtection { unlock } => unlock,
-        Action::SaveLocal { unlock, .. } => {
+        Action::SaveLocal { unlock, .. } | Action::ReadEntries { unlock, .. } => {
             if request.expected_identity.is_none() || matches!(unlock, Unlock::System) {
                 return Err(CoreError::new(
                     "invalid_action",
-                    "本地保存需要原账簿身份及口令或恢复材料",
+                    "本地账簿操作需要原账簿身份及口令或恢复材料",
                 ));
             }
             unlock
@@ -584,6 +594,22 @@ pub fn run(request: Request, input: &[u8]) -> Result<Reply> {
     };
     let root = b.root(&files, unlock, input)?;
     match request.action {
+        Action::ReadEntries {
+            index, sequence, ..
+        } => {
+            if !b.ready(&files, &root)? {
+                return Err(CoreError::new(
+                    "recovery_unconfirmed",
+                    "先确认恢复材料，再查看流水",
+                ));
+            }
+            let store = b.open(&files, &root, false)?;
+            Bootstrap::check_local_fixture(&store)?;
+            let page = store.entry_page(index, sequence)?;
+            return Ok(Reply::public(
+                json!({"vault":b.vault,"device":b.device,"ready":true,"entryPage":page}),
+            ));
+        }
         Action::SaveLocal { command, .. } => {
             return b.save_local(&files, &root, command, request.pause_at);
         }
