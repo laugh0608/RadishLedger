@@ -308,6 +308,34 @@ fn local_book_reopens_receipts_transactions_and_balances_across_processes() {
     ));
     assert_eq!(audit["audit"]["sequence"], 3);
     assert_eq!(audit["audit"]["operations"].as_array().unwrap().len(), 3);
+    let edit = json!({"kind":"reviseEntry","amountYuan":"25.00","businessDate":"2026-02-01",
+        "previousRevisionId":rows[0]["revisionId"],
+        "identity":{"eventId":rows[0]["id"],"operationId":id(40),"revisionId":id(41)}});
+    kill_at(
+        directory,
+        run,
+        save(edit.clone(), Some("localSavePrepared")),
+        "localSavePrepared",
+    );
+    let uncommitted = reopen();
+    assert_eq!(uncommitted["lastSaveCommitted"], false);
+    assert_eq!(uncommitted["book"], reopened["book"]);
+    kill_at(
+        directory,
+        run,
+        save(edit.clone(), Some("localSaveCommitted")),
+        "localSaveCommitted",
+    );
+    let committed = reopen();
+    assert_eq!(committed["lastSaveCommitted"], true);
+    assert_eq!(committed["book"]["balancesMinor"][id(1)], "297500");
+    let revised = committed["book"]["recentEntries"].as_array().unwrap();
+    assert_eq!(revised.len(), 2);
+    assert_eq!(revised[0]["id"], rows[0]["id"]);
+    assert_eq!(revised[0]["revisionId"], id(41));
+    assert_eq!(revised[0]["businessDate"], "2026-02-01");
+    assert_eq!(revised[1], rows[1]);
+    assert_eq!(ok(finish(save(edit, None))).0["book"], committed["book"]);
     let (status, _) = ok(call(directory, run, json!({"kind":"status"}), &[]));
     assert_eq!(status["candidates"], json!([]));
 }

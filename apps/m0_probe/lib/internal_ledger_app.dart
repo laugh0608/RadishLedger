@@ -93,6 +93,8 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
     ) =>
       '结果未定，请重新核对原账簿。',
     BootstrapFailure(code: 'local_save_uncertain') => '保存结果未定，请重新打开账簿核对上次保存。',
+    BootstrapFailure(code: 'stale_revision') => '这笔流水已变化。请重新解锁，核对最新记录后再编辑。',
+    BootstrapFailure(code: 'stale_candidates') => '这笔流水存在冲突。请重新解锁核对，当前修改未保存。',
     BootstrapFailure(
       code: 'missing_database' ||
           'unexpected_database' ||
@@ -201,7 +203,12 @@ class _LedgerPageState extends State<_LedgerPage> with WidgetsBindingObserver {
                     'invalid_response',
                     'selection_changed',
                   }.contains(error.code));
-          if (uncertain) _book = null;
+          if (uncertain ||
+              error is BootstrapFailure &&
+                  (error.code == 'stale_revision' ||
+                      error.code == 'stale_candidates')) {
+            _book = null;
+          }
           if (error is BootstrapFailure &&
               (error.code == 'bootstrap_publish_uncertain' ||
                   error.code == 'selection_changed' ||

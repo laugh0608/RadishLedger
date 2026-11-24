@@ -538,6 +538,77 @@ pub fn run_json(directory: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn local_edit_reopens_with_a08_months_and_category_totals() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a08.db");
+        let key = DbKey::random().unwrap();
+        let mut store = Store::create(&path, &key).unwrap();
+        let input: Value = serde_json::from_str(CASES).unwrap();
+        let mut case = input["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["id"] == "A08")
+            .unwrap()
+            .clone();
+        let edit = case["steps"][1].clone();
+        case["steps"].as_array_mut().unwrap().truncate(1);
+        let (_, mut symbols, months) = populate_case(&mut store, &case, &[]).unwrap();
+        let entry = symbols.id("event", "expense").unwrap();
+        let previous = symbols.id("revision", "expense-v1").unwrap();
+        let revision = symbols.id("revision", "expense-v2").unwrap();
+        let command = json!({"kind":"reviseEntry","amountYuan":"25.00","businessDate":edit["businessDate"],
+            "previousRevisionId":previous,"identity":{"eventId":entry,"operationId":random_id().unwrap(),"revisionId":revision}});
+        let save = |store: &mut Store, cmd: &Value| {
+            store.save_local(serde_json::from_value(cmd.clone()).unwrap(), |_| Ok(()))
+        };
+        let book = serde_json::to_value(save(&mut store, &command).unwrap()).unwrap();
+        assert_eq!(book["recentEntries"][0]["revisionId"], revision);
+        drop(store);
+        let mut store = Store::open(&path, &key).unwrap();
+        assert!(equivalent(
+            &snapshot(&store, &symbols, &months).unwrap(),
+            &edit["expected"],
+            true
+        ));
+        assert_eq!(store.outbox_count().unwrap(), 3);
+        save(&mut store, &command).unwrap();
+        let mut changed = command.clone();
+        changed["amountYuan"] = json!("26.00");
+        assert_eq!(
+            save(&mut store, &changed).err().unwrap().code,
+            "operation_reused"
+        );
+        changed["identity"]["operationId"] = json!(random_id().unwrap());
+        changed["identity"]["revisionId"] = json!(random_id().unwrap());
+        assert_eq!(
+            save(&mut store, &changed).err().unwrap().code,
+            "stale_revision"
+        );
+
+        let candidate = symbols.event(&edit, false).unwrap();
+        store
+            .receive_candidate(&entry, &random_id().unwrap(), &previous, &candidate)
+            .unwrap();
+        changed["previousRevisionId"] = json!(revision);
+        let before = store.content_digest().unwrap();
+        assert_eq!(
+            save(&mut store, &changed).err().unwrap().code,
+            "stale_candidates"
+        );
+        changed["identity"]["eventId"] = json!(symbols.id("event", "open-cash").unwrap());
+        changed["previousRevisionId"] = json!(symbols.id("revision", "open-cash-v1").unwrap());
+        assert_eq!(
+            save(&mut store, &changed).err().unwrap().code,
+            "invalid_entry_kind"
+        );
+        assert_eq!(store.content_digest().unwrap(), before);
+        assert_eq!(store.outbox_count().unwrap(), 3);
+    }
+
     #[test]
     fn common_material_runs_against_encrypted_transactions() {
         let temp = tempfile::tempdir().expect("isolated test directory");

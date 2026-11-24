@@ -203,7 +203,7 @@ void main() {
   );
 
   testWidgets(
-    'saves account, categories and both directions and reads them on reopen',
+    'reopens both entries and requires a fresh revision after a concurrent edit',
     (tester) async {
       final root = Directory.systemTemp.createTempSync(
         'radish_local_book_widget_',
@@ -338,6 +338,81 @@ void main() {
       );
       expect(
         find.text('2026-01-07 · 支出 · ¥30.00\n合成银行 · 合成餐饮'),
+        findsOneWidget,
+      );
+      await tap(find.text('编辑这笔支出'));
+      expect(
+        tester.widget<TextField>(field('金额（CNY）')).controller!.text,
+        '30.00',
+      );
+      await enter('金额（CNY）', '25.00');
+      await enter('业务日期（YYYY-MM-DD）', '2026-02-01');
+      await tap(find.text('取消录入'));
+      await tap(find.text('继续编辑'));
+      expect(
+        tester.widget<TextField>(field('业务日期（YYYY-MM-DD）')).controller!.text,
+        '2026-02-01',
+      );
+
+      // 另一调用者在旧表单打开时先提交，原页面须拒绝，并可重新解锁取得新修订。
+      await tester.runAsync(() async {
+        final ledger = await InternalLedger.open(platform);
+        final location = await ledger.locate();
+        final report = await _report(
+          ledger.unlock(
+            location,
+            LedgerUnlock.password,
+            _bytes(_password),
+            includeLedger: true,
+          ),
+        );
+        final expense = (report['book']['recentEntries'] as List).singleWhere(
+          (row) => row['kind'] == 'expense',
+        );
+        await _report(
+          ledger.save(
+            location.identity!,
+            LedgerUnlock.password,
+            _bytes(_password),
+            {
+              'kind': 'reviseEntry',
+              'previousRevisionId': expense['revisionId'],
+              'amountYuan': '20.00',
+              'businessDate': '2026-01-07',
+              'identity': {
+                'eventId': expense['id'],
+                'operationId': '1' * 32,
+                'revisionId': '2' * 32,
+              },
+            },
+          ),
+        );
+      });
+      await save(result: '这笔流水已变化。请重新解锁，核对最新记录后再编辑。');
+      expect(find.text('账簿已打开'), findsNothing);
+      await open();
+      expect(find.text('合成银行 · 银行账户 · ¥2980.00'), findsOneWidget);
+      await tap(find.text('编辑这笔支出'));
+      expect(
+        tester.widget<TextField>(field('金额（CNY）')).controller!.text,
+        '20.00',
+      );
+      await enter('金额（CNY）', '25.00');
+      await enter('业务日期（YYYY-MM-DD）', '2026-02-01');
+      await save();
+      await tap(find.widgetWithText(FilledButton, '关闭账簿'));
+      await open();
+      expect(find.text('合成银行 · 银行账户 · ¥2975.00'), findsOneWidget);
+      expect(
+        find.text('2026-02-01 · 支出 · ¥25.00\n合成银行 · 合成餐饮'),
+        findsOneWidget,
+      );
+      await tap(find.text('编辑这笔收入'));
+      await enter('金额（CNY）', '1900.00');
+      await save();
+      expect(find.text('合成银行 · 银行账户 · ¥2875.00'), findsOneWidget);
+      expect(
+        find.text('2026-01-05 · 收入 · ¥1900.00\n合成银行 · 合成工资'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);

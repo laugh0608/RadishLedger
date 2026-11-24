@@ -10,7 +10,7 @@ class LocalBook {
     this._accounts,
     this._categories,
     this.balances,
-    this.entries,
+    this._entries,
     this.lastSaveCommitted,
     this.readOnly,
   );
@@ -24,7 +24,11 @@ class LocalBook {
       _references(book['accounts'] as List),
       _references(book['categories'] as List),
       Map<String, String>.from(book['balancesMinor'] as Map),
-      (book['recentEntries'] as List).cast<Map<String, dynamic>>(),
+      [
+        for (final row
+            in (book['recentEntries'] as List).cast<Map<String, dynamic>>())
+          _BookEntry.fromJson(row),
+      ],
       report['lastSaveCommitted'] as bool?,
       report['fixtureComplete'] == true,
     );
@@ -42,14 +46,37 @@ class LocalBook {
   final Map<String, _Reference> _accounts;
   final Map<String, _Reference> _categories;
   final Map<String, String> balances;
-  final List<Map<String, dynamic>> entries;
+  final List<_BookEntry> _entries;
   final bool? lastSaveCommitted;
   final bool readOnly;
 }
 
 typedef _Reference = ({String name, String kind, bool archived});
 
-enum _Form { account, category, entry }
+class _BookEntry {
+  _BookEntry.fromJson(Map<String, dynamic> row)
+    : id = row['id'] as String,
+      revisionId = row['revisionId'] as String,
+      kind = row['kind'] as String,
+      businessDate = row['businessDate'] as String,
+      accountId = row['accountId'] as String,
+      categoryId = row['categoryId'] as String,
+      amountMinor = row['amountMinor'] as String;
+
+  final String id;
+  final String revisionId;
+  final String kind;
+  final String businessDate;
+  final String accountId;
+  final String categoryId;
+  final String amountMinor;
+
+  String describe(LocalBook book) =>
+      '$businessDate · ${_directions[kind]} · ${_yuan(amountMinor)}\n'
+      '${book._accounts[accountId]!.name} · ${book._categories[categoryId]!.name}';
+}
+
+enum _Form { account, category, entry, revise }
 
 const _accountKinds = {
   'cash': '现金',
@@ -59,11 +86,11 @@ const _accountKinds = {
 };
 const _directions = {'expense': '支出', 'income': '收入'};
 
-String _yuan(String minor) {
+String _yuan(String minor, {bool currencySign = true}) {
   final negative = minor.startsWith('-');
   final digits = (negative ? minor.substring(1) : minor).padLeft(3, '0');
   final split = digits.length - 2;
-  return '${negative ? '-' : ''}¥${digits.substring(0, split)}.${digits.substring(split)}';
+  return '${negative ? '-' : ''}${currencySign ? '¥' : ''}${digits.substring(0, split)}.${digits.substring(split)}';
 }
 
 String _newId() {
@@ -103,6 +130,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
   final _amount = TextEditingController();
   final _date = TextEditingController();
   _Form? _form;
+  _BookEntry? _original;
   String _accountKind = 'cash';
   String _direction = 'expense';
   String? _account;
@@ -121,13 +149,18 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
       if (!value.archived && value.kind == _direction) key: value.name,
   };
 
-  void _open(_Form form) {
+  void _open(_Form form, {_BookEntry? original}) {
     widget.clearMessage();
     setState(() {
       _form = form;
+      _original = original;
       _name.clear();
-      _amount.text = form == _Form.account ? '0' : '';
-      _date.text = DateTime.now().toIso8601String().substring(0, 10);
+      _amount.text = original != null
+          ? _yuan(original.amountMinor, currencySign: false)
+          : (form == _Form.account ? '0' : '');
+      _date.text =
+          original?.businessDate ??
+          DateTime.now().toIso8601String().substring(0, 10);
       _accountKind = 'cash';
       _direction = 'expense';
       _account = _accounts.keys.firstOrNull;
@@ -147,7 +180,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
 
   Map<String, String> _identity() => _writeIdentity ??= {
     'operationId': _newId(),
-    'eventId': _newId(),
+    'eventId': _original?.id ?? _newId(),
     'revisionId': _newId(),
   };
 
@@ -175,6 +208,13 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
         'businessDate': _date.text,
         'accountId': _account,
         'categoryId': _category,
+        'identity': _identity(),
+      },
+      _Form.revise => {
+        'kind': 'reviseEntry',
+        'previousRevisionId': _original!.revisionId,
+        'amountYuan': _amount.text,
+        'businessDate': _date.text,
         'identity': _identity(),
       },
     };
@@ -236,8 +276,12 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
         _Form.account => '新建账户',
         _Form.category => '新建分类',
         _Form.entry => '记一笔',
+        _Form.revise => '编辑收支',
       }),
-      if (!entry) _text(_name, account ? '账户名称' : '分类名称', 64),
+      if (_original case final original?)
+        Text('原记录\n${original.describe(widget.book)}'),
+      if (account || form == _Form.category)
+        _text(_name, account ? '账户名称' : '分类名称', 64),
       if (account)
         _choice(
           '账户类型',
@@ -245,7 +289,7 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
           _accountKind,
           (value) => setState(() => _accountKind = value!),
         )
-      else
+      else if (form != _Form.revise)
         _choice('收支类型', _directions, _direction, (value) {
           setState(() {
             _direction = value!;
@@ -347,12 +391,21 @@ class _LocalBookPanelState extends State<LocalBookPanel> {
     for (final category in book._categories.values)
       Text('${category.name} · ${_directions[category.kind]}'),
     Text('最近收支（最多 20 笔）', style: Theme.of(context).textTheme.titleMedium),
-    if (book.entries.isEmpty) const Text('还没有收支记录。'),
-    for (final entry in book.entries)
-      Text(
-        "${entry['businessDate']} · ${_directions[entry['kind']]} · ${_yuan(entry['amountMinor'] as String)}\n"
-        "${book._accounts[entry['accountId']]!.name} · ${book._categories[entry['categoryId']]!.name}",
-      ),
+    if (book._entries.isEmpty) const Text('还没有收支记录。'),
+    for (final entry in book._entries) ...[
+      Text(entry.describe(book)),
+      if (!book.readOnly)
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: TextButton.icon(
+            icon: const Icon(Icons.edit_outlined),
+            label: Text('编辑这笔${_directions[entry.kind]}'),
+            onPressed: widget.busy
+                ? null
+                : () => _open(_Form.revise, original: entry),
+          ),
+        ),
+    ],
   ];
 
   @override

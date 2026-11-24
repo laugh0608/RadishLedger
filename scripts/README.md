@@ -179,4 +179,6 @@ Android 的 `lib/main.dart` 使用 `--dart-define=RADISH_INTERNAL_LEDGER=true` �
 
 在仓库根执行 `CARGO_NET_OFFLINE=true cargo test --locked -p radishledger-core --test bootstrap_process --jobs 4`，覆盖实际子进程创建中断、待恢复 WAL、记账提交前回滚与提交后新 PID 原操作核对。定向复现可在命令末尾加 `local_book_reopens_receipts_transactions_and_balances_across_processes`。[首笔收支实现与复现](../docs/development/mobile-core-prototype.md#81-内部账簿首笔收支)
 
+同一跨进程用例也覆盖普通收支编辑在提交前、提交后被强杀以及重开重试。A08 两个月的独立汇总预期可用 `cargo test --locked -p radishledger-core --lib local_edit_reopens_with_a08_months_and_category_totals` 单独复验。[编辑契约与设备结果](../docs/development/mobile-core-prototype.md#82-普通收支的日期与金额编辑)
+
 授权并核对隔离 Android 目标后，在 `apps/m0_probe` 执行 `flutter test --no-pub -d <已确认的模拟器> integration_test/internal_ledger_test.dart`。先按 debug 模式生成 Flutter 插件登记，避免复用 release 模式的生成文件。执行会安装 Android 测试包，测试期间口令和恢复材料只在测试进程内使用。该入口核对同进程页面重建及 A11 保全。正常 release 的实际键盘、后台和 App 新 PID 证据单独记录，按实际包及覆盖动作取证。[设备验收范围](../docs/development/mobile-core-prototype.md#8-android-内部账簿的创建与重开)

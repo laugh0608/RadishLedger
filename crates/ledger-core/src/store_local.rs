@@ -18,12 +18,12 @@ pub struct WriteIdentity {
 }
 
 impl WriteIdentity {
-    fn write(self, event: Event) -> Write {
+    fn write(self, event: Event, previous_revision_id: Option<String>) -> Write {
         Write {
             operation_id: self.operation_id,
             event_id: self.event_id,
             revision_id: self.revision_id,
-            previous_revision_id: None,
+            previous_revision_id,
             event: Some(event),
             expected_sequence: None,
             observed_balance_minor: None,
@@ -69,6 +69,12 @@ pub enum LedgerCommand {
         category_id: String,
         identity: WriteIdentity,
     },
+    ReviseEntry {
+        previous_revision_id: String,
+        amount_yuan: String,
+        business_date: String,
+        identity: WriteIdentity,
+    },
 }
 
 pub(crate) enum SaveAttempt<'a> {
@@ -105,6 +111,7 @@ pub(crate) struct BookView {
 #[serde(rename_all = "camelCase")]
 struct LocalEntry {
     id: String,
+    revision_id: String,
     kind: EventKind,
     business_date: String,
     account_id: String,
@@ -148,16 +155,18 @@ fn read_book(connection: &Connection) -> Result<BookView> {
     let balances_minor = read_snapshot(connection, &[])?.projection.balances_minor;
     let mut statement = connection
         .prepare(
-            "SELECT s.event_id,r.payload FROM selected s JOIN revisions r ON r.id=s.revision_id
+            "SELECT s.event_id,s.revision_id,r.payload FROM selected s JOIN revisions r ON r.id=s.revision_id
              WHERE json_extract(r.payload,'$.kind') IN ('income','expense')
              ORDER BY json_extract(r.payload,'$.businessDate') DESC,s.event_id DESC LIMIT 20",
         )
         .map_err(db_error)?;
     let recent_entries = statement
-        .query_map([], |row| Ok((row.get(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get::<_, String>(2)?))
+        })
         .map_err(db_error)?
         .map(|row| {
-            let (id, payload) = row.map_err(db_error)?;
+            let (id, revision_id, payload) = row.map_err(db_error)?;
             let event: Event = serde_json::from_str(&payload)
                 .map_err(|_| CoreError::new("corrupt_fact", "账务事实无法解释"))?;
             let (Some(account_id), Some(category_id)) = (event.account_id, event.category_id)
@@ -169,6 +178,7 @@ fn read_book(connection: &Connection) -> Result<BookView> {
             }
             Ok(LocalEntry {
                 id,
+                revision_id,
                 kind: event.kind,
                 business_date: event.business_date,
                 account_id,
@@ -280,7 +290,7 @@ impl Store {
                 if !existed {
                     insert_account(&tx, &id, &account_kind, name)?;
                 }
-                let write = identity.write(opening);
+                let write = identity.write(opening, None);
                 let effect = apply_write(&tx, &write, &mut |_| Ok(()))?;
                 if existed != (effect == WriteEffect::Replayed) {
                     return Err(CoreError::new(
@@ -328,7 +338,37 @@ impl Store {
                     amount_minor: parse_yuan(&amount_yuan, false)?.to_string(),
                     note: String::new(),
                 };
-                let write = identity.write(event);
+                let write = identity.write(event, None);
+                apply_write(&tx, &write, &mut |_| Ok(()))?;
+                (false, write.operation_id)
+            }
+            LedgerCommand::ReviseEntry {
+                identity,
+                previous_revision_id,
+                amount_yuan,
+                business_date,
+            } => {
+                valid_id(&previous_revision_id)?;
+                // 从不可变的原修订取回未编辑字段，使原操作在后续修订提交后仍可重放。
+                let payload: Option<String> = tx.query_row(
+                    "SELECT payload FROM revisions WHERE id=?1 AND event_id=?2 AND payload IS NOT NULL",
+                    [&previous_revision_id, &identity.event_id],
+                    |row| row.get(0),
+                ).optional().map_err(db_error)?;
+                let payload = payload.ok_or_else(|| {
+                    CoreError::new("stale_revision", "原流水修订不存在，请重新核对")
+                })?;
+                let mut event: Event = serde_json::from_str(&payload)
+                    .map_err(|_| CoreError::new("corrupt_fact", "账务事实无法解释"))?;
+                if !matches!(event.kind, EventKind::Income | EventKind::Expense) {
+                    return Err(CoreError::new(
+                        "invalid_entry_kind",
+                        "只能编辑普通收入或支出",
+                    ));
+                }
+                event.amount_minor = parse_yuan(&amount_yuan, false)?.to_string();
+                event.business_date = business_date;
+                let write = identity.write(event, Some(previous_revision_id));
                 apply_write(&tx, &write, &mut |_| Ok(()))?;
                 (false, write.operation_id)
             }
