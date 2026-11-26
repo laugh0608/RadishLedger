@@ -113,3 +113,8 @@ docs/**/bookkeeping/** export-ignore
 /third-party/openssl-src/openssl/util/perl/OpenSSL/config.pm -whitespace
 /third-party/openssl-src/openssl/util/perl/OpenSSL/fallback.pm -whitespace
 /third-party/openssl-src/openssl/util/valgrind.suppression -whitespace
+
+# Repository asset checks
+/.radish-assets/* text eol=lf
+/.githooks/pre-commit text eol=lf
+/.githooks/pre-push text eol=lf

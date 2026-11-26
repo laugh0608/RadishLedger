@@ -29,6 +29,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Check binary asset policy
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          RADISH_ASSET_BASE: ${{ github.event.pull_request.base.sha }}
+          RADISH_ASSET_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash .radish-assets/check.sh --range "$RADISH_ASSET_BASE" "$RADISH_ASSET_HEAD"
       -
         name: "Check repository and PR range"
         shell: "bash"
